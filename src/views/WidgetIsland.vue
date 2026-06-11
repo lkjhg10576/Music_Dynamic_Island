@@ -21,7 +21,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWindow, currentMonitor, PhysicalPosition, LogicalPosition } from '@tauri-apps/api/window';
+import { getCurrentWindow, currentMonitor, PhysicalPosition, LogicalPosition, LogicalSize } from '@tauri-apps/api/window';
 import { Menu, MenuItem } from '@tauri-apps/api/menu';
 import { listen, emit } from '@tauri-apps/api/event';
 
@@ -119,6 +119,7 @@ const checkNetworkLatency = async () => {
     }
 };
 
+// 任务三：调整窗口位置到正确位置
 const adjustWindowPosition = async () => {
     try {
         const appWindow = getCurrentWindow();
@@ -127,10 +128,18 @@ const adjustWindowPosition = async () => {
 
         if (monitor) {
             const scaleFactor = await appWindow.scaleFactor();
+
+            // 1. 【核心修改】在这里按像素死死固定住灵动岛的尺寸
+            // 替换为你想要的基准像素尺寸
+            const ISLAND_WIDTH = 260;
+            const ISLAND_HEIGHT = 42;
+            await appWindow.setSize(new LogicalSize(ISLAND_WIDTH, ISLAND_HEIGHT));
+
             const monitorWidthPhysical = monitor.size.width;
             const monitorLeftPhysical = monitor.position.x;
             const monitorTopPhysical = monitor.position.y;
 
+            // 2. 重新获取设定后的真实物理尺寸，用于精准居中
             const windowSize = await appWindow.innerSize();
             const windowWidthPhysical = windowSize.width;
 
@@ -150,8 +159,7 @@ const adjustWindowPosition = async () => {
     }
 };
 
-// === 核心动画实现：基于你的 AE 公式转化 ===
-
+// 核心动画实现：基于你的 AE 公式转化
 const onEnter = (el: Element, done: () => void) => {
     const HTMLElement = el as HTMLElement;
     HTMLElement.style.transformOrigin = 'center top'; // 类似苹果灵动岛从顶部展开
@@ -214,7 +222,6 @@ const onLeave = (el: Element, done: () => void) => {
     requestAnimationFrame(animate);
 };
 
-// 1. 修改 handleRightClick 函数，并新增 handleMouseDown 函数
 const handleMouseDown = async (event: MouseEvent) => {
     // 只有按鼠标左键时才触发窗口拖拽，把右键留给自定义菜单
     if (event.button === 0) {
@@ -347,7 +354,7 @@ onUnmounted(() => {
     height: 100% !important;
     background: rgba(0, 0, 0, 1);
     backdrop-filter: blur(20px) !important;
-    border-radius: 18px;
+    border-radius: 100px;
     display: flex;
     align-items: center;
     justify-content: space-between;

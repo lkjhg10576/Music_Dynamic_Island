@@ -119,17 +119,12 @@ pub fn run() {
                         DWMWA_BORDER_COLOR,
                         DWMWCP_DONOTROUND,
                     };
-                    use windows_sys::Win32::Graphics::Gdi::{
-                        CreateRoundRectRgn,
-                        SetWindowRgn,
-                    };
                     use windows_sys::Win32::UI::WindowsAndMessaging::{
-                        GetWindowRect,
                         SetWindowLongPtrW,
                         GWL_STYLE,
                         WS_CAPTION,
                     };
-                    use windows_sys::Win32::Foundation::{HWND, RECT};
+                    use windows_sys::Win32::Foundation::HWND;
 
                     if let Ok(hwnd) = widget_window.hwnd() {
                         let hwnd_raw = hwnd.0 as HWND;
@@ -152,17 +147,6 @@ pub fn run() {
                                 &corner_preference as *const _ as *const _,
                                 std::mem::size_of::<i32>() as u32,
                             );
-
-                            let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-                            GetWindowRect(hwnd_raw, &mut rect);
-                            let w = rect.right - rect.left;
-                            let h = rect.bottom - rect.top;
-
-                            let corner = h;
-                            let region = CreateRoundRectRgn(0, 0, w, h, corner, corner);
-                            if !region.is_null() {
-                                SetWindowRgn(hwnd_raw, region, 1);
-                            }
                         }
                     }
                 }

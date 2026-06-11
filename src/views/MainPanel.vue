@@ -440,13 +440,13 @@ const toggleWidget = async () => {
     --text-body: #cbd5e1;
     --h1-color: #f8fafc;
     --subtitle-color: #94a3b8;
-    --control-bg: #1e293b;
-    --control-border: #334155;
+    --control-bg: #292b2e;
+    --control-border: #383c41;
     --status-badge-inactive: #64748b;
     --status-badge-active: #f8fafc;
     --divider-border: #334155;
-    --card-bg: #1e293b;
-    --card-border: #334155;
+    --card-bg: #292b2e;
+    --card-border: #383c41;
     --card-shadow: rgba(0, 0, 0, 0.2);
     --card-shadow-hover: rgba(0, 0, 0, 0.3);
     --card-h3-color: #e2e8f0;
@@ -462,7 +462,7 @@ const toggleWidget = async () => {
     --tag-dev-color: #94a3b8;
     --item-desc-color: #94a3b8;
     --slider-bg: #475569;
-    --slider-checked-bg: #60a5fa;
+    --slider-checked-bg: #47576b;
     --slider-disabled-bg: #334155;
     --range-bg: #334155;
     --range-thumb-bg: #1e293b;
@@ -470,8 +470,8 @@ const toggleWidget = async () => {
     --range-thumb-shadow: rgba(0, 0, 0, 0.5);
     --footer-text: #94a3b8aa;
     --overlay-bg: rgba(0, 0, 0, 0.6);
-    --modal-bg: #1e293b;
-    --modal-border: #334155;
+    --modal-bg: #292b2e;
+    --modal-border: #383c41;
     --modal-h4: #f8fafc;
     --modal-p: #94a3b8;
     --btn-sec-bg: #334155;
@@ -479,15 +479,15 @@ const toggleWidget = async () => {
     --btn-sec-border: #475569;
     --btn-sec-hover-bg: #475569;
     --btn-sec-hover-color: #f8fafc;
-    --btn-pri-bg: #60a5fa;
-    --btn-pri-color: #0f172a;
-    --btn-pri-border: #60a5fa;
-    --btn-pri-hover-bg: #93c5fd;
-    --btn-pri-shadow-hover: rgba(96, 165, 250, 0.3);
+    --btn-pri-bg: #1a1a1a;
+    --btn-pri-color: #ffffff;
+    --btn-pri-border: #2b2b2b;
+    --btn-pri-hover-bg: #161616;
+    --btn-pri-shadow-hover: rgba(0, 0, 0, 0.15);
 
     /* 下拉选择器在暗色下的变量 */
-    --select-bg: #1e293b;
-    --select-border: #334155;
+    --select-bg: #292b2e;
+    --select-border: #383c41;
     --select-text: #f8fafc;
 }
 
