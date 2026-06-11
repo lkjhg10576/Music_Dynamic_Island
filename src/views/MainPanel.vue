@@ -71,13 +71,13 @@
                     </select>
                 </div>
 
-                <div class="setting-item is-disabled">
+                <div class="setting-item">
                     <div class="item-meta">
-                        <span class="item-title">开机自动启动 <span class="tag-dev">未实现</span></span>
+                        <span class="item-title">开机自动启动</span>
                         <span class="item-desc">跟随系统启动 NSD</span>
                     </div>
                     <label class="switch">
-                        <input type="checkbox" v-model="autoStart" disabled>
+                        <input type="checkbox" v-model="autoStart" @change="toggleAutoStart">
                         <span class="slider"></span>
                     </label>
                 </div>
@@ -122,6 +122,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import * as echarts from 'echarts';
+import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 
 const isWidgetVisible = ref(false);
 const autoStart = ref(false);
@@ -134,6 +135,24 @@ const themeMode = ref(['light', 'dark', 'system'].includes(savedTheme) ? savedTh
 
 const uploadSpeed = ref('0 B/s');
 const downloadSpeed = ref('0 B/s');
+
+// 新增切换开关的执行函数
+const toggleAutoStart = async () => {
+    try {
+        if (autoStart.value) {
+            await enable();
+            console.log('已开启开机自启');
+        } else {
+            await disable();
+            console.log('已关闭开机自启');
+        }
+    } catch (error) {
+        console.error('修改开机自启状态失败:', error);
+        // 如果操作失败，回退开关状态
+        autoStart.value = !autoStart.value;
+        showDialog('设置失败', '无法修改开机自启动状态，请检查系统权限。');
+    }
+};
 
 const dialog = ref({
     visible: false,
@@ -340,6 +359,13 @@ onMounted(async () => {
     fetchSpeedStats();
     speedTimer = setInterval(fetchSpeedStats, 1000) as unknown as number;
     window.addEventListener('resize', () => chartInstance?.resize());
+
+    // --- 新增：初始化时获取真实的自启动状态 ---
+    try {
+        autoStart.value = await isEnabled();
+    } catch (e) {
+        console.error("获取自启动状态失败:", e);
+    }
 
     await listen<{ visible: boolean }>('island-status-sync', (event) => {
         isWidgetVisible.value = event.payload.visible;

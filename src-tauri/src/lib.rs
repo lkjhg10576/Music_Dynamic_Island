@@ -4,6 +4,9 @@ use sysinfo::Networks;
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
+// 引入 autostart 所需的 MacosLauncher (即使只在 Windows 上运行，这也是标准的初始化参数)
+use tauri_plugin_autostart::MacosLauncher;
+
 // 引入托盘相关组件
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton};
@@ -59,6 +62,10 @@ pub fn run() {
         // 1. 【唯一实例保证】初始化单实例插件。如果重复启动，直接退出进程
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec![]), // 这里可以传递启动参数，例如 vec!["--minimized".to_string()]
+        ))
         .manage(AppState {
             networks: Mutex::new(networks),
         })
