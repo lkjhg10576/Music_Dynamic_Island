@@ -269,6 +269,10 @@ watch(opacity, async (newVal) => {
 });
 
 onMounted(async () => {
+    window.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+    }, { capture: true }); // 使用捕获模式，确保第一时间拦截
+
     initChart();
     fetchSpeedStats();
     speedTimer = setInterval(fetchSpeedStats, 1000) as unknown as number;
@@ -618,7 +622,7 @@ input:disabled+.slider {
     display: flex;
     justify-content: space-between;
     font-size: 12px;
-    color: #94a3b8;
+    color: #2b2b2b89;
     font-weight: 500;
 }
 

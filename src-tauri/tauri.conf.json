@@ -19,6 +19,7 @@
         "resizable": false,
         "center": true,
         "maximized": false,
+        "maximizable": false,
         "label": "main",
         "url": "/"
       },
@@ -32,6 +33,7 @@
         "alwaysOnTop": true,
         "visible": false,
         "maximized": false,
+        "maximizable": false,
         "skipTaskbar": true,
         "shadow": false,
         "label": "widget",
