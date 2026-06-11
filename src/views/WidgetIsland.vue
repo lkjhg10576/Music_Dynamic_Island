@@ -1,6 +1,6 @@
 <template>
-    <div class="island-container" data-tauri-drag-region>
-        <div class="speed-box" data-tauri-drag-region>
+    <div class="island-container" @mousedown="handleMouseDown" @contextmenu="handleRightClick">
+        <div class="speed-box">
             <div class="speed-item">
                 <span :class="['label', { 'high-traffic': isHighUpload }]">↑</span>
                 <span class="value">{{ uploadSpeed }}</span>
@@ -18,7 +18,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWindow, currentMonitor, PhysicalPosition } from '@tauri-apps/api/window';
+import { getCurrentWindow, currentMonitor, PhysicalPosition, LogicalPosition } from '@tauri-apps/api/window';
+import { Menu, MenuItem } from '@tauri-apps/api/menu';
+
 
 const uploadSpeed = ref('0 KB/s');
 const downloadSpeed = ref('0 KB/s');
@@ -36,8 +38,8 @@ let speedTimer: number;
 let pingTimer: number;
 
 // === 新增：防抖控制变量 ===
-let lowTrafficStartTime = Date.now(); // 记录进入“无流量/低流量”的起始时间
-const RED_DELAY_MS = 5000;          // 流量消失后，等待 5 秒再允许变红
+let lowTrafficStartTime = Date.now();
+const RED_DELAY_MS = 5000;
 
 const formatSpeed = (bytes: number) => {
     if (bytes < 1024) return bytes + ' B/s';
@@ -66,7 +68,7 @@ const fetchSpeedStats = async () => {
 
             // === 核心逻辑：维护低流量持续时间 ===
             if (currentDownloadHigh || currentUploadHigh) {
-                // 如果目前依然是大流量，重置计时器，强制让“低流量开始时间”保持在当下
+                // 如果目前依然是大流量，重置计时器
                 lowTrafficStartTime = Date.now();
             }
         }
@@ -89,7 +91,7 @@ const checkNetworkLatency = async () => {
             networkStatus.value = 'warning';   // 延迟高/不稳定，黄色
         }
     } catch (error) {
-        // === 核心逻辑：当 Rust 抛出超时异常时 ===
+        // === 核心逻辑：当Rust抛出超时异常时 ===
 
         // 1. 如果当前正处于大流量状态，绝不变红，降级显示为黄灯
         if (isHighDownload.value || isHighUpload.value) {
@@ -97,7 +99,7 @@ const checkNetworkLatency = async () => {
             return;
         }
 
-        // 2. 如果流量刚刚消失，判断距离大流量结束是否超过了设定的缓冲时间（例如 5 秒）
+        // 2. 如果流量刚刚消失，判断距离大流量结束是否超过了设定的缓冲时间
         const timeSinceLowTraffic = Date.now() - lowTrafficStartTime;
         if (timeSinceLowTraffic < RED_DELAY_MS) {
             // 还在缓冲期内，判定为大流量带来的余波卡顿，依然保持黄灯
@@ -140,16 +142,74 @@ const adjustWindowPosition = async () => {
     }
 };
 
+// 1. 修改 handleRightClick 函数，并新增 handleMouseDown 函数
+const handleMouseDown = async (event: MouseEvent) => {
+    // 只有按鼠标左键时才触发窗口拖拽，把右键留给自定义菜单
+    if (event.button === 0) {
+        try {
+            await getCurrentWindow().startDragging();
+        } catch (error) {
+            console.error('拖拽失败:', error);
+        }
+    }
+};
+
+const handleRightClick = async (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation(); // 阻止冒泡
+
+    // 1. 创建“重置位置”菜单项
+    const resetPositionItem = await MenuItem.new({
+        text: '重置位置',
+        id: 'reset_position',
+        action: () => {
+            // 点击后直接调用你原本写好的位置调整逻辑
+            adjustWindowPosition().catch(console.error);
+        }
+    });
+
+    // 2. 创建“关闭”菜单项
+    const closeItem = await MenuItem.new({
+        text: '关闭',
+        id: 'close',
+        action: () => {
+            getCurrentWindow().hide().catch(console.error);
+        }
+    });
+
+    // 使用客户端坐标转逻辑坐标（避免无边框裁剪带来的漂移）
+    const position = new LogicalPosition(
+        event.clientX,
+        event.clientY
+    );
+
+    // 3. 创建菜单并按顺序追加进去
+    const menu = await Menu.new();
+    await menu.append(resetPositionItem);
+    await menu.append(closeItem); // 两个菜单项会上下排列
+
+    // 4. 弹出菜单
+    try {
+        await menu.popup(position);
+    } catch (error) {
+        console.error('菜单弹出失败:', error);
+    }
+};
+
 onMounted(async () => {
+    document.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+    }, { capture: true }); // 使用捕获阶段，确保先于 Tauri 底层拦截
+
     await adjustWindowPosition();
 
     fetchSpeedStats();
     checkNetworkLatency();
 
-    // 流量 1 秒刷一次保持数字灵敏度
+    // 流量1秒刷一次保持数字灵敏度
     speedTimer = setInterval(fetchSpeedStats, 1000) as unknown as number;
 
-    // 调大 Ping 间隔：从 2.5 秒调大到 5.5 秒，避免自身高频检测造成的网络竞争
+    // 调大Ping间隔：从2.5秒调大到5.5秒
     pingTimer = setInterval(checkNetworkLatency, 5500) as unknown as number;
 });
 
@@ -188,8 +248,8 @@ onUnmounted(() => {
     left: 0;
     width: 100% !important;
     height: 100% !important;
-    background: rgba(0, 0, 0, 0.95);
-    backdrop-filter: blur(20px);
+    background: rgba(0, 0, 0, 1);
+    backdrop-filter: blur(20px) !important;
     border-radius: 18px;
     display: flex;
     align-items: center;
@@ -199,6 +259,7 @@ onUnmounted(() => {
     user-select: none;
     box-shadow: none !important;
     border: none !important;
+    -webkit-user-select: none;
 }
 
 [data-tauri-drag-region] {

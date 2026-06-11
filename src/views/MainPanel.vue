@@ -9,7 +9,7 @@
                 </div>
             </div>
             <span class="status-badge" :class="{ 'is-active': isWidgetVisible }">
-                {{ isWidgetVisible ? '运行中' : '已断开' }}
+                {{ isWidgetVisible ? '已开启' : '已关闭' }}
             </span>
         </header>
 
