@@ -91,7 +91,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
-            Some(vec![]), // 这里可以传递启动参数，例如 vec!["--minimized".to_string()]
+            Some(vec!["--autostart"]),
         ))
         .manage(AppState {
             networks: Mutex::new(networks),
@@ -103,6 +103,21 @@ pub fn run() {
             ping_game_host
         ])
         .setup(|app| {
+            // --- 新增：处理静默启动逻辑 ---
+            // 获取应用的启动命令行参数
+            let args: Vec<String> = std::env::args().collect();
+            let is_autostart = args.iter().any(|arg| arg == "--autostart");
+
+            // 获取主窗口
+            if let Some(main_window) = app.get_webview_window("main") {
+                if !is_autostart {
+                    // 如果不是开机自启（即用户手动双击快捷方式），则主动显示主窗口
+                    let _ = main_window.show();
+                    let _ = main_window.set_focus();
+                }
+                // 如果是开机自启，什么都不做，窗口会保持在 tauri.conf.json 中设置的隐藏状态
+            }
+
             // 2. 【系统托盘右键菜单】仅创建一个 "强制退出" 按钮
             let quit_item = MenuItem::with_id(app, "quit", "强制退出", true, None::<&str>)?;
             let tray_menu = Menu::with_items(app, &[&quit_item])?;
