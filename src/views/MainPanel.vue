@@ -10,8 +10,8 @@
             </div>
 
             <div class="header-controls">
-                <button class="gamemode-btn" :class="{ 'is-active': isGameMode }" @click="toggleGameMode">
-                    🎮 GAMEMODE
+                <button class="dynamicset-btn" :class="{ 'is-active': isDynamicSet }" @click="toggleDynamicSet">
+                    灵动岛设置
                 </button>
                 <span class="control-separator"></span>
 
@@ -27,8 +27,8 @@
 
         <hr class="divider" />
 
-        <div class="main-content" :class="{ 'game-mode-layout': isGameMode }">
-            <template v-if="!isGameMode">
+        <div class="main-content" :class="{ 'dynamicset-layout': isDynamicSet }">
+            <template v-if="!isDynamicSet">
                 <div class="card status-card">
                     <div class="card-header-row">
                         <h3>当前实时状态</h3>
@@ -136,22 +136,74 @@
             </template>
 
             <template v-else>
-                <div class="card gamemode-container">
-                    <div class="gamemode-header">
-                        <h3>竞技游戏服务器往返延迟测试 (ICMP Ping)</h3>
-                        <button class="manual-ping-btn" @click="runAllPings">手动测试</button>
+                <!-- 移除内部标题头，直接使用 grid 布局铺满 -->
+                <div class="dynamicset-grid">
+                    <div class="set-item">
+                        <div class="set-item-meta">
+                            <span class="set-item-title">灵动岛颜色</span>
+                            <span class="set-item-desc">切换灵动岛的默认背景色调</span>
+                        </div>
+                        <div class="capsule-switch">
+                            <div class="capsule-btn" :class="{ 'is-active': islandTheme === 'black' }"
+                                @click="islandTheme = 'black'">暗色</div>
+                            <div class="capsule-btn" :class="{ 'is-active': islandTheme === 'white' }"
+                                @click="islandTheme = 'white'">亮色</div>
+                        </div>
                     </div>
 
-                    <div class="game-grid">
-                        <div v-for="game in gameServers" :key="game.id" class="game-item">
-                            <div class="game-meta">
-                                <span class="game-name">{{ game.name }}</span>
-                                <span class="game-region">{{ game.region }}</span>
-                            </div>
-                            <div class="ping-badge" :class="getPingClass(game.ping)">
-                                {{ game.ping === null ? '测速中...' : game.ping === -1 ? '超时' : game.ping + ' ms' }}
-                            </div>
+                    <div class="set-item disabled-set-item">
+                        <div class="set-item-meta">
+                            <span class="set-item-title">音乐控制器</span>
+                            <span class="set-item-desc">检测到音乐播放时展示控制面板</span>
                         </div>
+                        <label class="switch">
+                            <input type="checkbox" v-model="enableMusicCtrl" disabled="true">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="set-item disabled-set-item">
+                        <div class="set-item-meta">
+                            <span class="set-item-title">消息通知接收 <p class="set-item-pro-tag">PRO</p></span>
+                            <span class="set-item-desc">启用微信 / QQ 消息弹窗提醒</span>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" v-model="enableMsgNotify" disabled="true">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="set-item disabled-set-item">
+                        <div class="set-item-meta">
+                            <span class="set-item-title">系统硬件监控</span>
+                            <span class="set-item-desc">显示 CPU / 内存占用情况预警</span>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" v-model="enableHardwareMon" disabled="true">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="set-item">
+                        <div class="set-item-meta">
+                            <span class="set-item-title"></span>
+                            <span class="set-item-desc"></span>
+                        </div>
+                        <!-- <label class="switch">
+                            <input type="checkbox" v-model="disableBtn">
+                            <span class="slider"></span>
+                        </label> -->
+                    </div>
+
+                    <div class="set-item">
+                        <div class="set-item-meta">
+                            <span class="set-item-title"></span>
+                            <span class="set-item-desc"></span>
+                        </div>
+                        <!-- <label class="switch">
+                            <input type="checkbox" v-model="disableBtn">
+                            <span class="slider"></span>
+                        </label> -->
                     </div>
                 </div>
             </template>
@@ -206,61 +258,23 @@ const downloadSpeed = ref('0 B/s');
 
 const appVersion = ref('1.0.0');
 
-const isGameMode = ref(false);
+const isDynamicSet = ref(false);
 
 const isChecking = ref(false);
 
+// 灵动岛设置相关的 UI 状态绑定
+const islandTheme = ref('black');
+const enableMusicCtrl = ref(false);
+const enableMsgNotify = ref(false);
+const enableHardwareMon = ref(false);
 
-interface GameServer {
-    id: string;
-    name: string;
-    region: string;
-    ip: string;
-    ping: number | null;
-}
-
-// 游戏服务器列表
-const gameServers = ref<GameServer[]>([
-    { id: 'valorant', name: '无畏契约', region: '国服 (腾讯广东节点)', ip: '43.198.0.1', ping: null },
-    { id: 'csgo', name: '反恐精英 2 (CSGO)', region: '国服 (完美世界北京)', ip: '124.243.200.1', ping: null },
-    { id: 'lol', name: '英雄联盟', region: '国服 (电信一区艾欧尼亚)', ip: '119.29.29.29', ping: null },
-    { id: 'pubg', name: '绝地求生 (PUBG)', region: '亚洲区 (韩国首尔 AWS)', ip: '13.124.63.251', ping: null },
-    { id: 'apex', name: 'APEX 英雄', region: '亚洲区 (中国香港 Cloudflare)', ip: '104.18.27.147', ping: null },
-    { id: 'naraka', name: '永劫无间', region: '国服 (网易杭州机房)', ip: '223.252.199.1', ping: null }
-]);
-
-// 切换游戏模式
-const toggleGameMode = () => {
-    isGameMode.value = !isGameMode.value;
-    if (isGameMode.value) {
-        runAllPings();
-    } else {
-        gameServers.value.forEach(server => server.ping = null);
-    }
+// 切换灵动岛设置
+const toggleDynamicSet = () => {
+    isDynamicSet.value = !isDynamicSet.value;
 };
 
-// 运行所有游戏服务器的 Ping 测试
-const runAllPings = async () => {
-    await Promise.all(gameServers.value.map(async (server) => {
-        try {
-            const result = await invoke<number>('ping_game_host', { host: server.ip });
-            server.ping = result;
-        } catch (error) {
-            server.ping = -1;
-        }
-    }));
-};
-
-const getPingClass = (ping: number | null) => {
-    if (ping === null) return 'ping-loading';
-    if (ping === -1) return 'ping-error';
-    if (ping <= 35) return 'ping-excel';
-    if (ping <= 70) return 'ping-good';
-    return 'ping-bad';
-};
-
-// 切换游戏模式时，更新图表
-watch(isGameMode, async (newVal) => {
+// 切换灵动岛设置时，更新图表
+watch(isDynamicSet, async (newVal) => {
     if (!newVal) {
         // 销毁所有旧实例，防止内存泄漏或节点挂载错位
         chartInstance?.dispose();
@@ -722,9 +736,7 @@ const toggleWidget = async () => {
 </script>
 
 <style scoped>
-/* ==========================================================================
-   1. 提取出的颜色变量层（默认全盘照抄原样式颜色，绝不动原来的色值）
-   ========================================================================== */
+/*提取出的颜色变量层*/
 :global(:root) {
     --bg-body: #f8fafc;
     --text-body: #1e293b;
@@ -781,9 +793,7 @@ const toggleWidget = async () => {
     --data-tag-color: #2b2b2b;
 }
 
-/* ==========================================================================
-   2. 暗色模式变量覆盖
-   ========================================================================== */
+/*暗色模式变量覆盖*/
 :global(.dark-theme) {
     --bg-body: #1e2021;
     --text-body: #cbd5e1;
@@ -840,9 +850,7 @@ const toggleWidget = async () => {
     --data-tag-color: #f8fafc;
 }
 
-/* ==========================================================================
-   3. 原有布局及节点样式
-   ========================================================================== */
+/*原有布局及节点样式 */
 :global(html) {
     color: var(--text-body);
     transition: background-color 0.3s ease, color 0.3s ease;
@@ -1275,10 +1283,11 @@ input:checked+.slider:before {
     border-color: var(--slider-checked-bg);
 }
 
-/* ==========================================================================
-   4. 新增：游戏模式样式扩展层
-   ========================================================================== */
-.gamemode-btn {
+
+
+
+/* 灵动岛设置按钮样式 */
+.dynamicset-btn {
     background: transparent;
     border: 1px solid var(--control-border);
     color: var(--text-body);
@@ -1290,12 +1299,12 @@ input:checked+.slider:before {
     transition: all 0.2s ease;
 }
 
-.gamemode-btn:hover {
+.dynamicset-btn:hover {
     background: var(--btn-sec-bg);
     border-color: var(--slider-checked-bg);
 }
 
-.gamemode-btn.is-active {
+.dynamicset-btn.is-active {
     background: var(--btn-pri-bg);
     color: var(--btn-pri-color);
     border-color: var(--btn-pri-border);
@@ -1308,126 +1317,115 @@ input:checked+.slider:before {
     background: var(--control-border);
 }
 
-.gamemode-container {
-    min-height: 280px;
+
+
+
+
+/* =========================================
+   灵动岛设置面板 - 扁平化全宽布局
+   ========================================= */
+
+/* 核心修复：当处于灵动岛设置模式时，强制单列全宽，解决只有半宽的问题 */
+.main-content.dynamicset-layout {
+    grid-template-columns: 1fr !important;
 }
 
-.gamemode-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    border-bottom: 1px solid var(--chart-border);
-    padding-bottom: 12px;
-}
-
-.gamemode-header h3 {
-    margin: 0 !important;
-}
-
-.ping-tip {
-    font-size: 12px;
-    color: var(--subtitle-color);
-}
-
-/* 双列网格结构 */
-.game-grid {
+/* 双列网格结构，自动填充 */
+.dynamicset-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 16px;
-}
-
-.game-item {
-    background: var(--control-bg);
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr 1fr;
+    gap: 0;
+    background: var(--card-bg);
     border: 1px solid var(--card-border);
-    border-radius: 14px;
-    padding: 14px 18px;
+    border-radius: 20px;
+    padding: 0;
+    box-shadow: 0 4px 20px -2px var(--card-shadow);
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* 设置项：去掉独立背景和边框，融入容器 */
+.set-item {
+    background: transparent;
+    border: none;
+    padding: 20px 24px;
+    margin: 0;
+    border-radius: 0;
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    justify-content: space-between;
 }
 
-.game-item:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px var(--card-shadow-hover);
+.disabled-set-item {
+    opacity: 0.6;
+    /* cursor: not-allowed; */
 }
 
-.game-meta {
+.set-item-meta {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
 }
 
-.game-name {
+.set-item-title {
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
     color: var(--item-title-color);
 }
 
-.game-region {
+.set-item-pro-tag {
     font-size: 11px;
+    font-weight: 600;
+    color: var(--btn-pri-color);
+    background: var(--btn-pri-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 6px;
+}
+
+.set-item-desc {
+    font-size: 12px;
     color: var(--item-desc-color);
 }
 
-.ping-badge {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 14px;
-    font-weight: 700;
-    padding: 4px 10px;
-    border-radius: 8px;
-    min-width: 55px;
-    text-align: center;
+/* 胶囊形滑块开关 (保持不变，仅确保层级) */
+.capsule-switch {
+    display: flex;
+    background: var(--slider-bg);
+    border-radius: 6px;
+    padding: 2px;
+    position: relative;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
+    flex-shrink: 0;
 }
 
-/* 延迟档位着色 */
-.ping-loading {
-    color: var(--subtitle-color);
-    background: var(--tag-dev-bg);
-    font-weight: normal;
-}
-
-.ping-excel {
-    color: #10b981;
-    background: rgba(16, 185, 129, 0.12);
-}
-
-.ping-good {
-    color: #d97706;
-    background: rgba(217, 119, 6, 0.12);
-}
-
-.ping-bad {
-    color: #ef4444;
-    background: rgba(239, 68, 68, 0.12);
-}
-
-.ping-error {
-    color: #94a3b8;
-    background: rgba(148, 163, 184, 0.15);
-}
-
-/* 在 style 底部追加此样式 */
-.manual-ping-btn {
-    background: var(--btn-pri-bg);
-    color: var(--btn-pri-color);
-    border: 1px solid var(--btn-pri-border);
-    padding: 6px 14px;
+.capsule-btn {
+    padding: 4px 14px;
     font-size: 12px;
-    font-weight: 700;
-    border-radius: 14px;
+    font-weight: 600;
+    border-radius: 4px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    color: var(--text-body);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 1;
+    opacity: 0.6;
 }
 
-.manual-ping-btn:hover {
-    background: var(--btn-pri-hover-bg);
-    box-shadow: 0 2px 8px var(--btn-pri-shadow-hover);
+.capsule-btn.is-active {
+    background: var(--card-bg);
+    color: var(--item-title-color);
+    box-shadow: 0 1px 4px var(--card-shadow-hover);
+    opacity: 1;
 }
 
-.manual-ping-btn:active {
-    transform: scale(0.96);
-}
+
+
+
+
 
 /* 数据统计模块样式 */
 .card-header-row {

@@ -45,7 +45,7 @@ let lastTx = 0;
 let speedTimer: number;
 let pingTimer: number;
 
-// === 新增：防抖控制变量 ===
+// 防抖控制变量
 let lowTrafficStartTime = Date.now();
 const RED_DELAY_MS = 5000;
 
@@ -55,7 +55,7 @@ const formatSpeed = (bytes: number) => {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB/s';
 };
 
-// 任务一：计算流量数字，并实时更新大流量状态
+// 计算流量数字，并实时更新大流量状态
 const fetchSpeedStats = async () => {
     try {
         const [currentRx, currentTx] = await invoke<[number, number]>('get_network_stats');
@@ -74,7 +74,7 @@ const fetchSpeedStats = async () => {
             isHighDownload.value = currentDownloadHigh;
             isHighUpload.value = currentUploadHigh;
 
-            // === 核心逻辑：维护低流量持续时间 ===
+            // 维护低流量持续时间
             if (currentDownloadHigh || currentUploadHigh) {
                 // 如果目前依然是大流量，重置计时器
                 lowTrafficStartTime = Date.now();
@@ -87,7 +87,7 @@ const fetchSpeedStats = async () => {
     }
 };
 
-// 任务二：通过真实延迟控制状态灯（加入大流量避让判断）
+// 通过真实延迟控制状态灯（加入大流量避让判断）
 const checkNetworkLatency = async () => {
     try {
         const latency = await invoke<number>('get_network_latency');
@@ -99,7 +99,7 @@ const checkNetworkLatency = async () => {
             networkStatus.value = 'warning';   // 延迟高/不稳定，黄色
         }
     } catch (error) {
-        // === 核心逻辑：当Rust抛出超时异常时 ===
+        // 当Rust抛出超时异常时，说明网络可能断开连接
 
         // 1. 如果当前正处于大流量状态，绝不变红，降级显示为黄灯
         if (isHighDownload.value || isHighUpload.value) {
@@ -119,7 +119,7 @@ const checkNetworkLatency = async () => {
     }
 };
 
-// 任务三：调整窗口位置到正确位置
+// 调整窗口位置到正确位置
 const adjustWindowPosition = async () => {
     try {
         const appWindow = getCurrentWindow();
@@ -129,7 +129,7 @@ const adjustWindowPosition = async () => {
         if (monitor) {
             const scaleFactor = await appWindow.scaleFactor();
 
-            // 1. 【核心修改】在这里按像素死死固定住灵动岛的尺寸
+            // 1. 在这里按像素死死固定住灵动岛的尺寸
             // 替换为你想要的基准像素尺寸
             const ISLAND_WIDTH = 260;
             const ISLAND_HEIGHT = 42;
@@ -214,7 +214,7 @@ const onLeave = (el: Element, done: () => void) => {
             requestAnimationFrame(animate);
         } else {
             done();
-            // 【极其关键】等 DOM 动画播完了，再调用 Tauri 隐藏窗口
+            // 等待 DOM 动画播放完成后再隐藏窗口
             getCurrentWindow().hide().catch(console.error);
             emit('island-status-sync', { visible: false });
         }
@@ -287,7 +287,7 @@ onMounted(async () => {
 
     await adjustWindowPosition();
 
-    // 【修改】先显示透明的 Tauri 窗口，再触发 Vue 的灵动岛入场弹簧动画
+    // 先显示透明的 Tauri 窗口，再触发 Vue 的灵动岛入场弹簧动画
     await getCurrentWindow().show();
     isIslandVisible.value = true;
 
@@ -398,7 +398,7 @@ onUnmounted(() => {
     transition: all 0.3s ease;
 }
 
-/* 新增：高流量时的 label 样式 */
+/* 高流量时的 label 样式 */
 .label.high-traffic {
     color: rgba(255, 255, 255, 0.9);
     /* 文字稍微变亮，增加可读性 */
