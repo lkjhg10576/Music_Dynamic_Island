@@ -13,7 +13,6 @@ use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton};
 
 use winapi::um::winuser::{EnumWindows, GetWindowTextW, IsWindowVisible, GetClassNameW};
 use winapi::shared::windef::HWND;
-use std::os::windows::ffi::OsStringExt;
 
 // 结构体：用于在窗口枚举中传递和存储找到的歌词/音乐信息
 struct MusicInfo {
@@ -47,6 +46,55 @@ unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: winapi::shared::
         }
     }
     1 // 继续枚举
+}
+
+#[tauri::command]
+async fn get_random_cover_url(song_name: String, artist_name: String) -> Result<String, String> {
+    // 构建带超时的 Client，防止请求卡死导致前端一直等待
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let query = format!("{} {}", song_name, artist_name);
+    let encoded_query = urlencoding::encode(&query);
+
+    // 【数据源 1】网易云官方公开搜索接口 (最精准)
+    let netease_url = format!(
+        "https://music.163.com/api/search/get/web?s={}&type=1&limit=1",
+        encoded_query
+    );
+
+    if let Ok(resp) = client.get(&netease_url)
+        .header("Referer", "https://music.163.com")
+        .send().await 
+    {
+        if let Ok(json) = resp.json::<serde_json::Value>().await {
+            if let Some(pic) = json.pointer("/result/songs/0/al/picUrl").and_then(|v| v.as_str()) {
+                // 将 http 升级为 https，并指定缩略图尺寸以加快加载
+                return Ok(pic.replace("http://", "https://") + "?param=150y150");
+            }
+        }
+    }
+
+    // 【数据源 2】iTunes Search API (极其稳定的备用方案)
+    let itunes_url = format!(
+        "https://itunes.apple.com/search?term={}&media=music&limit=1",
+        encoded_query
+    );
+
+    if let Ok(resp) = client.get(&itunes_url).send().await {
+        if let Ok(json) = resp.json::<serde_json::Value>().await {
+            if let Some(artwork) = json.pointer("/results/0/artworkUrl100").and_then(|v| v.as_str()) {
+                // iTunes 返回的是 100x100，可以替换字符串获取更高清的版本
+                return Ok(artwork.replace("100x100bb", "300x300bb"));
+            }
+        }
+    }
+
+    // 【数据源 3】终极保底：返回一个不会失败的 Unsplash 占位图
+    // 如果连 Unsplash 也不想依赖，可以直接返回一段 Base64 编码的纯色/渐变 SVG
+    Ok("https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=150&h=150&fit=crop".to_string())
 }
 
 #[tauri::command]
@@ -152,7 +200,8 @@ pub fn run() {
             is_widget_visible,
             get_network_latency,
             fetch_netease_music_info,
-            control_system_media
+            control_system_media,
+            get_random_cover_url
         ])
         .setup(|app| {
             // --- 新增：处理静默启动逻辑 ---

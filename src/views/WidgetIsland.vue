@@ -114,10 +114,8 @@ const isPlaying = ref(false);
 let isClickingToggle = false;
 // 只需要增加定时获取音乐状态的逻辑，并补全你的 prevTrack, nextTrack, togglePlay 方法
 
-// 引入网易云官方的一个免签的搜索纠错/图片匹配基准（或使用通用黑胶唱片封面）
-// 因为直接提取本地网易云封面需要注入或读取加密缓存，维护成本高。
-// 我们可以通过计算属性给你的 .cover-inner 绑定一个优美的背景图
 const coverUrl = ref('');
+const coverCache = new Map<string, string>();
 
 // 替换你的 togglePlay, prevTrack, nextTrack 内部实现
 const togglePlay = async () => {
@@ -147,24 +145,50 @@ const nextTrack = async () => {
 };
 
 // 核心同步函数：塞入到你的 fetchSpeedStats 同一频次的定时器中
+// 核心同步函数：塞入到你的 fetchSpeedStats 同一频次的定时器中
 const syncMusicStatus = async () => {
     try {
-        // 调用 Rust 提取网易云标题
+        // 1. 调用 Rust 提取网易云标题 [歌名, 歌手, 是否在播放]
         const res = await invoke<[string, string, boolean] | null>('fetch_netease_music_info');
+
         if (res) {
             const [song, artist, playing] = res;
-            currentTrackInfo.value = `${song} - ${artist}`;
 
-            // 如果切歌了，可以动态给封面增加一个随机网易云占位图，或者保持动感
-            // 推荐低维护成本做法：在此处触发封面变化，或直接给 .cover-inner 绑定背景色/封面
-            // 比如使用开源的音乐封面占位：coverUrl.value = `https://music.163.com/api/search/get/web?s=${song}&type=1` (按需异步拉取)
+            // 拼接新的歌曲信息
+            const newTrackInfo = `${song} - ${artist}`;
+
+            if (currentTrackInfo.value !== newTrackInfo) {
+                currentTrackInfo.value = newTrackInfo;
+
+                // 优先读取缓存
+                if (coverCache.has(newTrackInfo)) {
+                    coverUrl.value = coverCache.get(newTrackInfo)!;
+                } else {
+                    try {
+                        const realCoverUrl = await invoke<string>('get_random_cover_url', {
+                            songName: song,
+                            artistName: artist
+                        });
+                        coverUrl.value = realCoverUrl;
+                        // 写入缓存，最多缓存 50 首防止内存溢出
+                        if (coverCache.size > 50) coverCache.clear();
+                        coverCache.set(newTrackInfo, realCoverUrl);
+                    } catch (coverErr) {
+                        console.error('所有封面源均获取失败:', coverErr);
+                        // 使用本地图标或纯色背景，不要再用外部 URL 作为错误兜底
+                        coverUrl.value = '';
+                    }
+                }
+            }
 
             if (!isClickingToggle) {
                 isPlaying.value = playing;
             }
         } else {
+            // 没检测到播放时，清空状态
             currentTrackInfo.value = '未在播放歌曲 - 网易云音乐';
             isPlaying.value = false;
+            coverUrl.value = ''; // 没歌时清空，显示默认的优美渐变色
         }
     } catch (err) {
         console.error('音乐信息获取失败:', err);
@@ -798,11 +822,30 @@ onUnmounted(() => {
     transform: scale(1.08) translateX(-5px);
 }
 
+/* 封面内部绑定背景图的 div */
 .cover-inner {
     width: 100%;
     height: 100%;
-    border-radius: 50%;
-    background-color: rgba(255, 255, 255, 0.2);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    transition: background-image 0.3s ease;
+    /* 切换封面时平滑淡入 */
+}
+
+/* 正在播放时的旋转动画 */
+.is-playing .cover-inner {
+    animation: rotate 8s linear infinite;
+}
+
+@keyframes rotate {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .music-controls {
