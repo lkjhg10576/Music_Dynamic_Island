@@ -591,20 +591,18 @@ const isMsgActive = ref(false);
 const msgTitle = ref('');
 const msgBody = ref('');
 
-// 2. 新增：完美复刻你原有 AE 弹性震荡曲线的动态宽高动画函数
-// 2. 修改：让 Tauri 原生窗口与 Vue 灵动岛 DOM 宽高完全同步变换
 const animateIslandSize = (targetWidth: number, targetHeight: number) => {
     let startWidth = currentWidth.value;
     let startHeight = currentHeight.value;
     let start = performance.now();
 
-    const freq = 2.0;    // 复用你的 AE 频率
-    const decay = 10.5;  // 复用你的 阻力
-    const duration = 600;// 复用你的 动画总时长
+    const freq = 2.0;
+    const decay = 10.5;
+    const duration = 600;
 
     const appWindow = getCurrentWindow();
 
-    const run = (time: number) => {
+    const run = async (time: number) => {
         let t = (time - start) / 1000;
         let progress = (time - start) / duration;
 
@@ -612,19 +610,42 @@ const animateIslandSize = (targetWidth: number, targetHeight: number) => {
         let spring = 1 - Math.cos(freq * t * 2 * Math.PI) * Math.exp(-decay * t);
 
         // 1. 更新 Vue 内部样式组件的宽高
-        currentWidth.value = startWidth + (targetWidth - startWidth) * spring;
-        currentHeight.value = startHeight + (targetHeight - startHeight) * spring;
+        const newWidth = startWidth + (targetWidth - startWidth) * spring;
+        const newHeight = startHeight + (targetHeight - startHeight) * spring;
 
-        // 2. 【关键同步】实时改变原生 Tauri 窗口的大小，防止空白区域阻挡点击
-        // 由于调整物理窗口有微小开销，这里实时转为逻辑尺寸同步给窗口
-        appWindow.setSize(new LogicalSize(currentWidth.value, currentHeight.value)).catch(() => { });
+        currentWidth.value = newWidth;
+        currentHeight.value = newHeight;
+
+        // 2. 同步改变原生 Tauri 窗口大小
+        await appWindow.setSize(new LogicalSize(newWidth, newHeight)).catch(() => { });
+
+        // 3. 【核心修复】每帧重新计算并设置窗口水平居中位置
+        try {
+            const monitor = await currentMonitor();
+            if (monitor) {
+                const scaleFactor = await appWindow.scaleFactor();
+                const windowSize = await appWindow.innerSize();
+
+                // 重新计算物理居中的 X 坐标
+                const x = monitor.position.x + (monitor.size.width - windowSize.width) / 2;
+                // Y 轴保持贴顶（与 adjustWindowPosition 逻辑一致）
+                const y = monitor.position.y + (12 * scaleFactor);
+
+                await appWindow.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
+            }
+        } catch (e) {
+            // 忽略单帧位置调整失败，避免阻塞动画
+        }
 
         if (progress < 1) {
             requestAnimationFrame(run);
         } else {
+            // 动画结束，确保最终状态精准
             currentWidth.value = targetWidth;
             currentHeight.value = targetHeight;
             appWindow.setSize(new LogicalSize(targetWidth, targetHeight)).catch(() => { });
+            // 结束时再强制校准一次位置
+            adjustWindowPosition().catch(() => { });
         }
     };
     requestAnimationFrame(run);
