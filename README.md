@@ -1,12 +1,15 @@
 # NetSpeed Dynamic Pro (NSD)
 
-一款基于 **Tauri 2 + Vue 3** 构建的桌面动态网速监控工具，提供灵动岛风格的悬浮窗实时显示网络速度，并支持流量数据统计分析、灵动岛个性化设置、网易云音乐控制与系统消息通知接收。
+一款基于 **Tauri 2 + Vue 3** 构建的桌面动态网速监控工具，提供灵动岛风格的悬浮窗实时显示网络速度，并支持流量数据统计分析、灵动岛个性化设置、网易云音乐控制、系统消息通知接收与系统硬件监控。
 
 **音乐控制器**
 ![NetSpeed Dynamic 效果图](./src/assets/screenshot2.png)
 ![NetSpeed Dynamic 效果图](./src/assets/screenshot3.png)
 **灵动岛通知**
 ![NetSpeed Dynamic 效果图](./src/assets/screenshot4.jpg)
+**系统资源监控**
+![NetSpeed Dynamic 效果图](./src/assets/screenshot5.png)
+![NetSpeed Dynamic 效果图](./src/assets/screenshot6.png)
 **标准网速显示**
 ![NetSpeed Dynamic 效果图](./src/assets/screenshot.png)
 
@@ -98,8 +101,8 @@ NetSpeed-Dynamic/
 │   ├── App.vue                   # 根组件（router-view）
 │   ├── router/index.ts           # 路由配置：/ → MainPanel, /widget → WidgetIsland
 │   ├── views/
-│   │   ├── MainPanel.vue         # 主控制台面板（网速仪表盘 + 设置 + 图表 + 数据统计 + 灵动岛设置 + 音乐/通知控制开关）
-│   │   └── WidgetIsland.vue      # 灵动岛悬浮窗组件（网速显示 + 音乐控制器 + 消息通知 + 流光边框 + 动画 + 右键菜单 + DPI适配 + 主题色 + 动态尺寸）
+│   │   ├── MainPanel.vue         # 主控制台面板（网速仪表盘 + 设置 + 图表 + 数据统计 + 灵动岛设置 + 音乐/通知/硬件监控控制开关）
+│   │   └── WidgetIsland.vue      # 灵动岛悬浮窗组件（网速显示 + 音乐控制器 + 消息通知 + 系统硬件监控 + 流光边框 + 动画 + 右键菜单 + DPI适配 + 主题色 + 动态尺寸）
 │   └── assets/
 │       ├── logo.png              # 应用 Logo
 │       ├── screenshot.png        # 效果截图
@@ -110,9 +113,9 @@ NetSpeed-Dynamic/
 ├── src-tauri/                    # Tauri 后端（Rust）
 │   ├── src/
 │   │   ├── main.rs               # Rust 入口
-│   │   └── lib.rs                # 核心逻辑：Tauri 命令、托盘、窗口管理、Windows DWM 样式、网易云音乐信息捕获、媒体控制、多源封面获取、系统通知监听
+│   │   └── lib.rs                # 核心逻辑：Tauri 命令、托盘、窗口管理、Windows DWM 样式、网易云音乐信息捕获、媒体控制、多源封面获取、系统通知监听、系统硬件监控数据采集
 │   ├── Cargo.toml                # Rust 依赖声明（含 reqwest, urlencoding, winapi, windows-rs 等）
-│   ├── tauri.conf.json           # Tauri 配置（双窗口：main + widget, v2.0.0）
+│   ├── tauri.conf.json           # Tauri 配置（双窗口：main + widget, v2.1.0）
 │   └── icons/                    # 应用图标（全平台）
 ├── index.html                    # HTML 入口（含主题预加载脚本）
 ├── vite.config.ts                # Vite 配置（Tauri 开发模式适配）
@@ -149,6 +152,7 @@ NetSpeed-Dynamic/
 | `control_system_media` | 通过 Windows `keybd_event` 发送全局多媒体按键（播放/暂停、上一首、下一首） |
 | `get_random_cover_url` | 多源获取专辑封面 URL：网易云搜索 API → **Deezer Search API** → iTunes Search API → **Base64 SVG 渐变**兜底，内置 5 秒超时 |
 | `fetch_latest_notification` | 通过 Windows `UserNotificationListener` 读取系统通知中心最新 Toast 通知，返回应用名和内容（自动过滤微信） |
+| `get_hardware_stats` | 通过 `sysinfo::System` 获取 CPU 使用率（%）、已用内存（bytes）、总内存（bytes），前端计算内存占用百分比并智能模拟 GPU 趋势值 |
 
 ### 灵动岛动画
 
@@ -160,7 +164,7 @@ scale = 1 - cos(2pi*ft) x e^(-dt)    // f=2.0, d=10.5, duration=600ms
 
 退场动画完成后才触发 Tauri 窗口隐藏，确保视觉连贯。音乐控制箱入场额外带有 `translateY` 位移动画（20px -> 0），退场采用 150ms 快速淡出。
 
-**灵动岛动态尺寸机制**：当收到系统消息通知时，灵动岛通过弹性动画从标准胶囊尺寸（260x42px）平滑扩展为通知展示尺寸（360x65px），通知消失后自动收回。内部子元素（网速/音乐/通知）的切换均采用独立的弹簧入场动画。
+**灵动岛动态尺寸机制**：当收到系统消息通知时，灵动岛通过弹性动画从标准胶囊尺寸（260x42px）平滑扩展为通知展示尺寸（360x65px），通知消失后自动收回。内部子元素（网速/音乐/通知/硬件监控）的切换均采用独立的弹簧入场动画。灵动岛支持**四种显示模式**，按优先级从高到低依次为：系统通知 > 音乐控制器 > 系统硬件监控 > 网速监控。
 
 ### 灵动岛主题色机制
 
@@ -219,6 +223,31 @@ scale = 1 - cos(2pi*ft) x e^(-dt)    // f=2.0, d=10.5, duration=600ms
    - 显示应用图标头像 + 通知标题（14px 加粗）+ 通知正文（12.5px）
    - 5 秒后自动收回至原始胶囊尺寸（260x42）
 7. **优先级**：通知 > 音乐 > 网速（即通知到来时优先展示通知内容）
+
+### 系统硬件监控机制
+
+系统硬件监控是灵动岛的第四种展示模式，与网速显示、音乐控制器、消息通知互斥（同一时间只显示其一）：
+
+1. **开启流程**：用户在「灵动岛设置面板」中开启「系统硬件监控」开关 -> 状态写入 localStorage（`nsd_hardware_mon`）-> 通过事件推送至 WidgetIsland -> 灵动岛从当前模式切换到硬件监控模式（带弹簧进场动画）
+2. **数据采集**：
+   - Rust 后端每秒调用 `get_hardware_stats` 命令
+   - 使用 `sysinfo::System` 统一管理系统状态
+   - `refresh_cpu_usage()` 获取全局 CPU 使用率（返回 f32 浮点数）
+   - `refresh_memory()` 刷新内存信息，返回已用内存和总内存（u64 字节数）
+3. **前端处理**：
+   - CPU 使用率：直接取整后显示为百分比
+   - 内存占用率：`(used_memory / total_memory) * 100`，保留整数
+   - GPU 占用率：采用智能模拟算法 —— 基于当前 CPU 使用率的 40% 作为基础值，叠加 0-5 的随机偏移，限制在 1%-99% 范围内。此方案避免引入额外的 GPU 监控依赖库（如 NVML / AMD ADL），同时提供视觉上的动态反馈
+4. **高占用预警逻辑**：
+   - 实时监听 CPU/GPU/RAM 数值
+   - 当任意指标 ≥ 90% 时，为该数值元素动态添加 `.high-usage` CSS 类
+   - 触发苹果标准警示红色（#f06861），带 0.3s 颜色过渡动画
+   - 当数值回落至 90% 以下时自动移除警告样式
+5. **UI 布局**：
+   - 采用绝对定位的横向流式布局（`display: flex; align-items: center; justify-content: flex-start`）
+   - 每个指标项包含：10px 小字号标签（opacity: 0.5）+ 13px 粗体数值 + 分隔线
+   - 整体左对齐，右侧留出空间给网络状态指示灯
+6. **模式切换记忆**：开启硬件监控时，若音乐控制器正在运行，系统会记录原状态；关闭硬件监控后可选择性恢复音乐控制器（通过 `wasMusicEnabledBeforeHardware` 变量实现）
 
 ### 数据统计机制
 
@@ -281,11 +310,18 @@ npm run tauri build
      - 支持上一首 / 播放暂停 / 下一首控制
      - 鼠标悬停显示控制按钮，离开后显示歌曲信息
      - *需保持网易云音乐运行（可最小化），不可关闭窗口*
-   - **消息通知接收 (NEW)** — 开启后灵动岛将实时展示系统通知：
+   - **消息通知接收 (PRO)** — 开启后灵动岛将实时展示系统通知：
      - 自动捕获 QQ、钉钉、飞书等应用的 Toast 推送通知
      - 收到通知时灵动岛自动扩展并显示应用图标 + 标题 + 正文
      - 5 秒后自动收回原始尺寸
      - 自动过滤微信通知避免干扰
+   - **系统硬件监控 (PRO)** — 开启后灵动岛将显示实时系统性能数据：
+     - **CPU 占用率** — 实时显示全局 CPU 使用百分比（基于 sysinfo 精确采集）
+     - **内存占用率** — 显示已用内存占总内存的百分比
+     - **GPU 占用率** — 基于 CPU 趋势智能模拟的动态估算值（避免安装额外 GPU 驱动插件）
+     - **高占用预警** — 当任意指标 ≥ 90% 时自动变为红色警示，带平滑颜色过渡动画
+     - **紧凑布局** — 三列式横向设计完美适配灵动岛空间，支持暗色/亮色主题自适应
+     - *注：开启硬件监控时会自动暂停音乐控制器（如有运行），关闭后可手动恢复*
    - **PRO 功能预览** — 系统硬件监控（即将推出）
 7. 控制台右侧面板支持在**常规设置**与**数据统计**之间切换：
    - **常规设置**：显示模式、开机自启、悬浮窗不透明度调节

@@ -180,7 +180,9 @@
 
                     <div class="set-item">
                         <div class="set-item-meta">
-                            <span class="set-item-title">系统硬件监控 <p class="set-item-pro-tag">PRO</p></span>
+                            <span class="set-item-title">系统硬件监控 <p class="set-item-pro-tag">PRO</p>
+                                <p class="set-item-new-tag">NEW</p>
+                            </span>
                             <span class="set-item-desc">显示 CPU / 内存实时占用情况</span>
                         </div>
                         <label class="switch">
