@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 use tauri::{State, Manager};
-use sysinfo::Networks;
+use sysinfo::{Networks, System};
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 use tauri_plugin_autostart::MacosLauncher;
@@ -280,6 +280,15 @@ async fn fetch_latest_notification() -> Result<Option<(String, String)>, String>
 
 struct AppState {
     networks: Mutex<Networks>,
+    system: Mutex<System>,
+}
+
+#[tauri::command]
+fn get_hardware_stats(state: State<'_, AppState>) -> (f32, u64, u64) {
+    let mut sys = state.system.lock().unwrap();
+    sys.refresh_cpu_usage(); // 刷新CPU，获取精准增量
+    sys.refresh_memory();    // 刷新内存
+    (sys.global_cpu_info().cpu_usage(), sys.used_memory(), sys.total_memory())
 }
 
 #[tauri::command]
@@ -324,6 +333,8 @@ fn is_widget_visible(app: tauri::AppHandle) -> bool {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let networks = Networks::new_with_refreshed_list();
+    let mut system = System::new_all();
+    system.refresh_cpu_usage();
 
     tauri::Builder::default()
         // 1. 【唯一实例保证】初始化单实例插件。如果重复启动，直接退出进程
@@ -335,6 +346,7 @@ pub fn run() {
         ))
         .manage(AppState {
             networks: Mutex::new(networks),
+            system: Mutex::new(system),
         })
         .invoke_handler(tauri::generate_handler![
             get_network_stats,
@@ -344,6 +356,7 @@ pub fn run() {
             control_system_media,
             get_random_cover_url,
             fetch_latest_notification,
+            get_hardware_stats,
         ])
         .setup(|app| {
             // --- 新增：处理静默启动逻辑 ---

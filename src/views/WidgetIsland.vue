@@ -21,6 +21,22 @@
                     </transition>
 
                     <transition @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
+                        <div class="systemstate-box" v-show="isHardwareMonEnabled && !isMsgActive" key="hardware">
+                            <div class="hw-item">
+                                <span class="hw-label">CPU</span>
+                                <span class="hw-value" :class="{ 'high-usage': parseInt(cpuUsage) >= 90 }">{{ cpuUsage
+                                }}</span>
+                            </div>
+                            <div class="hw-divider"></div>
+                            <div class="hw-item">
+                                <span class="hw-label">RAM</span>
+                                <span class="hw-value" :class="{ 'high-usage': parseInt(memUsage) >= 90 }">{{ memUsage
+                                }}</span>
+                            </div>
+                        </div>
+                    </transition>
+
+                    <transition @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
                         <div class="music-ctl-box" v-show="isMusicCtlEnabled && !isMsgActive" :key="musicBoxKey"
                             @mouseenter="handleMusicBoxEnter" @mouseleave="handleMusicBoxLeave">
 
@@ -67,7 +83,8 @@
                     </transition>
 
                     <transition @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
-                        <div class="speed-box" v-show="!isMusicCtlEnabled && !isMsgActive" key="speed">
+                        <div class="speed-box" v-show="!isMusicCtlEnabled && !isHardwareMonEnabled && !isMsgActive"
+                            key="speed">
                             <div class="speed-item">
                                 <span :class="['label', { 'high-traffic': isHighUpload }]">↑</span>
                                 <span class="value">{{ uploadSpeed }}</span>
@@ -148,11 +165,16 @@ const isHighUpload = ref(false);
 // 网络状态指示灯：good(绿), warning(黄), error(红)
 const networkStatus = ref<'good' | 'warning' | 'error'>('good');
 
+// 系统硬件监控相关
+const isHardwareMonEnabled = ref(localStorage.getItem('nsd_hardware_mon') === 'true');
+const cpuUsage = ref('0%');
+const memUsage = ref('0%');
+
 // 音乐控制功能开关
 const isMusicCtlEnabled = ref(localStorage.getItem('nsd_music_ctrl') === 'true');
 const isPlaying = ref(false);
 let isClickingToggle = false;
-// 【修改】流光边框默认状态完全镜像音乐控制器（只要音乐控制器开着它就开，关了就一起关）
+// 流光边框默认状态完全镜像音乐控制器（只要音乐控制器开着它就开，关了就一起关）
 const isGlowBorderEnabled = ref(isMusicCtlEnabled.value);
 
 const coverUrl = ref('');
@@ -687,6 +709,11 @@ onMounted(async () => {
     await getCurrentWindow().show();
     isIslandVisible.value = true;
 
+    // 监听来自控制台的系统硬件监控开关
+    await listen<{ enabled: boolean }>('control-hardware-mon', (event) => {
+        isHardwareMonEnabled.value = event.payload.enabled;
+    });
+
     fetchSpeedStats();
     checkNetworkLatency();
 
@@ -697,7 +724,21 @@ onMounted(async () => {
             syncMusicStatus(); // 当音乐控制器启用时，每秒顺带检查网易云
         }
 
-        // === 新增：定时轮询系统通知状态 ===
+        // 👇 新增：每秒实时拉取系统硬件状态
+        if (isHardwareMonEnabled.value) {
+            try {
+                const [cpu, usedMem, totalMem] = await invoke<[number, number, number]>('get_hardware_stats');
+                cpuUsage.value = Math.round(cpu) + '%';
+                // 增加防呆设计，防止除以 0 导致报错
+                if (totalMem > 0) {
+                    memUsage.value = Math.round((usedMem / totalMem) * 100) + '%';
+                }
+            } catch (err) {
+                console.error('获取硬件信息失败:', err);
+            }
+        }
+
+        // 定时轮询系统通知状态
         const enabled = localStorage.getItem('nsd_msg_notify') === 'true';
         if (enabled) {
             try {
@@ -857,6 +898,7 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     gap: 4px;
+    transform: translateY(-1px);
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
 }
 
@@ -1192,5 +1234,49 @@ onUnmounted(() => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+
+/* 系统硬件盒子样式 */
+.systemstate-box {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+}
+
+.hw-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 8px;
+    transform: translateY(-1px);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+}
+
+.hw-label {
+    font-size: 10px;
+    color: currentColor;
+    opacity: 0.5;
+    font-weight: bold;
+}
+
+.hw-value {
+    font-size: 13px;
+    font-weight: bold;
+    min-width: 36px;
+    letter-spacing: -0.2px;
+    transition: color 0.3s ease;
+    /* 👈 新增：让颜色变化时有 0.3 秒的平滑淡入淡出，不突兀 */
+}
+
+/* 👇 新增：当占用率达到 90% 及以上时触发的标准苹果亮红色 */
+.hw-value.high-usage {
+    color: #ff3b30 !important;
 }
 </style>

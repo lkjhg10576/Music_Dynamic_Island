@@ -178,15 +178,13 @@
                         </label>
                     </div>
 
-                    <div class="set-item disabled-set-item">
+                    <div class="set-item">
                         <div class="set-item-meta">
-                            <span class="set-item-title">系统硬件监控 <p class="set-item-pro-tag">PRO</p>
-                                <p class="set-item-pro-tag">即将推出</p>
-                            </span>
-                            <span class="set-item-desc">显示 CPU / 内存占用情况预警</span>
+                            <span class="set-item-title">系统硬件监控 <p class="set-item-pro-tag">PRO</p></span>
+                            <span class="set-item-desc">显示 CPU / 内存实时占用情况</span>
                         </div>
                         <label class="switch">
-                            <input type="checkbox" v-model="enableHardwareMon" disabled="true">
+                            <input type="checkbox" v-model="enableHardwareMon" @change="toggleHardwareMon">
                             <span class="slider"></span>
                         </label>
                     </div>
@@ -274,7 +272,8 @@ const isChecking = ref(false);
 const islandTheme = ref(localStorage.getItem('nsd_island_theme') || 'black');
 const enableMusicCtrl = ref(localStorage.getItem('nsd_music_ctrl') === 'true');
 const enableMsgNotify = ref(localStorage.getItem('nsd_msg_notify') === 'true');
-const enableHardwareMon = ref(false);
+const enableHardwareMon = ref(localStorage.getItem('nsd_hardware_mon') === 'true');
+let wasMusicEnabledBeforeHardware = false; // 用于记忆原来音乐控制器是不是开着的
 
 // 新增切换保存方法
 const toggleMsgNotify = () => {
@@ -686,6 +685,25 @@ const handleSystemThemeUpdate = () => {
     }
 };
 
+const toggleHardwareMon = async () => {
+    localStorage.setItem('nsd_hardware_mon', String(enableHardwareMon.value));
+    await emit('control-hardware-mon', { enabled: enableHardwareMon.value });
+
+    if (enableHardwareMon.value) {
+        // 如果开启硬件监控，记录音乐状态，并把音乐关掉
+        wasMusicEnabledBeforeHardware = enableMusicCtrl.value;
+        if (enableMusicCtrl.value) {
+            enableMusicCtrl.value = false;
+        }
+    } else {
+        // 如果关闭硬件监控，且原来音乐是开着的，就恢复音乐
+        if (wasMusicEnabledBeforeHardware) {
+            enableMusicCtrl.value = true;
+            wasMusicEnabledBeforeHardware = false; // 用完重置
+        }
+    }
+};
+
 watch(opacity, async (newVal) => {
     localStorage.setItem('nsd_island_opacity', newVal.toString());
     await emit('control-island-opacity', { opacity: newVal });
@@ -702,6 +720,13 @@ watch(enableMusicCtrl, async (newVal) => {
     localStorage.setItem('nsd_music_ctrl', newVal.toString());
     await emit('control-music-ctl', { enabled: newVal });
     console.log('音乐控制器状态切换为:', newVal);
+
+    // 👇新增互斥防呆逻辑：如果用户手动开启音乐，强行把硬件关掉
+    if (newVal && enableHardwareMon.value) {
+        enableHardwareMon.value = false;
+        localStorage.setItem('nsd_hardware_mon', 'false');
+        await emit('control-hardware-mon', { enabled: false });
+    }
 });
 
 onMounted(async () => {
