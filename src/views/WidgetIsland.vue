@@ -410,6 +410,9 @@ const adjustWindowPosition = async () => {
             const y = monitorTopPhysical + (12 * scaleFactor);
 
             await appWindow.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
+
+            trackedPhysicalX = Math.round(x);
+            trackedPhysicalY = Math.round(y);
         }
     } catch (error) {
         console.error('调整窗口位置失败:', error);
@@ -633,11 +636,16 @@ const isMsgActive = ref(false);
 const msgTitle = ref('');
 const msgBody = ref('');
 
-// 【注意】这里加了 async
-const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
-    let startWidth = currentWidth.value;
-    let startHeight = currentHeight.value;
-    let start = performance.now();
+// 同步追踪窗口位置（物理像素），动画中直接读取，无需任何 async
+let trackedPhysicalX = 0;
+let trackedPhysicalY = 0;
+let trackedScaleFactor = 1;
+
+// 灵动岛核心代码！（动画函数）
+const animateIslandSize = (targetWidth: number, targetHeight: number) => {
+    const startWidth = currentWidth.value;
+    const startHeight = currentHeight.value;
+    const start = performance.now();
 
     const freq = 2.0;
     const decay = 10.5;
@@ -645,61 +653,42 @@ const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
 
     const appWindow = getCurrentWindow();
 
-    // 【唯一改动点】：在动画开始前，先把中心点和 Y 坐标获取好。
-    // 因为函数已经是 async，这里直接 await，干干净净，没有任何竞态条件。
-    let centerX = 0;
-    let physicalY = 0;
-    try {
-        const pos = await appWindow.innerPosition();
-        const size = await appWindow.innerSize();
-        centerX = pos.x + size.width / 2;
-        physicalY = pos.y;
-    } catch (e) {
-        return; // 如果获取失败，直接终止，防止乱飞
-    }
+    // 动画开始时，锁定当前的中心点（物理像素）
+    const centerPhysicalX = trackedPhysicalX + (startWidth * trackedScaleFactor) / 2;
+    const originPhysicalY = trackedPhysicalY;
 
-    const run = async (time: number) => {
-        let t = (time - start) / 1000;
-        let progress = (time - start) / duration;
+    const run = (time: number) => {
+        const t = (time - start) / 1000;
+        const progress = (time - start) / duration;
 
-        // 核心数学方程：1 - cos(2πft) * e^(-dt) (完全保留您的原代码)
-        let spring = 1 - Math.cos(freq * t * 2 * Math.PI) * Math.exp(-decay * t);
+        const spring = 1 - Math.cos(freq * t * 2 * Math.PI) * Math.exp(-decay * t);
 
-        // 1. 更新 Vue 内部样式组件的宽高
         const newWidth = startWidth + (targetWidth - startWidth) * spring;
         const newHeight = startHeight + (targetHeight - startHeight) * spring;
 
+        // 更新 Vue 的宽高
         currentWidth.value = newWidth;
         currentHeight.value = newHeight;
 
-        // 2. 同步改变原生 Tauri 窗口大小
-        await appWindow.setSize(new LogicalSize(newWidth, newHeight)).catch(() => { });
+        // 绝对计算：新的左边缘 = 中心点 - 新宽度的一半
+        const newLeftX = Math.round(centerPhysicalX - (newWidth * trackedScaleFactor) / 2);
 
-        // 3. 【核心修复】基于已经获取好的“当前中心点”计算位置，保证向两侧展开
-        try {
-            const windowSize = await appWindow.innerSize();
-            const x = centerX - windowSize.width / 2;
-            const y = physicalY;
-
-            await appWindow.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
-        } catch (e) {
-            // 忽略单帧位置调整失败
-        }
+        // 先 setPosition，再 setSize
+        // 先把窗口挪到正确的左边缘位置，再让窗口从这个位置往右长大
+        appWindow.setPosition(new PhysicalPosition(newLeftX, originPhysicalY)).catch(() => { });
+        appWindow.setSize(new LogicalSize(newWidth, newHeight)).catch(() => { });
 
         if (progress < 1) {
             requestAnimationFrame(run);
         } else {
-            // 动画结束，确保最终状态精准
             currentWidth.value = targetWidth;
             currentHeight.value = targetHeight;
-            appWindow.setSize(new LogicalSize(targetWidth, targetHeight)).catch(() => { });
 
-            // 结束时基于记录的中心点做最后一次精准校准
-            try {
-                const finalSize = await appWindow.innerSize();
-                const finalX = centerX - finalSize.width / 2;
-                await appWindow.setPosition(new PhysicalPosition(Math.round(finalX), Math.round(physicalY)));
-            } catch (e) { }
+            // 动画结束，精确锁定最终追踪位置
+            trackedPhysicalX = Math.round(centerPhysicalX - (targetWidth * trackedScaleFactor) / 2);
+
+            appWindow.setPosition(new PhysicalPosition(trackedPhysicalX, originPhysicalY)).catch(() => { });
+            appWindow.setSize(new LogicalSize(targetWidth, targetHeight)).catch(() => { });
         }
     };
 
@@ -735,6 +724,21 @@ onMounted(async () => {
     await listen<{ theme: string }>('control-island-theme', (event) => {
         islandTheme.value = event.payload.theme;
     });
+
+    // 初始化位置追踪
+    const appWindow = getCurrentWindow();
+    try {
+        const pos = await appWindow.innerPosition();
+        trackedPhysicalX = pos.x;
+        trackedPhysicalY = pos.y;
+        trackedScaleFactor = await appWindow.scaleFactor();
+    } catch (e) { }
+
+    // 窗口被拖动后自动同步位置
+    appWindow.onMoved((event) => {
+        trackedPhysicalX = event.payload.x;
+        trackedPhysicalY = event.payload.y;
+    }).catch(() => { });
 
     await adjustWindowPosition();
 
