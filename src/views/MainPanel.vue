@@ -182,7 +182,7 @@
                         <div class="set-item-meta">
                             <span class="set-item-title">系统硬件监控 <p class="set-item-pro-tag">PRO</p>
                             </span>
-                            <span class="set-item-desc">显示 CPU / 内存实时占用情况</span>
+                            <span class="set-item-desc">显示 CPU / GPU / 内存实时占用率</span>
                         </div>
                         <label class="switch">
                             <input type="checkbox" v-model="enableHardwareMon" @change="toggleHardwareMon">
@@ -192,7 +192,7 @@
 
                     <div class="set-item">
                         <div class="set-item-meta">
-                            <span class="set-item-title">置于任务栏 <p class="set-item-new-tag">NEW</p></span>
+                            <span class="set-item-title">置于任务栏</span>
                             <span class="set-item-desc">将灵动岛锁定至任务栏左下角</span>
                         </div>
                         <label class="switch">
@@ -201,15 +201,15 @@
                         </label>
                     </div>
 
-                    <div class="set-item">
+                    <div class="set-item disabled-set-item">
                         <div class="set-item-meta">
-                            <span class="set-item-title"></span>
-                            <span class="set-item-desc"></span>
+                            <span class="set-item-title">消息模式 <p class="set-item-pro-tag">即将推出</p></span>
+                            <span class="set-item-desc">默认隐藏灵动岛，收到消息后弹出</span>
                         </div>
-                        <!-- <label class="switch">
-                            <input type="checkbox" v-model="disableBtn">
+                        <label class="switch">
+                            <input type="checkbox" v-model="disableBtn" disabled>
                             <span class="slider"></span>
-                        </label> -->
+                        </label>
                     </div>
                 </div>
             </template>
@@ -276,6 +276,7 @@ const islandTheme = ref(localStorage.getItem('nsd_island_theme') || 'black');
 const enableMusicCtrl = ref(localStorage.getItem('nsd_music_ctrl') === 'true');
 const enableMsgNotify = ref(localStorage.getItem('nsd_msg_notify') === 'true');
 const enableHardwareMon = ref(localStorage.getItem('nsd_hardware_mon') === 'true');
+const disableBtn = ref(false);
 let wasMusicEnabledBeforeHardware = false;
 
 // 置于任务栏状态，默认从本地存储读取
