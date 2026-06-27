@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="./src/assets/logo.png" alt="音乐控制器" width="350" />
+<img src="./src/assets/logo.png" alt="音乐控制器" width="200" />
 
 **NetSpeed Dynamic Pro** —— 专为 Windows 而生的灵动岛
 
