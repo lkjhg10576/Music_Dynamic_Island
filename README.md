@@ -1,6 +1,10 @@
 # NetSpeed Dynamic Pro (NSD)
 
-基于 **Tauri 2 + Rust + Vue 3** 的桌面动态网速监控工具，灵动岛悬浮窗实时显示网络速度，支持流量统计、网易云音乐控制、系统通知接收与硬件监控，支持置于任务栏左下角。
+<div align="center">
+
+![音乐控制器](./src/assets/logo.png)
+
+**NetSpeed Dynamic Pro** —— 专为 Windows 而生的灵动岛
 
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-blue?logo=tauri)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://rust-lang.org)
@@ -9,11 +13,17 @@
 [![Vite](https://img.shields.io/badge/Vite-6.x-yellow?logo=vite)](https://vite.dev)
 [![ECharts](https://img.shields.io/badge/ECharts-6.x-purple?logo=apache-echarts)](https://echarts.apache.org)
 
+</div>
+
 ![音乐控制器](./src/assets/screenshot2.png)
 ![灵动岛通知](./src/assets/screenshot4.jpg)
 ![系统资源监控](./src/assets/screenshot5.png)
 ![标准网速显示](./src/assets/screenshot.png)
 ![置于任务栏](./src/assets/screenshot7.png)
+
+---
+
+这是一个基于 **Tauri 2 + Rust + Vue 3** 的桌面动态网速监控工具，灵动岛悬浮窗实时显示网络速度，支持流量统计、网易云音乐控制、系统通知接收与硬件监控，支持置于任务栏左下角。
 
 ## 功能
 
