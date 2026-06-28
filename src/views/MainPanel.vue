@@ -169,13 +169,13 @@
                         </div>
                     </div>
 
-                    <div class="set-item">
+                    <div class="set-item" :class="{ 'disabled-set-item': enableRotation }">
                         <div class="set-item-meta">
                             <span class="set-item-title">音乐控制器 <p class="set-item-pro-tag">PRO</p></span>
-                            <span class="set-item-desc">支持网易云音乐控制及歌曲信息显示</span>
+                            <span class="set-item-desc">{{ enableRotation ? '轮换开启中，已禁用' : '支持网易云音乐控制及歌曲信息显示' }}</span>
                         </div>
                         <label class="switch">
-                            <input type="checkbox" v-model="enableMusicCtrl">
+                            <input type="checkbox" v-model="enableMusicCtrl" :disabled="enableRotation">
                             <span class="slider"></span>
                         </label>
                     </div>
@@ -191,25 +191,27 @@
                         </label>
                     </div>
 
-                    <div class="set-item">
+                    <div class="set-item" :class="{ 'disabled-set-item': enableRotation }">
                         <div class="set-item-meta">
-                            <span class="set-item-title">系统硬件监控 <p class="set-item-pro-tag">PRO</p>
-                            </span>
-                            <span class="set-item-desc">显示 CPU / GPU / 内存实时占用率</span>
+                            <span class="set-item-title">系统硬件监控 <p class="set-item-pro-tag">PRO</p></span>
+                            <span class="set-item-desc">{{ enableRotation ? '轮换开启中，已禁用' : '显示 CPU / GPU / 内存实时占用率'
+                                }}</span>
                         </div>
                         <label class="switch">
-                            <input type="checkbox" v-model="enableHardwareMon" @change="toggleHardwareMon">
+                            <input type="checkbox" v-model="enableHardwareMon" @change="toggleHardwareMon"
+                                :disabled="enableRotation">
                             <span class="slider"></span>
                         </label>
                     </div>
 
-                    <div class="set-item">
+                    <div class="set-item" :class="{ 'disabled-set-item': enableRotation }">
                         <div class="set-item-meta">
                             <span class="set-item-title">静默消息模式</span>
-                            <span class="set-item-desc">平时自动隐藏，收到消息后才弹出</span>
+                            <span class="set-item-desc">{{ enableRotation ? '轮换开启中，已禁用' : '平时自动隐藏，收到消息后才弹出' }}</span>
                         </div>
                         <label class="switch">
-                            <input type="checkbox" v-model="msgModeEnabled" @change="toggleMsgMode">
+                            <input type="checkbox" v-model="msgModeEnabled" @change="toggleMsgMode"
+                                :disabled="enableRotation">
                             <span class="slider"></span>
                         </label>
                     </div>
@@ -220,7 +222,7 @@
                             <span class="set-item-desc">在网速岛、音乐岛、硬件监控间轮换</span>
                         </div>
                         <label class="switch">
-                            <input type="checkbox">
+                            <input type="checkbox" v-model="enableRotation" @change="toggleRotation">
                             <span class="slider"></span>
                         </label>
                     </div>
@@ -291,6 +293,7 @@ const enableMusicCtrl = ref(localStorage.getItem('nsd_music_ctrl') === 'true');
 const enableMsgNotify = ref(localStorage.getItem('nsd_msg_notify') === 'true');
 const enableHardwareMon = ref(localStorage.getItem('nsd_hardware_mon') === 'true');
 const msgModeEnabled = ref(localStorage.getItem('nsd_msg_mode') === 'true');
+const enableRotation = ref(localStorage.getItem('nsd_rotation_mode') === 'true');
 let wasMusicEnabledBeforeHardware = false;
 
 // 置于任务栏状态，默认从本地存储读取
@@ -301,7 +304,7 @@ const togglePinTaskbar = async () => {
     await emit('control-pin-taskbar', { enabled: pinToTaskbar.value });
 };
 
-// 切换消息模式并通知灵动岛
+// 切换消息模式
 const toggleMsgMode = async () => {
     localStorage.setItem('nsd_msg_mode', String(msgModeEnabled.value));
     await emit('control-msg-mode', { enabled: msgModeEnabled.value });
@@ -315,6 +318,23 @@ const toggleMsgNotify = () => {
 // 切换灵动岛设置
 const toggleDynamicSet = () => {
     isDynamicSet.value = !isDynamicSet.value;
+};
+
+// 切换灵动岛轮换模式
+const toggleRotation = async () => {
+    // 1. 保存并发送轮换功能的开关状态
+    localStorage.setItem('nsd_rotation_mode', String(enableRotation.value));
+    await emit('control-rotation-mode', { enabled: enableRotation.value });
+
+    // ✨ 新增限制逻辑：如果用户【开启】了轮换功能
+    if (enableRotation.value) {
+        // 强行将静默消息模式设为关闭（false）
+        msgModeEnabled.value = false;
+        // 同步更新本地电脑的记忆状态
+        localStorage.setItem('nsd_msg_mode', 'false');
+        // 发送信号通知灵动岛浮窗：静默模式已关闭，请立刻现身
+        await emit('control-msg-mode', { enabled: false });
+    }
 };
 
 // 切换灵动岛设置时，更新图表
@@ -1828,5 +1848,10 @@ input:checked+.slider:before {
     transform: scale(0.65);
     transform-origin: left center;
     margin: 0;
+}
+
+input:disabled+.slider {
+    cursor: not-allowed;
+    opacity: 0.5;
 }
 </style>

@@ -22,7 +22,7 @@
                     </transition>
 
                     <transition @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
-                        <div class="systemstate-box" v-show="isHardwareMonEnabled && !isMsgActive" key="hardware">
+                        <div class="systemstate-box" v-show="displayHardware" key="hardware">
                             <div class="hw-item">
                                 <span class="hw-label">CPU</span>
                                 <span class="hw-value" :class="{ 'high-usage': parseInt(cpuUsage) >= 90 }">{{ cpuUsage
@@ -44,7 +44,7 @@
                     </transition>
 
                     <transition @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
-                        <div class="music-ctl-box" v-show="isMusicCtlEnabled && !isMsgActive" :key="musicBoxKey"
+                        <div class="music-ctl-box" v-show="displayMusic" :key="musicBoxKey"
                             @mouseenter="handleMusicBoxEnter" @mouseleave="handleMusicBoxLeave">
 
                             <div class="album-cover" :class="{ 'is-playing': isPlaying }">
@@ -90,8 +90,7 @@
                     </transition>
 
                     <transition @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
-                        <div class="speed-box" v-show="!isMusicCtlEnabled && !isHardwareMonEnabled && !isMsgActive"
-                            key="speed">
+                        <div class="speed-box" v-show="displaySpeed" key="speed">
                             <div class="speed-item">
                                 <span :class="['label', { 'high-traffic': isHighUpload }]">↑</span>
                                 <span class="value">{{ uploadSpeed }}</span>
@@ -193,6 +192,31 @@ const isPinnedToTaskbar = ref(localStorage.getItem('nsd_pin_taskbar') === 'true'
 
 // 记录消息模式开关状态
 const isMsgModeEnabled = ref(localStorage.getItem('nsd_msg_mode') === 'true');
+
+// --- 轮换功能核心逻辑 ---
+const isRotationEnabled = ref(localStorage.getItem('nsd_rotation_mode') === 'true');
+const currentRotIndex = ref(0); // 0=网速, 1=音乐, 2=硬件
+let rotationTimer: number | null = null;
+
+// 使用计算属性智能判断当前该显示谁
+const displaySpeed = computed(() => !isMsgActive.value && (isRotationEnabled.value ? currentRotIndex.value === 0 : (!isMusicCtlEnabled.value && !isHardwareMonEnabled.value)));
+const displayMusic = computed(() => !isMsgActive.value && (isRotationEnabled.value ? currentRotIndex.value === 1 : isMusicCtlEnabled.value));
+const displayHardware = computed(() => !isMsgActive.value && (isRotationEnabled.value ? currentRotIndex.value === 2 : isHardwareMonEnabled.value));
+
+const startRotation = () => {
+    if (rotationTimer) clearInterval(rotationTimer);
+    rotationTimer = window.setInterval(() => {
+        currentRotIndex.value = (currentRotIndex.value + 1) % 3;
+    }, 5000); // 5秒轮换一次
+};
+
+const stopRotation = () => {
+    if (rotationTimer) {
+        clearInterval(rotationTimer);
+        rotationTimer = null;
+    }
+};
+// -----------------------
 
 // 计算并吸附到左下角的方法
 const snapToBottomLeft = async () => {
@@ -859,6 +883,22 @@ onMounted(async () => {
         }
     });
 
+    // 监听轮换模式开关
+    await listen<{ enabled: boolean }>('control-rotation-mode', (event) => {
+        isRotationEnabled.value = event.payload.enabled;
+        if (isRotationEnabled.value) {
+            startRotation();
+        } else {
+            stopRotation();
+            currentRotIndex.value = 0; // 关闭时重置回网速
+        }
+    });
+
+    // 启动时如果开了轮换，就跑起来
+    if (isRotationEnabled.value) {
+        startRotation();
+    }
+
     // 初始化位置追踪
     const appWindow = getCurrentWindow();
     try {
@@ -903,12 +943,13 @@ onMounted(async () => {
         }
 
         fetchSpeedStats();
-        if (isMusicCtlEnabled.value) {
-            syncMusicStatus(); // 当音乐控制器启用时，每秒顺带检查网易云
+
+        if (isMusicCtlEnabled.value || isRotationEnabled.value) {
+            syncMusicStatus();
         }
 
         // 每秒实时拉取系统硬件状态
-        if (isHardwareMonEnabled.value) {
+        if (isHardwareMonEnabled.value || isRotationEnabled.value) {
             try {
                 const [cpu, usedMem, totalMem] = await invoke<[number, number, number]>('get_hardware_stats');
                 cpuUsage.value = Math.round(cpu) + '%';
@@ -1010,6 +1051,7 @@ onUnmounted(() => {
     clearInterval(speedTimer);
     clearInterval(pingTimer);
     stopHideTimer();
+    stopRotation();
 });
 </script>
 
