@@ -188,6 +188,8 @@ const coverCache = new Map<string, string>();
 
 // 记录是否开启了置于任务栏
 const isPinnedToTaskbar = ref(localStorage.getItem('nsd_pin_taskbar') === 'true');
+// 👇 新增这一行：记录是否锁定了位置，并存到本地
+const isPositionLocked = ref(localStorage.getItem('nsd_position_locked') === 'true');
 
 // 记录消息模式开关状态
 const isMsgModeEnabled = ref(localStorage.getItem('nsd_msg_mode') === 'true');
@@ -566,7 +568,7 @@ const onLeave = (el: Element, done: () => void) => {
 
 const handleMouseDown = async (event: MouseEvent) => {
     // 【新增的核心锁定逻辑】：如果开启了置于任务栏，直接拦截，禁止任何拖拽！
-    if (isPinnedToTaskbar.value) return;
+    if (isPinnedToTaskbar.value || isPositionLocked.value) return;
 
     // 如果点击的是按钮或按钮内部的 SVG 图标，直接返回，不触发拖拽
     if ((event.target as HTMLElement).closest('.ctl-btn')) return;
@@ -592,16 +594,6 @@ const handleRightClick = async (event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation(); // 阻止冒泡
 
-    // 重置位置
-    const resetPositionItem = await MenuItem.new({
-        text: isPinnedToTaskbar.value ? '重置位置 (已锁定)' : '重置位置',
-        id: 'reset_position',
-        enabled: !isPinnedToTaskbar.value, // 核心逻辑：开启置于任务栏时，禁用此按钮
-        action: () => {
-            adjustWindowPosition().catch(console.error);
-        }
-    });
-
     // 打开设置
     const openSettingsItem = await MenuItem.new({
         text: '打开设置',
@@ -621,6 +613,28 @@ const handleRightClick = async (event: MouseEvent) => {
             isGlowBorderEnabled.value = !isGlowBorderEnabled.value;
             // 新增一行：把你切换后的状态存到本地电脑里
             localStorage.setItem('nsd_glow_border', String(isGlowBorderEnabled.value));
+        }
+    });
+
+    // 重置位置
+    const resetPositionItem = await MenuItem.new({
+        text: isPinnedToTaskbar.value ? '重置位置 (已锁定)' : '重置位置',
+        id: 'reset_position',
+        enabled: !isPinnedToTaskbar.value, // 核心逻辑：开启置于任务栏时，禁用此按钮
+        action: () => {
+            adjustWindowPosition().catch(console.error);
+        }
+    });
+
+    // 锁定位置菜单项
+    const toggleLockItem = await MenuItem.new({
+        text: isPositionLocked.value ? '解锁 (当前已锁定)' : '锁定',
+        id: 'toggle_lock',
+        enabled: !isPinnedToTaskbar.value, // 核心：如果开启了置于任务栏，这个按钮就置灰禁用
+        action: () => {
+            isPositionLocked.value = !isPositionLocked.value;
+            // 保存状态到本地，下次打开软件还在
+            localStorage.setItem('nsd_position_locked', String(isPositionLocked.value));
         }
     });
 
@@ -644,6 +658,7 @@ const handleRightClick = async (event: MouseEvent) => {
     await menu.append(openSettingsItem);
     await menu.append(toggleGlowBorderItem);
     await menu.append(resetPositionItem);
+    await menu.append(toggleLockItem);
     await menu.append(closeItem);
 
     // 4. 弹出菜单
