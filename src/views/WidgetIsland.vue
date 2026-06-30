@@ -45,25 +45,36 @@
                     </transition>
 
                     <transition @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
-                        <div class="music-ctl-box" v-show="displayMusic" :key="musicBoxKey"
-                            @mouseenter="handleMusicBoxEnter" @mouseleave="handleMusicBoxLeave" @click="expandMusic"
-                            style="cursor: pointer;">
+                        <div class="music-ctl-box" :class="{ 'expanded': isMusicExpanded }" v-show="displayMusic"
+                            :key="musicBoxKey" @click="expandMusic" style="cursor: pointer;">
 
-                            <div class="album-cover" :class="{ 'is-playing': isPlaying }">
-                                <div class="cover-inner"
-                                    :style="coverUrl ? { backgroundImage: `url(${coverUrl})`, backgroundSize: 'cover' } : {}">
+                            <div class="music-top-row">
+                                <div class="album-cover" :class="{ 'is-playing': isPlaying }">
+                                    <div class="cover-inner"
+                                        :style="coverUrl ? { backgroundImage: `url(${coverUrl})`, backgroundSize: 'cover' } : {}">
+                                    </div>
+                                </div>
+
+                                <div class="music-info-mask-box">
+                                    <div class="music-info-text single-line" :class="{ 'fade-out': isMusicExpanded }">
+                                        {{ currentTrackInfo }}
+                                    </div>
+                                    <div class="music-info-text double-line" :class="{ 'fade-in': isMusicExpanded }">
+                                        <div class="song-title">{{ currentSongName }}</div>
+                                        <div class="song-artist">{{ currentArtistName }}</div>
+                                    </div>
                                 </div>
                             </div>
 
                             <transition name="fade">
-                                <div class="music-controls" v-show="!showInfo">
-                                    <button class="ctl-btn" @click="prevTrack">
+                                <div class="music-controls" v-show="isMusicExpanded">
+                                    <button class="ctl-btn" @click.stop="prevTrack">
                                         <svg viewBox="0 0 24 24" fill="currentColor">
                                             <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
                                         </svg>
                                     </button>
 
-                                    <button class="ctl-btn play-btn" @click="togglePlay">
+                                    <button class="ctl-btn play-btn" @click.stop="togglePlay">
                                         <svg v-if="isPlaying" viewBox="0 0 24 24" fill="currentColor">
                                             <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
                                         </svg>
@@ -73,19 +84,11 @@
                                         </svg>
                                     </button>
 
-                                    <button class="ctl-btn" @click="nextTrack">
+                                    <button class="ctl-btn" @click.stop="nextTrack">
                                         <svg viewBox="0 0 24 24" fill="currentColor">
                                             <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
                                         </svg>
                                     </button>
-                                </div>
-                            </transition>
-
-                            <transition name="fade">
-                                <div class="music-info-mask-box" v-show="showInfo">
-                                    <div class="music-info-text">
-                                        {{ currentTrackInfo }}
-                                    </div>
                                 </div>
                             </transition>
                         </div>
@@ -105,7 +108,8 @@
                     </transition>
                 </div>
 
-                <div v-if="displayMusic" class="audio-spectrum" :class="{ 'is-playing': isPlaying }">
+                <div v-if="displayMusic" class="audio-spectrum"
+                    :class="{ 'is-playing': isPlaying, 'expanded': isMusicExpanded }">
                     <span class="bar"></span>
                     <span class="bar"></span>
                     <span class="bar"></span>
@@ -306,6 +310,10 @@ const syncMusicStatus = async () => {
         if (res) {
             const [song, artist, playing] = res;
 
+            // 👇 新增这两行，为了展开后的双行显示分别赋值
+            currentSongName.value = song;
+            currentArtistName.value = artist || '未知歌手';
+
             // 拼接新的歌曲信息
             const newTrackInfo = artist ? `${song} - ${artist}` : song;
 
@@ -352,37 +360,14 @@ const getPlayerName = () => {
     const map: Record<string, string> = { 'netease': '网易云音乐', 'spotify': 'Spotify', 'apple': 'Apple Music', 'qqmusic': 'QQ音乐', 'kugou': '酷狗音乐', 'echo': 'Echo Music' };
     return map[key] || '未知平台';
 };
-const currentTrackInfo = ref(`未在播放歌曲 - ${getPlayerName()}`);
-let hideControlsTimer: number | null = null;
-
-// 启动倒计时隐藏控件
-const startHideTimer = () => {
-    stopHideTimer();
-    hideControlsTimer = window.setTimeout(() => {
-        showInfo.value = true;
-    }, 800);
-};
-
-const stopHideTimer = () => {
-    if (hideControlsTimer) {
-        clearTimeout(hideControlsTimer);
-        hideControlsTimer = null;
-    }
-};
 
 // 定义一个用于强制刷新的 key
 const musicBoxKey = ref(0);
 
-// 鼠标进入整个音乐控制区域
-const handleMusicBoxEnter = () => {
-    stopHideTimer();     // 清除可能正在倒计时的隐藏任务
-    showInfo.value = false; // 立刻切换为显示控制按钮
-};
-
-// 鼠标彻底离开整个音乐控制区域
-const handleMusicBoxLeave = () => {
-    startHideTimer();    // 离开后，再开启倒计时恢复为歌曲名称显示
-};
+// 定义双行文本所需的单独变量
+const currentSongName = ref('未在播放歌曲');
+const currentArtistName = ref(getPlayerName());
+const currentTrackInfo = ref(`未在播放歌曲 - ${getPlayerName()}`);
 
 let lastRx = 0;
 let lastTx = 0;
@@ -718,11 +703,6 @@ const onInnerEnter = (el: Element, done: () => void) => {
         } else {
             htmlEl.style.opacity = '1';
             done();
-
-            // 只有音乐控制器需要在动画结束后开启“隐藏控件”的倒计时
-            if (htmlEl.classList.contains('music-ctl-box')) {
-                startHideTimer();
-            }
         }
     };
     requestAnimationFrame(animate);
@@ -982,7 +962,6 @@ onMounted(async () => {
 
             showInfo.value = false;
             musicBoxKey.value++;
-            stopHideTimer();
         }
     });
 
@@ -1182,15 +1161,12 @@ onMounted(async () => {
             isIslandVisible.value = false;
         }
     });
-
-    startHideTimer();
 });
 
 onUnmounted(() => {
     window.removeEventListener('blur', collapseMusic);
     clearInterval(speedTimer);
     clearInterval(pingTimer);
-    stopHideTimer();
     stopRotation();
 });
 </script>
@@ -1514,17 +1490,14 @@ onUnmounted(() => {
 /* 歌曲信息遮罩容器：挨着封面靠左，占据右侧剩余空间 */
 .music-info-mask-box {
     position: absolute;
-    left: 20px;
-    /* 紧贴 24px 宽的专辑封面 */
-    right: 18px;
-    /* 给右侧网络指示灯留出安全间距 */
+    left: 30px; /* 👉 修改这里：从 20px 改为 32px，给封面留出充足的呼吸空间 */
+    right: 18px; /* 给右侧网络指示灯留出安全间距 */
     height: 100%;
     display: flex;
     align-items: center;
     overflow: hidden;
-    padding-left: 8px;
+    padding-left: 0; /* 👉 这里可以改为0，因为里面是绝对定位，写了也没用 */
     -webkit-app-region: no-drag;
-    /* 允许在文本区域触发 hover */
     transform: translateY(-1px) translateX(-0.5px);
 
     /* 核心过渡遮罩：右侧文字溢出边缘呈渐隐效果 */
@@ -1682,7 +1655,7 @@ onUnmounted(() => {
 /* 暂停状态下的竖线（统一高度） */
 .audio-spectrum .bar {
     width: 2px;
-    height: 14px;
+    height: 13px;
     background-color: #b6e0ee;
     border-radius: 3px;
     transform-origin: center;
@@ -1732,5 +1705,167 @@ onUnmounted(() => {
     100% {
         transform: scaleY(0.95);
     }
+}
+
+/* ====================
+   终极一步到位修复版：边距完美对称、极致靠左
+==================== */
+
+.music-ctl-box {
+    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.2);
+}
+
+/* 展开时：强行清除可能影响对齐的默认父级内边距 */
+.music-ctl-box.expanded {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 0 !important;
+    /* 👈 核心：清除原本多余的留白，才能真正靠到最左最上 */
+}
+
+/* 1. 精准锁定：上边距和左边距完全一致（都是14px） */
+.music-top-row {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    height: 100%;
+    position: relative;
+    transition: all 0.4s ease;
+}
+
+.music-ctl-box.expanded .music-top-row {
+    height: 40px;
+    /* 封面尺寸 */
+    margin-top: 14px !important;
+    /* 👆 上边距 */
+    margin-left: 5px !important;
+    /* 👈 左边距，彻底实现完全对称靠左 */
+    border: none;
+}
+
+/* 2. 封面：停止旋转，保持正方向 */
+.music-ctl-box.expanded .album-cover {
+    width: 40px !important;
+    height: 40px !important;
+    border-radius: 6px !important;
+    animation: none !important;
+    border: none;
+    transform: translateX(0px) rotate(0deg) !important;
+}
+
+.music-ctl-box.expanded .album-cover .cover-inner {
+    animation: none !important;
+    transform: rotate(0deg) !important;
+    border: none;
+}
+
+.music-ctl-box.expanded .album-cover.is-playing {
+    border: none;
+    transform: scale(1.05) translateX(0px) rotate(0deg) !important;
+}
+
+/* 3. 歌曲文字：强行推至左侧，剥离居中属性 */
+.music-ctl-box.expanded .music-info-mask-box {
+    /* 14px左边距 + 46px封面 + 10px间距 = 70px 紧贴封面右侧 */
+    left: 60px !important;
+    right: 55px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+}
+
+.music-info-text {
+    position: absolute;
+    left: 0 !important;
+    top: 50%;
+    width: 100%;
+    transform: translateY(-50%);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+
+    /* 强行抹去任何组件自带的居中，100%靠左 */
+    text-align: left !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+}
+
+.double-line {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-30%);
+}
+
+.single-line {
+    opacity: 1;
+    align-items: center;
+    text-align: center;
+}
+
+/* 未展开单行维持原样 */
+
+.single-line.fade-out {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(20%);
+}
+
+.double-line.fade-in {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(-50%) !important;
+}
+
+.song-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+    width: 100%;
+    text-align: left !important;
+}
+
+.song-artist {
+    font-size: 12.5px;
+    opacity: 0.65;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+    width: 100%;
+    text-align: left !important;
+}
+
+/* 4. 媒体控件位置 */
+.music-ctl-box.expanded .music-controls {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%) translateY(5px);
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+}
+
+.music-ctl-box.expanded .ctl-btn svg {
+    width: 22px;
+    height: 22px;
+}
+
+.music-ctl-box.expanded .play-btn svg {
+    width: 28px;
+    height: 28px;
+}
+
+/* 5. 频谱位置：完美与 46px 的封面中心线对齐 */
+.audio-spectrum.expanded {
+    position: absolute;
+    right: 18px !important;
+    top: 27px !important;
+    transform: scale(1.3);
+    transition: all 0.4s ease;
 }
 </style>
