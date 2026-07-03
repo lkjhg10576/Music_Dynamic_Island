@@ -25,19 +25,19 @@
                             <div class="hw-item">
                                 <span class="hw-label">CPU</span>
                                 <span class="hw-value" :class="{ 'high-usage': parseInt(cpuUsage) >= 90 }">{{ cpuUsage
-                                    }}</span>
+                                }}</span>
                             </div>
                             <div class="hw-divider"></div>
                             <div class="hw-item">
                                 <span class="hw-label">GPU</span>
                                 <span class="hw-value" :class="{ 'high-usage': parseInt(gpuUsage) >= 90 }">{{ gpuUsage
-                                    }}</span>
+                                }}</span>
                             </div>
                             <div class="hw-divider"></div>
                             <div class="hw-item">
                                 <span class="hw-label">RAM</span>
                                 <span class="hw-value" :class="{ 'high-usage': parseInt(memUsage) >= 90 }">{{ memUsage
-                                    }}</span>
+                                }}</span>
                             </div>
                         </div>
 
@@ -49,9 +49,14 @@
                                         :style="coverUrl ? { backgroundImage: `url(${coverUrl})`, backgroundSize: 'cover' } : {}">
                                     </div>
                                 </div>
-                                <div class="music-info-mask-box">
-                                    <div class="music-info-text single-line" :class="{ 'fade-out': isMusicExpanded }">{{
-                                        currentTrackInfo }}</div>
+                                <div class="music-info-mask-box" ref="maskBoxRef">
+                                    <div class="music-info-text single-line" :class="{ 'fade-out': isMusicExpanded }">
+                                        <span class="scroll-inner" ref="textInnerRef"
+                                            :class="{ 'is-scrolling': scrollDist > 0 }"
+                                            :style="scrollDist > 0 ? { '--scroll-dist': scrollDist + 'px', '--scroll-duration': scrollDuration } : {}">
+                                            {{ currentTrackInfo }}
+                                        </span>
+                                    </div>
                                     <div class="music-info-text double-line" :class="{ 'fade-in': isMusicExpanded }">
                                         <div class="song-title">{{ currentSongName }}</div>
                                         <div class="song-artist">{{ currentArtistName }}</div>
@@ -114,13 +119,26 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch, type CSSProperties } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch, nextTick, type CSSProperties } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow, currentMonitor, PhysicalPosition, LogicalPosition, PhysicalSize } from '@tauri-apps/api/window'; import { Menu, MenuItem } from '@tauri-apps/api/menu';
 import { listen, emit } from '@tauri-apps/api/event';
 
 const isIslandVisible = ref(false);
 const isMenuOpen = ref(false);
+
+// 控制 DOM 真正的高宽变量与消息数据
+const currentWidth = ref(260);
+const currentHeight = ref(42);
+const isMsgActive = ref(false);
+const msgTitle = ref('');
+const msgBody = ref('');
+const msgAumid = ref('');
+
+// 记录音乐岛是否处于展开状态
+const isMusicExpanded = ref(false);
+const isMusicExpanding = ref(false); // 记录是否正在播放弹性按压展开动画
+let musicExpandAnimTimer: number | null = null; // 用于接管展开时的定时器，防止冲突
 
 // 灵动岛自身的透明度变量（默认100）
 const islandOpacity = ref(Number(localStorage.getItem('nsd_island_opacity') || '100'));
@@ -361,6 +379,55 @@ const musicBoxKey = ref(0);
 const currentSongName = ref('未在播放歌曲');
 const currentArtistName = ref(getPlayerName());
 const currentTrackInfo = ref(`未在播放歌曲 - ${getPlayerName()}`);
+
+// 音乐滚动相关变量
+const maskBoxRef = ref<HTMLElement | null>(null);
+const textInnerRef = ref<HTMLElement | null>(null);
+const scrollDist = ref(0);
+const scrollDuration = ref('0s');
+
+// 核心计算函数：判断文本是否超出容器，并动态调整滚动速度和时长
+const calculateScroll = () => {
+    if (!textInnerRef.value || !maskBoxRef.value) return;
+
+    // 展开状态下不执行滚动
+    if (isMusicExpanded.value) {
+        scrollDist.value = 0;
+        return;
+    }
+
+    // 核心修复 1：使用 getBoundingClientRect() 获取无视父级限制的真实渲染宽度
+    const textWidth = textInnerRef.value.getBoundingClientRect().width;
+    const containerWidth = maskBoxRef.value.clientWidth;
+
+    if (textWidth > containerWidth) {
+        // 增加 20px 缓冲，防止文本尾部被右侧黑色遮罩完全吃掉
+        scrollDist.value = textWidth - containerWidth + 20;
+
+        // 按照 30px/s 的速度阅读，计算纯移动时间
+        const timeToMove = scrollDist.value / 30;
+
+        // 将首尾各停留的 1s 左右（基于20%占比计算）融入总时长中，确保匀速
+        const totalDuration = timeToMove / 0.6;
+
+        scrollDuration.value = `${Math.max(totalDuration, 4.5)}s`;
+    } else {
+        scrollDist.value = 0;
+    }
+};
+
+// 核心修复 2：监听数组必须带上 displayMusic，并在 nextTick 后加上微小延迟，防止 v-else-if 导致宽度拿到 0
+watch([currentTrackInfo, displayMusic, isMusicExpanded], async () => {
+    await nextTick();
+    setTimeout(() => {
+        if (displayMusic.value) {
+            calculateScroll();
+        } else {
+            // 切到其他界面（比如网速）时，归零重置
+            scrollDist.value = 0;
+        }
+    }, 100);
+});
 
 let lastRx = 0;
 let lastTx = 0;
@@ -723,14 +790,6 @@ const onInnerLeave = (el: Element, done: () => void) => {
     requestAnimationFrame(animate);
 };
 
-// 1. 新增：控制 DOM 真正的高宽变量与消息数据
-const currentWidth = ref(260);
-const currentHeight = ref(42);
-const isMsgActive = ref(false);
-const msgTitle = ref('');
-const msgBody = ref('');
-const msgAumid = ref('');
-
 // 👇把里面的 app_name 改回 appName
 const handleMsgClick = async () => {
     if (msgAumid.value || msgTitle.value) {
@@ -773,11 +832,6 @@ const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
         console.error('呼叫 Rust 动画失败:', err);
     }
 };
-
-// 记录音乐岛是否处于展开状态
-const isMusicExpanded = ref(false);
-const isMusicExpanding = ref(false); // 记录是否正在播放弹性按压展开动画
-let musicExpandAnimTimer: number | null = null; // 用于接管展开时的定时器，防止冲突
 
 // 动画锁与等待队列标志
 let isAnimationLocked = false;
@@ -1087,6 +1141,9 @@ onMounted(async () => {
         currentWidth.value = w;
         currentHeight.value = h;
     });
+
+    // 初始化时触发一次计算
+    calculateScroll();
 });
 
 onUnmounted(() => {
@@ -1798,5 +1855,42 @@ onUnmounted(() => {
     transform: scale(1.3);
     /* 把 all 换成具体的属性，防止抖动 */
     transition: opacity 0.3s ease, transform 0.3s ease !important;
+}
+
+/* 核心修复 3：强制靠左对齐，干掉原本的 align-items: center。否则长文本会向两边溢出，导致开头被裁 */
+.music-info-text.single-line {
+    overflow: visible !important;
+    align-items: flex-start !important;
+    text-align: left !important;
+}
+
+/* 滚动的内部容器 */
+.scroll-inner {
+    display: inline-block;
+    white-space: nowrap;
+    width: max-content;
+    /* 绝对核心：强行撑开自身宽度，拒绝被父级 100% 压缩 */
+    flex-shrink: 0;
+    will-change: transform;
+}
+
+/* 挂载动画 */
+.scroll-inner.is-scrolling {
+    animation: scroll-ping-pong var(--scroll-duration) linear infinite alternate;
+}
+
+/* 滚动动画帧：利用 0-20% 和 80-100% 的区间实现两端停留 */
+@keyframes scroll-ping-pong {
+
+    0%,
+    20% {
+        transform: translateX(0);
+    }
+
+    80%,
+    100% {
+        /* JS 里已经拼好了 px 单位，这里直接 -1 乘过去即可 */
+        transform: translateX(calc(-1 * var(--scroll-dist)));
+    }
 }
 </style>
