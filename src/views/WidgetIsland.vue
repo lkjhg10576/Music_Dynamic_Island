@@ -401,8 +401,8 @@ const calculateScroll = () => {
     const containerWidth = maskBoxRef.value.clientWidth;
 
     if (textWidth > containerWidth) {
-        // 增加 20px 缓冲，防止文本尾部被右侧黑色遮罩完全吃掉
-        scrollDist.value = textWidth - containerWidth + 20;
+        // 核心修复 1：使用 Math.ceil() 强制取整，绝对不允许出现小数像素！
+        scrollDist.value = Math.ceil(textWidth - containerWidth + 20);
 
         // 按照 30px/s 的速度阅读，计算纯移动时间
         const timeToMove = scrollDist.value / 30;
@@ -1143,7 +1143,9 @@ onMounted(async () => {
     });
 
     // 初始化时触发一次计算
-    calculateScroll();
+    setTimeout(() => {
+        calculateScroll();
+    }, 700);
 });
 
 onUnmounted(() => {
@@ -1869,9 +1871,13 @@ onUnmounted(() => {
     display: inline-block;
     white-space: nowrap;
     width: max-content;
-    /* 绝对核心：强行撑开自身宽度，拒绝被父级 100% 压缩 */
     flex-shrink: 0;
-    will-change: transform;
+
+    /* 删除了 will-change，让浏览器在不滚动时释放 GPU 缓存 */
+    backface-visibility: hidden;
+    transform: translateZ(0);
+    -webkit-font-smoothing: antialiased;
+    transform-style: preserve-3d;
 }
 
 /* 挂载动画 */
