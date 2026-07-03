@@ -750,13 +750,21 @@ const handleMsgClick = async () => {
     }
 };
 
-// 灵动岛核心代码！（完美防漂移+防裁切 Rust 托管版）
+// 灵动岛核心代码！（完美防漂移+防裁切+防打断抖动）
 const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
     try {
-        // 呼叫重构后的后台双模动画引擎
+        // 不使用响应式的 currentWidth，而是向系统请求当前最真实的物理像素
+        // 这样无论前一个动画进行到哪一帧，新动画都会完美“接管”当前状态，实现丝滑中断
+        const appWindow = getCurrentWindow();
+        const realSize = await appWindow.innerSize();
+        const scaleFactor = window.devicePixelRatio;
+
+        const realStartW = realSize.width / scaleFactor;
+        const realStartH = realSize.height / scaleFactor;
+
         await invoke('start_island_animation', {
-            startWidth: currentWidth.value,
-            startHeight: currentHeight.value,
+            startWidth: realStartW,
+            startHeight: realStartH,
             targetWidth: targetWidth,
             targetHeight: targetHeight,
             isPinned: isPinnedToTaskbar.value
@@ -769,39 +777,44 @@ const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
 // 记录音乐岛是否处于展开状态
 const isMusicExpanded = ref(false);
 const isMusicExpanding = ref(false); // 记录是否正在播放弹性按压展开动画
-let musicExpandTimer: number | null = null;
 let musicExpandAnimTimer: number | null = null; // 用于接管展开时的定时器，防止冲突
+
+// 动画锁与等待队列标志
+let isAnimationLocked = false;
+let isPendingCollapse = false;
 
 // 音乐控制器自动收缩方法
 const collapseMusic = () => {
     if (!isMusicExpanded.value && !isMusicExpanding.value) return;
 
+    // 【核心逻辑】：如果正在猛烈展开中，绝对不打断！把收缩请求挂起，等它展开完自动执行。
+    if (isAnimationLocked) {
+        isPendingCollapse = true;
+        return;
+    }
+
     isMusicExpanded.value = false;
     isMusicExpanding.value = false;
+    isPendingCollapse = false; // 清除队列
 
-    // 如果鼠标极速移出，立刻打断还没猛烈展开的 120ms 定时器
     if (musicExpandAnimTimer) {
         clearTimeout(musicExpandAnimTimer);
         musicExpandAnimTimer = null;
     }
 
-    if (musicExpandTimer) clearTimeout(musicExpandTimer);
     animateIslandSize(260, 42); // 恢复到默认大小
 };
 
 // 音乐控制器点击展开方法
 const expandMusic = (e: MouseEvent) => {
-    if (Math.abs(e.clientX - mouseDownX) > 5 || Math.abs(e.clientY - mouseDownY) > 5) {
-        return;
-    }
-
+    if (Math.abs(e.clientX - mouseDownX) > 5 || Math.abs(e.clientY - mouseDownY) > 5) return;
     if ((e.target as HTMLElement).closest('.ctl-btn')) return;
 
-    if (isMusicExpanded.value || isMusicExpanding.value) {
-        return; // 如果已经展开了或正在展开，点击直接无视
-    }
+    if (isMusicExpanded.value || isMusicExpanding.value) return;
 
-    isMusicExpanding.value = true; // 标记正在进行展开前摇
+    isMusicExpanding.value = true;
+    isPendingCollapse = false;  // 重置待办任务
+    isAnimationLocked = true;   // ⚡ 上锁！宣布进入神圣不可侵犯的展开周期
 
     // 1. 弹性按压动画 (先微微变小)
     animateIslandSize(245, 38);
@@ -811,23 +824,32 @@ const expandMusic = (e: MouseEvent) => {
         isMusicExpanded.value = true;
         isMusicExpanding.value = false;
         animateIslandSize(320, 115);
+
+        // 3. 根据 Rust 端的弹簧衰减频率，约 400ms 后动画彻底结束，此时解锁
+        setTimeout(() => {
+            isAnimationLocked = false;
+
+            // 检查：如果在展开的这 520ms 里，用户鼠标已经移走了，那就立刻补发收缩命令！
+            if (isPendingCollapse) {
+                isPendingCollapse = false;
+                collapseMusic();
+            }
+        }, 400);
     }, 120);
 };
 
-// 鼠标离开灵动岛时：开启 1 秒倒计时再收缩
+// 鼠标离开灵动岛时：立刻收缩！
 const handleMouseLeave = () => {
-    if (!isMusicExpanded.value) return; // 如果本来就没展开，啥也不干
+    if (!isMusicExpanded.value && !isMusicExpanding.value) return;
 
-    if (musicExpandTimer) clearTimeout(musicExpandTimer);
-    musicExpandTimer = window.setTimeout(collapseMusic, 1000);
+    // 直接呼叫收缩。如果锁着，collapseMusic 会自动把它记到账上稍后执行
+    collapseMusic();
 };
 
-// 鼠标重新移入灵动岛时：立刻打断并取消收缩倒计时
+// 鼠标重新移入灵动岛时：立刻打断收缩企图
 const handleMouseEnter = () => {
-    if (musicExpandTimer) {
-        clearTimeout(musicExpandTimer);
-        musicExpandTimer = null; // 擦除定时器，保住展开状态
-    }
+    // 如果之前移出留下了收缩案底，但动画还没播完鼠标又回来了，直接取消这个案底
+    isPendingCollapse = false;
 };
 
 watch(displayMusic, (newVal: boolean) => {
