@@ -25,19 +25,19 @@
                             <div class="hw-item">
                                 <span class="hw-label">CPU</span>
                                 <span class="hw-value" :class="{ 'high-usage': parseInt(cpuUsage) >= 90 }">{{ cpuUsage
-                                }}</span>
+                                    }}</span>
                             </div>
                             <div class="hw-divider"></div>
                             <div class="hw-item">
                                 <span class="hw-label">GPU</span>
                                 <span class="hw-value" :class="{ 'high-usage': parseInt(gpuUsage) >= 90 }">{{ gpuUsage
-                                }}</span>
+                                    }}</span>
                             </div>
                             <div class="hw-divider"></div>
                             <div class="hw-item">
                                 <span class="hw-label">RAM</span>
                                 <span class="hw-value" :class="{ 'high-usage': parseInt(memUsage) >= 90 }">{{ memUsage
-                                }}</span>
+                                    }}</span>
                             </div>
                         </div>
 
@@ -125,6 +125,7 @@ const isMenuOpen = ref(false);
 // 灵动岛自身的透明度变量（默认100）
 const islandOpacity = ref(Number(localStorage.getItem('nsd_island_opacity') || '100'));
 
+// 灵动岛自身主题色
 const islandTheme = ref(localStorage.getItem('nsd_island_theme') || 'black');
 
 // 1. 瞬间判定当前是否处于大窗口状态
@@ -146,7 +147,7 @@ const islandStyle = computed<CSSProperties>(() => {
         ...baseStyle,
         width: '100vw',
         height: '100vh',
-        // ✅ 核心：只要展开就是 24px，收起就是 100px
+        // 只要展开就是 24px，收起就是 100px
         borderRadius: isExpandedSize.value ? '24px' : '100px',
         position: 'relative',
     };
@@ -157,7 +158,7 @@ const coreContentStyle = computed(() => {
     const linear = islandOpacity.value / 100;
     const alpha = Math.pow(linear, 1 / 2.2);
 
-    // ✅ 核心：展开 22px，收起 98px
+    // 展开 22px，收起 98px
     const innerRadius = isExpandedSize.value ? '22px' : '98px';
 
     if (islandTheme.value === 'white') {
@@ -199,18 +200,17 @@ const isPlaying = ref(false);
 // 流光边框默认状态完全镜像音乐控制器（只要音乐控制器开着它就开，关了就一起关）
 const isGlowBorderEnabled = ref(localStorage.getItem('nsd_glow_border') === 'true');
 
+// 封面url
 const coverUrl = ref('');
 const coverCache = new Map<string, string>();
 
 // 记录是否开启了置于任务栏
 const isPinnedToTaskbar = ref(localStorage.getItem('nsd_pin_taskbar') === 'true');
-// 👇 新增这一行：记录是否锁定了位置，并存到本地
+// 记录是否锁定了位置，并存到本地
 const isPositionLocked = ref(localStorage.getItem('nsd_position_locked') === 'true');
-
 // 记录消息模式开关状态
 const isMsgModeEnabled = ref(localStorage.getItem('nsd_msg_mode') === 'true');
-
-// --- 轮换功能核心逻辑 ---
+// 轮换功能核心逻辑
 const isRotationEnabled = ref(localStorage.getItem('nsd_rotation_mode') === 'true');
 const currentRotIndex = ref(0); // 0=网速, 1=音乐, 2=硬件
 let rotationTimer: number | null = null;
@@ -233,7 +233,6 @@ const stopRotation = () => {
         rotationTimer = null;
     }
 };
-// -----------------------
 
 // 计算并吸附到左下角的方法
 const snapToBottomLeft = async () => {
@@ -304,7 +303,7 @@ const syncMusicStatus = async () => {
         if (res) {
             const [song, artist, playing] = res;
 
-            // 👇 新增这两行，为了展开后的双行显示分别赋值
+            // 新增这两行为了展开后的双行显示分别赋值
             currentSongName.value = song;
             currentArtistName.value = artist || '未知歌手';
 
@@ -367,8 +366,8 @@ let lastRx = 0;
 let lastTx = 0;
 let speedTimer: number;
 let pingTimer: number;
-let musicTimer: number;  // ✨ 新增这行
-let notifyTimer: number; // ✨ 新增这行
+let musicTimer: number;
+let notifyTimer: number;
 
 // 防抖控制变量
 let lowTrafficStartTime = Date.now();
@@ -412,7 +411,7 @@ const fetchSpeedStats = async () => {
     }
 };
 
-// 修改后的获取 GPU 占用率的方法 (删除文件顶部的 import { Command } ... 报错即可消失)
+// 修改后的获取 GPU 占用率的方法
 const fetchGpuUsage = async () => {
     try {
         // 由于不想动多个文件和安装插件，我们通过简单的原生 Fetch 或是给 GPU 一个顺应 CPU 趋势的平滑模拟值（最简单、绝不动第2个文件、且不安装插件）
@@ -564,12 +563,9 @@ let mouseDownY = 0;
 let isMouseDown = false;
 
 const handleMouseDown = (event: MouseEvent) => {
-    // ❌ 删掉这行！不要在这里拦截锁定状态！
-    // if (isPinnedToTaskbar.value || isPositionLocked.value) return; 
-
     if ((event.target as HTMLElement).closest('.ctl-btn')) return;
 
-    // ✅ 无论有没有锁定，都必须老老实实记录坐标，给后面的“点击展开”提供判断依据！
+    // 无论有没有锁定，都必须老老实实记录坐标，给后面的“点击展开”提供判断依据！
     mouseDownX = event.clientX;
     mouseDownY = event.clientY;
     isMouseDown = true;
@@ -578,7 +574,10 @@ const handleMouseDown = (event: MouseEvent) => {
 const handleMouseMove = async (event: MouseEvent) => {
     if (!isMouseDown) return;
 
-    // ✅ 锁定位置的拦截放在这里！只禁止拖拽，绝不影响点击！
+    // 如果音乐灵动岛正在展开或已完全展开，强制禁止拖拽
+    if (isMusicExpanded.value || isMusicExpanding.value) return;
+
+    // 如果固定到了任务栏或已锁定位置，则禁止拖动
     if (isPinnedToTaskbar.value || isPositionLocked.value) return;
 
     if (Math.abs(event.clientX - mouseDownX) > 5 || Math.abs(event.clientY - mouseDownY) > 5) {
@@ -598,6 +597,9 @@ const handleMouseUp = () => {
 const handleRightClick = async (event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation(); // 阻止冒泡
+
+    // 如果音乐灵动岛正在展开或已完全展开，强制禁止呼出右键菜单
+    if (isMusicExpanded.value || isMusicExpanding.value) return;
 
     // 打开设置
     const openSettingsItem = await MenuItem.new({
@@ -757,7 +759,7 @@ const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
             startHeight: currentHeight.value,
             targetWidth: targetWidth,
             targetHeight: targetHeight,
-            isPinned: isPinnedToTaskbar.value // ✨ 关键：告诉 Rust 是否锁定在任务栏左下角
+            isPinned: isPinnedToTaskbar.value
         });
     } catch (err) {
         console.error('呼叫 Rust 动画失败:', err);
@@ -766,12 +768,23 @@ const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
 
 // 记录音乐岛是否处于展开状态
 const isMusicExpanded = ref(false);
+const isMusicExpanding = ref(false); // 记录是否正在播放弹性按压展开动画
 let musicExpandTimer: number | null = null;
+let musicExpandAnimTimer: number | null = null; // 用于接管展开时的定时器，防止冲突
 
 // 音乐控制器自动收缩方法
 const collapseMusic = () => {
-    if (!isMusicExpanded.value) return;
+    if (!isMusicExpanded.value && !isMusicExpanding.value) return;
+
     isMusicExpanded.value = false;
+    isMusicExpanding.value = false;
+
+    // 如果鼠标极速移出，立刻打断还没猛烈展开的 120ms 定时器
+    if (musicExpandAnimTimer) {
+        clearTimeout(musicExpandAnimTimer);
+        musicExpandAnimTimer = null;
+    }
+
     if (musicExpandTimer) clearTimeout(musicExpandTimer);
     animateIslandSize(260, 42); // 恢复到默认大小
 };
@@ -784,16 +797,19 @@ const expandMusic = (e: MouseEvent) => {
 
     if ((e.target as HTMLElement).closest('.ctl-btn')) return;
 
-    if (isMusicExpanded.value) {
-        return; // 如果已经展开了，点击直接无视
+    if (isMusicExpanded.value || isMusicExpanding.value) {
+        return; // 如果已经展开了或正在展开，点击直接无视
     }
+
+    isMusicExpanding.value = true; // 标记正在进行展开前摇
 
     // 1. 弹性按压动画 (先微微变小)
     animateIslandSize(245, 38);
 
     // 2. 延迟 120 毫秒后，打断缩小，直接猛烈展开
-    setTimeout(() => {
+    musicExpandAnimTimer = window.setTimeout(() => {
         isMusicExpanded.value = true;
+        isMusicExpanding.value = false;
         animateIslandSize(320, 115);
     }, 120);
 };
@@ -803,14 +819,14 @@ const handleMouseLeave = () => {
     if (!isMusicExpanded.value) return; // 如果本来就没展开，啥也不干
 
     if (musicExpandTimer) clearTimeout(musicExpandTimer);
-    musicExpandTimer = window.setTimeout(collapseMusic, 1000); // ⏱️ 1000毫秒 = 1秒
+    musicExpandTimer = window.setTimeout(collapseMusic, 1000);
 };
 
 // 鼠标重新移入灵动岛时：立刻打断并取消收缩倒计时
 const handleMouseEnter = () => {
     if (musicExpandTimer) {
         clearTimeout(musicExpandTimer);
-        musicExpandTimer = null; // 🧼 擦除定时器，保住展开状态
+        musicExpandTimer = null; // 擦除定时器，保住展开状态
     }
 };
 
@@ -824,7 +840,7 @@ watch(displayMusic, (newVal: boolean) => {
 import defaultLogo from '../assets/logo.png';
 const currentMsgIcon = ref(defaultLogo);
 
-// 极简版图标映射器 (你可以随时去 iconfont 找喜欢的图标放进 assets)
+// 图标映射器
 const getAppIcon = (appName: string) => {
     const name = appName.toLowerCase();
 
@@ -858,7 +874,7 @@ onMounted(async () => {
         isMusicCtlEnabled.value = isEnabled;
 
         if (isEnabled) {
-            // 👇 新增：判断是不是“首次”（本地有没有存过流光边框的数据）
+            // 判断是不是“首次”（本地有没有存过流光边框的数据）
             if (localStorage.getItem('nsd_glow_border') === null) {
                 isGlowBorderEnabled.value = true; // 自动开启流光边框
                 localStorage.setItem('nsd_glow_border', 'true'); // 存入记忆，以后就不算“首次”了
@@ -900,7 +916,7 @@ onMounted(async () => {
             await getCurrentWindow().show();
             isIslandVisible.value = true;
 
-            // 【新增这一行】：通知控制台恢复开关状态，让主面板的开关同步变绿（开启）
+            // 通知控制台恢复开关状态，让主面板的开关同步变绿（开启）
             await emit('island-status-sync', { visible: true });
         }
     });
@@ -973,7 +989,7 @@ onMounted(async () => {
                 console.error('获取硬件信息失败:', err);
             }
         }
-    }, 800) as unknown as number; // 👈 改为 800 毫秒，网速和硬件瞬间灵敏
+    }, 800) as unknown as number;
 
 
     // 2. 中频定时器：专门负责音乐状态同步（每 2000ms 刷新一次即可）
