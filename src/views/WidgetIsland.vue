@@ -31,6 +31,24 @@
                                 </svg>
                             </div>
 
+                            <div v-else-if="sysToastType === 'lock'" class="toast-icon sys-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <rect x="4" y="12" width="16" height="8" rx="2" ry="2" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round" />
+                                    <path d="M8 12V9a4 4 0 0 1 8 0v3" stroke-width="2" stroke-linecap="round"
+                                        stroke-linejoin="round" />
+                                </svg>
+                            </div>
+
+                            <div v-else-if="sysToastType === 'unlock'" class="toast-icon sys-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <rect x="4" y="12" width="16" height="8" rx="2" ry="2" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round" />
+                                    <path d="M8 12V9a4 4 0 0 1 8 0" stroke-width="2" stroke-linecap="round"
+                                        stroke-linejoin="round" />
+                                </svg>
+                            </div>
+
                             <div v-else-if="sysToastType === 'battery-charge'" class="toast-icon battery-charge-icon">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
                                     <rect x="2" y="7" width="16" height="10" rx="2" ry="2" stroke-width="2"
@@ -182,8 +200,8 @@ const msgAumid = ref('');
 // 系统操作通知专用变量
 const displaySysToast = ref(false);
 const sysToastText = ref('');
-const sysToastType = ref<'app' | 'sys' | 'battery-charge' | 'battery-low'>('app');
-const toastQueue = ref<{ text: string, type: 'app' | 'sys' | 'battery-charge' | 'battery-low' }[]>([]);
+const sysToastType = ref<'app' | 'sys' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock'>('app');
+const toastQueue = ref<{ text: string, type: 'app' | 'sys' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' }[]>([]);
 let isProcessingToast = false;
 
 // 队列处理函数
@@ -215,7 +233,7 @@ const processToastQueue = async () => {
 };
 
 // 暴露给外部调用的触发函数
-const showToast = (text: string, type: 'app' | 'sys' | 'battery-charge' | 'battery-low' = 'app') => {
+const showToast = (text: string, type: 'app' | 'sys' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' = 'app') => {
     toastQueue.value.push({ text, type });
     processToastQueue();
 };
@@ -822,7 +840,11 @@ const handleRightClick = async (event: MouseEvent) => {
         action: () => {
             isPositionLocked.value = !isPositionLocked.value;
             localStorage.setItem('nsd_position_locked', String(isPositionLocked.value));
-            showToast(isPositionLocked.value ? '锁定位置成功' : '解锁位置成功');
+            // 修改这里：根据状态触发 lock 或 unlock 专属通知
+            showToast(
+                isPositionLocked.value ? '锁定位置成功' : '解锁位置成功',
+                isPositionLocked.value ? 'lock' : 'unlock'
+            );
         }
     });
 
