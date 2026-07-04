@@ -30,11 +30,33 @@
                                         stroke-linejoin="round" />
                                 </svg>
                             </div>
+
+                            <div v-else-if="sysToastType === 'battery-charge'" class="toast-icon battery-charge-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <rect x="2" y="7" width="16" height="10" rx="2" ry="2" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round" />
+                                    <line x1="22" y1="11" x2="22" y2="13" stroke-width="2" stroke-linecap="round"
+                                        stroke-linejoin="round" />
+                                    <polygon points="11 7 8 12 12 12 11 17 14 12 10 12 11 7" stroke-width="1.5"
+                                        stroke-linejoin="round" />
+                                </svg>
+                            </div>
+
+                            <div v-else-if="sysToastType === 'battery-low'" class="toast-icon battery-low-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <rect x="2" y="7" width="16" height="10" rx="2" ry="2" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round" />
+                                    <line x1="22" y1="11" x2="22" y2="13" stroke-width="2" stroke-linecap="round"
+                                        stroke-linejoin="round" />
+                                    <line x1="6" y1="12" x2="9" y2="12" stroke-width="4" stroke-linecap="round"
+                                        stroke-linejoin="round" />
+                                </svg>
+                            </div>
+
                             <div v-else class="toast-icon sys-icon">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
                                     <circle cx="12" cy="12" r="10" stroke-width="2" stroke-linecap="round"
                                         stroke-linejoin="round" opacity="0.3" />
-
                                     <g transform="translate(6, 5.5) scale(0.5)">
                                         <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" stroke-width="4"
                                             stroke-linecap="round" stroke-linejoin="round" />
@@ -50,19 +72,19 @@
                             <div class="hw-item">
                                 <span class="hw-label">CPU</span>
                                 <span class="hw-value" :class="{ 'high-usage': parseInt(cpuUsage) >= 90 }">{{ cpuUsage
-                                }}</span>
+                                    }}</span>
                             </div>
                             <div class="hw-divider"></div>
                             <div class="hw-item">
                                 <span class="hw-label">GPU</span>
                                 <span class="hw-value" :class="{ 'high-usage': parseInt(gpuUsage) >= 90 }">{{ gpuUsage
-                                }}</span>
+                                    }}</span>
                             </div>
                             <div class="hw-divider"></div>
                             <div class="hw-item">
                                 <span class="hw-label">RAM</span>
                                 <span class="hw-value" :class="{ 'high-usage': parseInt(memUsage) >= 90 }">{{ memUsage
-                                }}</span>
+                                    }}</span>
                             </div>
                         </div>
 
@@ -160,8 +182,8 @@ const msgAumid = ref('');
 // 系统操作通知专用变量
 const displaySysToast = ref(false);
 const sysToastText = ref('');
-const sysToastType = ref<'app' | 'sys'>('app'); // 记录当前是哪种类型的通知
-const toastQueue = ref<{ text: string, type: 'app' | 'sys' }[]>([]);
+const sysToastType = ref<'app' | 'sys' | 'battery-charge' | 'battery-low'>('app');
+const toastQueue = ref<{ text: string, type: 'app' | 'sys' | 'battery-charge' | 'battery-low' }[]>([]);
 let isProcessingToast = false;
 
 // 队列处理函数
@@ -193,7 +215,7 @@ const processToastQueue = async () => {
 };
 
 // 暴露给外部调用的触发函数
-const showToast = (text: string, type: 'app' | 'sys' = 'app') => {
+const showToast = (text: string, type: 'app' | 'sys' | 'battery-charge' | 'battery-low' = 'app') => {
     toastQueue.value.push({ text, type });
     processToastQueue();
 };
@@ -1036,7 +1058,7 @@ onMounted(async () => {
         e.preventDefault();
     }, { capture: true }); // 使用捕获阶段，确保先于 Tauri 底层拦截
 
-    // 【修改】统一合并后的音乐控制器状态监听器
+    // 音乐控制器状态监听器
     await listen<{ enabled: boolean }>('control-music-ctl', (event) => {
         const isEnabled = event.payload.enabled;
         isMusicCtlEnabled.value = isEnabled;
@@ -1056,6 +1078,17 @@ onMounted(async () => {
     // 监听系统底层事件（音量、电源）
     await listen<string>('system-event', (event) => {
         showToast(event.payload, 'sys');
+    });
+
+    await listen<{ state: 'charging' | 'discharging', percent: number }>('battery-event', (event) => {
+        const { state, percent } = event.payload;
+
+        if (state === 'charging') {
+            showToast(`已接入电源，当前电量 ${percent}%`, 'battery-charge');
+        } else if (state === 'discharging' && percent <= 20) {
+            // 这里还可以加入防抖：只在刚掉到 20%、10%、5% 等关键节点触发一次，避免疯狂弹窗
+            showToast(`电池电量低，剩余 ${percent}%`, 'battery-low');
+        }
     });
 
     // 监听来自控制台的透明度同步指令
@@ -2009,6 +2042,16 @@ onUnmounted(() => {
     height: 22px;
     display: block;
     /* 消除内联元素的底部幽灵间距，确保绝对对齐 */
+}
+
+.toast-icon.battery-charge-icon {
+    color: #34C759;
+    /* 灵动岛同款亮绿色 */
+}
+
+.toast-icon.battery-low-icon {
+    color: #FF3B30;
+    /* 灵动岛同款警告红色 */
 }
 
 .toast-text {
