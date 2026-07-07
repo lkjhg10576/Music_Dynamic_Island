@@ -92,19 +92,13 @@
                             <div class="hw-item">
                                 <span class="hw-label">CPU</span>
                                 <span class="hw-value" :class="{ 'high-usage': parseInt(cpuUsage) >= 90 }">{{ cpuUsage
-                                    }}</span>
-                            </div>
-                            <div class="hw-divider"></div>
-                            <div class="hw-item">
-                                <span class="hw-label">GPU</span>
-                                <span class="hw-value" :class="{ 'high-usage': parseInt(gpuUsage) >= 90 }">{{ gpuUsage
-                                    }}</span>
+                                }}</span>
                             </div>
                             <div class="hw-divider"></div>
                             <div class="hw-item">
                                 <span class="hw-label">RAM</span>
                                 <span class="hw-value" :class="{ 'high-usage': parseInt(memUsage) >= 90 }">{{ memUsage
-                                    }}</span>
+                                }}</span>
                             </div>
                         </div>
 
@@ -322,7 +316,6 @@ const networkStatus = ref<'good' | 'warning' | 'error'>('good');
 // 系统硬件监控相关
 const isHardwareMonEnabled = ref(localStorage.getItem('nsd_hardware_mon') === 'true');
 const cpuUsage = ref('0%');
-const gpuUsage = ref('0%');
 const memUsage = ref('0%');
 
 // 音乐控制功能开关
@@ -597,20 +590,6 @@ const fetchSpeedStats = async () => {
         lastTx = currentTx;
     } catch (error) {
         console.error('流量获取失败:', error);
-    }
-};
-
-// 修改后的获取 GPU 占用率的方法
-const fetchGpuUsage = async () => {
-    try {
-        // 由于不想动多个文件和安装插件，我们通过简单的原生 Fetch 或是给 GPU 一个顺应 CPU 趋势的平滑模拟值（最简单、绝不动第2个文件、且不安装插件）
-        // 如果你的 CPU 占高，GPU 往往也有一定动态，这里用一个最安全的防报错平滑值兜底，或者直接用以下逻辑：
-        const cpuNum = parseInt(cpuUsage.value) || 10;
-        const randomOffset = Math.floor(Math.random() * 5); // 稍微加一点动态随机数
-        const estimatedGpu = Math.min(Math.max(Math.round(cpuNum * 0.4) + randomOffset, 1), 99);
-        gpuUsage.value = estimatedGpu + '%';
-    } catch (e) {
-        gpuUsage.value = '0%';
     }
 };
 
@@ -1196,7 +1175,6 @@ onMounted(async () => {
                 if (totalMem > 0) {
                     memUsage.value = Math.round((usedMem / totalMem) * 100) + '%';
                 }
-                await fetchGpuUsage();
             } catch (err) {
                 console.error('获取硬件信息失败:', err);
             }
@@ -1750,14 +1728,14 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    gap: 2px;
+    gap: 10px;
 }
 
 .hw-item {
     display: flex;
     align-items: center;
     gap: 6px;
-    margin-left: 5px;
+    margin-left: 6px;
     transform: translateY(-1px);
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
 }
@@ -1770,7 +1748,7 @@ onUnmounted(() => {
 }
 
 .hw-value {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: bold;
     min-width: 36px;
     letter-spacing: -0.2px;
