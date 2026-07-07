@@ -93,12 +93,12 @@
                                 <div v-if="isShowingCPU" class="speed-item" key="cpu">
                                     <span class="label">CPU</span>
                                     <span class="value" :class="{ 'high-usage': parseInt(cpuUsage) >= 90 }">{{ cpuUsage
-                                    }}</span>
+                                        }}</span>
                                 </div>
                                 <div v-else class="speed-item" key="ram">
                                     <span class="label">RAM</span>
                                     <span class="value" :class="{ 'high-usage': parseInt(memUsage) >= 90 }">{{ memUsage
-                                    }}</span>
+                                        }}</span>
                                 </div>
                             </transition>
                         </div>
@@ -1200,6 +1200,11 @@ onMounted(async () => {
     try {
         await appWindow.innerPosition();
     } catch (e) { }
+
+    // 在启动调整位置前，根据当前的实际状态，校准初始宽高
+    const { w, h } = getBaseSize();
+    currentWidth.value = w;
+    currentHeight.value = h;
 
     // 根据本地记录决定启动时出现在哪
     if (isPinnedToTaskbar.value) {
