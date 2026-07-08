@@ -790,6 +790,14 @@ let mouseDownX = 0;
 let mouseDownY = 0;
 let isMouseDown = false;
 
+// 自定义横向拖拽相关状态（任务栏模式下仅允许横向移动）
+let isCustomDragging = false;
+let customDragStartScreenX = 0;
+let customDragStartWindowX = 0;
+let customDragStartWindowY = 0;
+let customDragMonitor: { position: { x: number; y: number }; size: { width: number; height: number } } | null = null;
+let customDragWindowWidth = 0;
+
 const handleMouseDown = (event: MouseEvent) => {
     if ((event.target as HTMLElement).closest('.ctl-btn')) return;
 
@@ -812,9 +820,19 @@ const handleMouseMove = async (event: MouseEvent) => {
         return;
     }
 
-    // 如果固定到了任务栏或已锁定位置，则禁止拖动
-    if (isPinnedToTaskbar.value || isPositionLocked.value) return;
+    // 3. 位置已锁定时，禁止一切拖拽
+    if (isPositionLocked.value) return;
 
+    // 4. 任务栏模式 + 已解锁：仅允许横向拖拽（自定义实现，约束 Y 轴不变）
+    if (isPinnedToTaskbar.value) {
+        if (Math.abs(event.clientX - mouseDownX) > 5) {
+            isMouseDown = false;
+            await startCustomHorizontalDrag(event);
+        }
+        return;
+    }
+
+    // 5. 岛模式 + 已解锁：自由拖拽（原生 startDragging，X/Y 均可移动）
     if (Math.abs(event.clientX - mouseDownX) > 5 || Math.abs(event.clientY - mouseDownY) > 5) {
         isMouseDown = false;
         try {
@@ -827,6 +845,88 @@ const handleMouseMove = async (event: MouseEvent) => {
 
 const handleMouseUp = () => {
     isMouseDown = false;
+    handleCustomDragEnd();
+};
+
+// ===== 自定义横向拖拽（任务栏模式下仅允许 X 轴移动）=====
+const startCustomHorizontalDrag = async (event: MouseEvent) => {
+    try {
+        const appWindow = getCurrentWindow();
+        // 获取窗口当前物理坐标，作为拖拽起点
+        const pos = await appWindow.outerPosition();
+        customDragStartWindowX = pos.x;
+        customDragStartWindowY = pos.y;
+        customDragStartScreenX = event.screenX;
+
+        // 获取显示器信息与窗口宽度，用于边界约束
+        customDragMonitor = await currentMonitor();
+        const size = await appWindow.innerSize();
+        customDragWindowWidth = size.width;
+
+        isCustomDragging = true;
+
+        // 添加文档级监听器，确保鼠标移出灵动岛窗口后仍能持续追踪
+        document.addEventListener('mousemove', handleCustomDragMove);
+        document.addEventListener('mouseup', handleCustomDragEnd);
+    } catch (e) {
+        console.error('横向拖拽初始化失败:', e);
+    }
+};
+
+const handleCustomDragMove = async (event: MouseEvent) => {
+    if (!isCustomDragging) return;
+
+    const scaleFactor = window.devicePixelRatio;
+    const deltaXLogical = event.screenX - customDragStartScreenX;
+    const deltaXPhysical = deltaXLogical * scaleFactor;
+    let newX = customDragStartWindowX + deltaXPhysical;
+
+    // 边界约束：防止拖出屏幕左右边缘
+    if (customDragMonitor) {
+        const monitorLeft = customDragMonitor.position.x;
+        const monitorRight = customDragMonitor.position.x + customDragMonitor.size.width;
+        newX = Math.max(monitorLeft, Math.min(newX, monitorRight - customDragWindowWidth));
+    }
+
+    try {
+        await getCurrentWindow().setPosition(
+            new PhysicalPosition(Math.round(newX), Math.round(customDragStartWindowY))
+        );
+    } catch (e) {
+        console.error('横向拖拽失败:', e);
+    }
+};
+
+const handleCustomDragEnd = () => {
+    if (!isCustomDragging) return;
+    isCustomDragging = false;
+    document.removeEventListener('mousemove', handleCustomDragMove);
+    document.removeEventListener('mouseup', handleCustomDragEnd);
+};
+
+// ===== 位置持久化（锁定时保存，启动时恢复）=====
+const saveIslandPosition = async () => {
+    try {
+        const appWindow = getCurrentWindow();
+        const pos = await appWindow.outerPosition();
+        localStorage.setItem('nsd_island_position', JSON.stringify({ x: pos.x, y: pos.y }));
+    } catch (e) {
+        console.error('保存位置失败:', e);
+    }
+};
+
+const restoreIslandPosition = async (): Promise<boolean> => {
+    try {
+        const saved = localStorage.getItem('nsd_island_position');
+        if (saved) {
+            const { x, y } = JSON.parse(saved);
+            await getCurrentWindow().setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
+            return true;
+        }
+    } catch (e) {
+        console.error('恢复位置失败:', e);
+    }
+    return false;
 };
 
 const handleRightClick = async (event: MouseEvent) => {
@@ -868,6 +968,10 @@ const handleRightClick = async (event: MouseEvent) => {
         action: async () => {
             try {
                 await adjustWindowPosition();
+                // 如果已锁定，重置后重新保存新位置
+                if (isPositionLocked.value) {
+                    await saveIslandPosition();
+                }
                 showToast('已重置位置');
             } catch (error) {
                 console.error(error);
@@ -880,10 +984,16 @@ const handleRightClick = async (event: MouseEvent) => {
         text: isPositionLocked.value ? '解锁 (当前已锁定)' : '锁定',
         id: 'toggle_lock',
         enabled: !isPinnedToTaskbar.value,
-        action: () => {
+        action: async () => {
             isPositionLocked.value = !isPositionLocked.value;
             localStorage.setItem('nsd_position_locked', String(isPositionLocked.value));
-            // 修改这里：根据状态触发 lock 或 unlock 专属通知
+            // 锁定时保存当前位置，以便下次启动恢复
+            if (isPositionLocked.value) {
+                await saveIslandPosition();
+            }
+            // 同步状态给设置面板
+            await emit('position-lock-sync', { locked: isPositionLocked.value });
+            // 根据状态触发 lock 或 unlock 专属通知
             showToast(
                 isPositionLocked.value ? '锁定位置成功' : '位置已解锁',
                 isPositionLocked.value ? 'lock' : 'unlock'
@@ -1167,7 +1277,20 @@ onMounted(async () => {
         if (isPinnedToTaskbar.value) {
             await snapToBottomLeft(); // 开启时：飞到左下角
         } else {
-            await adjustWindowPosition(); // 关闭时：等同于点击“重置位置”，飞回顶部居中
+            await adjustWindowPosition(); // 关闭时：等同于点击"重置位置"，飞回顶部居中
+        }
+        // 如果位置已锁定，模式切换后重新保存新位置（避免下次启动恢复到过期坐标）
+        if (isPositionLocked.value) {
+            await saveIslandPosition();
+        }
+    });
+
+    // 监听来自设置面板的位置锁定信号
+    await listen<{ locked: boolean }>('control-position-lock', async (event) => {
+        isPositionLocked.value = event.payload.locked;
+        // 锁定时保存当前位置，以便下次启动恢复
+        if (isPositionLocked.value) {
+            await saveIslandPosition();
         }
     });
 
@@ -1215,10 +1338,24 @@ onMounted(async () => {
     currentHeight.value = h;
 
     // 根据本地记录决定启动时出现在哪
-    if (isPinnedToTaskbar.value) {
-        await snapToBottomLeft();
+    if (isPositionLocked.value) {
+        // 已锁定位置：尝试恢复上次保存的坐标
+        const restored = await restoreIslandPosition();
+        if (!restored) {
+            // 没有保存过位置，回退到默认定位
+            if (isPinnedToTaskbar.value) {
+                await snapToBottomLeft();
+            } else {
+                await adjustWindowPosition();
+            }
+        }
     } else {
-        await adjustWindowPosition();
+        // 未锁定：使用默认定位
+        if (isPinnedToTaskbar.value) {
+            await snapToBottomLeft();
+        } else {
+            await adjustWindowPosition();
+        }
     }
 
     // 先显示透明的 Tauri 窗口，再触发 Vue 的灵动岛入场弹簧动画
@@ -1251,8 +1388,8 @@ onMounted(async () => {
     // 在你原有的每秒刷新定时器中，顺带执行音乐同步
     // 1. 高频定时器：专门负责网速和硬件监控（每 500ms ~ 1000ms 刷新一次）
     speedTimer = setInterval(async () => {
-        // 强置顶逻辑
-        if (isPinnedToTaskbar.value && isIslandVisible.value && !isMenuOpen.value) {
+        // 强置顶逻辑（拖拽中跳过，避免与 setPosition 冲突）
+        if (isPinnedToTaskbar.value && isIslandVisible.value && !isMenuOpen.value && !isCustomDragging) {
             invoke('force_window_topmost').catch(() => { });
         }
 
@@ -1378,6 +1515,9 @@ onMounted(async () => {
 
 onUnmounted(() => {
     window.removeEventListener('blur', collapseMusic);
+    // 清理自定义横向拖拽的文档级监听器
+    document.removeEventListener('mousemove', handleCustomDragMove);
+    document.removeEventListener('mouseup', handleCustomDragEnd);
     clearInterval(speedTimer);
     clearInterval(pingTimer);
     stopRotation();

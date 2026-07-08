@@ -265,6 +265,17 @@
 
                     <div class="set-item">
                         <div class="set-item-meta">
+                            <span class="set-item-title">灵动岛位置</span>
+                            <span class="set-item-desc">{{ positionLocked ? '已锁定，解锁后可拖动调整位置' : (pinToTaskbar ? '已解锁，任务栏模式下仅可横向拖动' : '已解锁，可自由拖动调整位置') }}</span>
+                        </div>
+                        <div class="capsule-switch">
+                            <div class="capsule-btn" :class="{ 'is-active': !positionLocked }" @click="setPositionLock(false)">解锁</div>
+                            <div class="capsule-btn" :class="{ 'is-active': positionLocked }" @click="setPositionLock(true)">锁定</div>
+                        </div>
+                    </div>
+
+                    <div class="set-item">
+                        <div class="set-item-meta">
                             <span class="set-item-title">灵动岛轮换</span>
                             <span class="set-item-desc">在网速岛、音乐岛、硬件监控间轮换</span>
                         </div>
@@ -369,6 +380,15 @@ const pinToTaskbar = ref(localStorage.getItem('nsd_pin_taskbar') === 'true');
 const togglePinTaskbar = async () => {
     localStorage.setItem('nsd_pin_taskbar', String(pinToTaskbar.value));
     await emit('control-pin-taskbar', { enabled: pinToTaskbar.value });
+};
+
+// 灵动岛位置锁定状态，默认从本地存储读取
+const positionLocked = ref(localStorage.getItem('nsd_position_locked') === 'true');
+// 切换位置锁定状态：保存本地并发送信号给灵动岛
+const setPositionLock = async (locked: boolean) => {
+    positionLocked.value = locked;
+    localStorage.setItem('nsd_position_locked', String(locked));
+    await emit('control-position-lock', { locked: locked });
 };
 
 // 切换消息模式
@@ -928,7 +948,7 @@ onMounted(async () => {
         console.error("获取应用版本号失败:", e);
     }
 
-    // 监听来自灵动岛右键菜单的“打开设置”信号
+    // 监听来自灵动岛右键菜单的"打开设置"信号
     await listen('open-settings-panel', async () => {
         // 1. 如果当前不在灵动岛设置页，就切过去
         if (!isDynamicSet.value) {
@@ -940,6 +960,11 @@ onMounted(async () => {
         await appWindow.show();        // 确保窗口显示
         await appWindow.unminimize();  // 如果最小化了，就恢复
         await appWindow.setFocus();    // 强制抢占焦点弹到最前面
+    });
+
+    // 监听来自灵动岛右键菜单的位置锁定同步信号
+    await listen<{ locked: boolean }>('position-lock-sync', (event) => {
+        positionLocked.value = event.payload.locked;
     });
 
     await listen<{ visible: boolean }>('island-status-sync', (event) => {
