@@ -35,22 +35,24 @@ fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSessio
     // SMTC模式：返回第一个活动的媒体会话
     if target == "smtc" {
         // 优先级1: 正在播放的会话
-        for session in sessions.iter() {
+        for session in sessions {
             if let Ok(playback_info) = session.GetPlaybackInfo() {
                 if let Ok(status) = playback_info.PlaybackStatus() {
                     if status == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing {
-                        return Some(session.clone());
+                        return Some(session);
                     }
                 }
             }
         }
         
         // 优先级2: 暂停但有媒体信息的会话
-        for session in sessions.iter() {
+        // 注意：这里需要重新获取sessions，因为上面的for循环已经消耗了sessions
+        let sessions = manager.GetSessions().ok()?;
+        for session in sessions {
             if let Ok(properties) = session.TryGetMediaPropertiesAsync().ok()?.get().ok() {
                 if let Ok(title) = properties.Title() {
                     if !title.to_string().is_empty() {
-                        return Some(session.clone());
+                        return Some(session);
                     }
                 }
             }
