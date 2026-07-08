@@ -7,7 +7,13 @@
 
             <div class="rainbow-border-glow" v-if="isGlowBorderEnabled" :style="{ opacity: glowOpacity }"></div>
 
-            <div class="island-core-content" :style="coreContentStyle">
+            <!-- 左侧宽度调整手柄 -->
+            <div class="resize-handle left"
+                v-if="!isPositionLocked && !isMusicExpanded && !isMusicExpanding && !isMsgActive && !displaySysToast"
+                @mousedown.stop="handleResizeStart($event, 'left')">
+            </div>
+
+            <div class="island-core-content" :style="coreContentStyle" :class="{ 'resize-cursor-left': mouseNearEdge === 'left', 'resize-cursor-right': mouseNearEdge === 'right' }">
                 <div class="inner-wrapper">
                     <transition mode="out-in" @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
                         <div v-if="isMsgActive" class="msg-box" key="msg">
@@ -174,6 +180,12 @@
 
                     <div v-else :class="['status-dot', networkStatus]" key="dot"></div>
                 </transition>
+            </div>
+
+            <!-- 右侧宽度调整手柄 -->
+            <div class="resize-handle right"
+                v-if="!isPositionLocked && !isMusicExpanded && !isMusicExpanding && !isMsgActive && !displaySysToast"
+                @mousedown.stop="handleResizeStart($event, 'right')">
             </div>
         </div>
     </transition>
@@ -359,6 +371,22 @@ const coverCache = new Map<string, string>();
 const isPinnedToTaskbar = ref(localStorage.getItem('nsd_pin_taskbar') === 'true');
 // 记录是否锁定了位置，并存到本地
 const isPositionLocked = ref(localStorage.getItem('nsd_position_locked') === 'true');
+
+// 宽度调整相关状态
+const isResizing = ref(false);
+const resizeSide = ref<'left' | 'right' | null>(null);
+let resizeStartX = 0;
+let resizeStartWidth = 0;
+const MIN_WIDTH = 100; // 最小宽度
+const MAX_WIDTH = 500; // 最大宽度
+
+// 鼠标是否在边缘区域（用于光标样式）
+const mouseNearEdge = ref<'left' | 'right' | null>(null);
+
+// 计算是否可以调整宽度
+const canResize = computed(() => {
+    return !isPositionLocked.value && !isMusicExpanded.value && !isMusicExpanding.value && !isMsgActive.value && !displaySysToast.value;
+});
 // 记录消息模式开关状态
 const isMsgModeEnabled = ref(localStorage.getItem('nsd_msg_mode') === 'true');
 // 轮换功能核心逻辑
@@ -800,14 +828,150 @@ let customDragWindowWidth = 0;
 
 const handleMouseDown = (event: MouseEvent) => {
     if ((event.target as HTMLElement).closest('.ctl-btn')) return;
+    if ((event.target as HTMLElement).closest('.resize-handle')) return;
 
-    // 无论有没有锁定，都必须老老实实记录坐标，给后面的“点击展开”提供判断依据！
+    // 检测是否在边缘区域，如果是则开始宽度调整
+    if (!isPositionLocked.value && !isMusicExpanded.value && !isMusicExpanding.value && !isMsgActive.value && !displaySysToast.value) {
+        if (isNearEdge(event, 'left')) {
+            handleResizeStart(event, 'left');
+            return;
+        }
+        if (isNearEdge(event, 'right')) {
+            handleResizeStart(event, 'right');
+            return;
+        }
+    }
+
+    // 无论有没有锁定，都必须老老实实记录坐标，给后面的"点击展开"提供判断依据！
     mouseDownX = event.clientX;
     mouseDownY = event.clientY;
     isMouseDown = true;
 };
 
+// ===== 宽度调整相关函数 =====
+const handleResizeStart = (event: MouseEvent, side: 'left' | 'right') => {
+    // 位置锁定时禁止调整
+    if (isPositionLocked.value) return;
+
+    // 音乐展开、消息通知等状态下禁止调整
+    if (isMusicExpanded.value || isMusicExpanding.value || isMsgActive.value || displaySysToast.value) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    isResizing.value = true;
+    resizeSide.value = side;
+    resizeStartX = event.screenX;
+    resizeStartWidth = currentWidth.value;
+
+    document.addEventListener('mousemove', handleResizeMove);
+    document.addEventListener('mouseup', handleResizeEnd);
+};
+
+const handleResizeMove = async (event: MouseEvent) => {
+    if (!isResizing.value || !resizeSide.value) return;
+
+    const scaleFactor = window.devicePixelRatio;
+    const deltaXLogical = event.screenX - resizeStartX;
+
+    let newWidth: number;
+    if (resizeSide.value === 'right') {
+        newWidth = resizeStartWidth + deltaXLogical;
+    } else {
+        newWidth = resizeStartWidth - deltaXLogical;
+    }
+
+    // 边界约束
+    newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, newWidth));
+
+    // 更新灵动岛宽度
+    try {
+        const appWindow = getCurrentWindow();
+        await appWindow.setSize(new PhysicalSize(Math.ceil(newWidth * scaleFactor), Math.ceil(currentHeight.value * scaleFactor)));
+
+        // 如果是左侧调整，需要同时移动窗口位置以保持右侧固定
+        if (resizeSide.value === 'left') {
+            const pos = await appWindow.outerPosition();
+            const widthDelta = (newWidth - currentWidth.value) * scaleFactor;
+            await appWindow.setPosition(new PhysicalPosition(Math.round(pos.x + widthDelta), Math.round(pos.y)));
+        }
+
+        // 更新当前宽度
+        currentWidth.value = newWidth;
+    } catch (error) {
+        console.error('调整宽度失败:', error);
+    }
+};
+
+const handleResizeEnd = () => {
+    isResizing.value = false;
+    resizeSide.value = null;
+    document.removeEventListener('mousemove', handleResizeMove);
+    document.removeEventListener('mouseup', handleResizeEnd);
+};
+
+// 保存用户自定义的宽度
+const saveIslandWidth = () => {
+    localStorage.setItem('nsd_island_width', String(currentWidth.value));
+};
+
+// 恢复用户自定义的宽度
+const restoreIslandWidth = () => {
+    const saved = localStorage.getItem('nsd_island_width');
+    if (saved) {
+        const width = parseInt(saved, 10);
+        if (width >= MIN_WIDTH && width <= MAX_WIDTH) {
+            return width;
+        }
+    }
+    return null;
+};
+
+// 检测鼠标是否在灵动岛边缘（用于显示调整光标）
+const isNearEdge = (event: MouseEvent, side: 'left' | 'right'): boolean => {
+    if (isPositionLocked.value) return false;
+
+    const target = event.currentTarget as HTMLElement;
+    if (!target) return false;
+
+    const rect = target.getBoundingClientRect();
+    const EDGE_THRESHOLD = 8; // 边缘检测阈值（像素）
+
+    if (side === 'left') {
+        return event.clientX - rect.left <= EDGE_THRESHOLD;
+    } else {
+        return rect.right - event.clientX <= EDGE_THRESHOLD;
+    }
+};
+
 const handleMouseMove = async (event: MouseEvent) => {
+    // 宽度调整模式
+    if (isResizing.value) {
+        await handleResizeMove(event);
+        return;
+    }
+
+    // 检测鼠标是否在边缘区域（用于光标样式）
+    if (canResize.value) {
+        const target = event.currentTarget as HTMLElement;
+        if (target) {
+            const rect = target.getBoundingClientRect();
+            const EDGE_THRESHOLD = 8;
+            const leftDist = event.clientX - rect.left;
+            const rightDist = rect.right - event.clientX;
+
+            if (leftDist <= EDGE_THRESHOLD && leftDist >= 0) {
+                mouseNearEdge.value = 'left';
+            } else if (rightDist <= EDGE_THRESHOLD && rightDist >= 0) {
+                mouseNearEdge.value = 'right';
+            } else {
+                mouseNearEdge.value = null;
+            }
+        }
+    } else {
+        mouseNearEdge.value = null;
+    }
+
     if (!isMouseDown) return;
 
     // 1. 全局动画锁：任何变形动画期间，绝对禁止拖拽
@@ -844,6 +1008,12 @@ const handleMouseMove = async (event: MouseEvent) => {
 };
 
 const handleMouseUp = () => {
+    // 宽度调整结束时保存宽度
+    if (isResizing.value) {
+        handleResizeEnd();
+        saveIslandWidth();
+        return;
+    }
     isMouseDown = false;
     handleCustomDragEnd();
 };
@@ -979,6 +1149,26 @@ const handleRightClick = async (event: MouseEvent) => {
         }
     });
 
+    // 重置宽度
+    const resetWidthItem = await MenuItem.new({
+        text: '重置宽度',
+        id: 'reset_width',
+        enabled: !isPositionLocked.value,
+        action: async () => {
+            try {
+                // 删除保存的自定义宽度
+                localStorage.removeItem('nsd_island_width');
+                // 恢复到默认宽度
+                const { w, h } = getBaseSize();
+                currentWidth.value = w;
+                animateIslandSize(w, h);
+                showToast('已重置宽度');
+            } catch (error) {
+                console.error(error);
+            }
+        }
+    });
+
     // 锁定位置菜单项
     const toggleLockItem = await MenuItem.new({
         text: isPositionLocked.value ? '解锁 (当前已锁定)' : '锁定',
@@ -987,9 +1177,10 @@ const handleRightClick = async (event: MouseEvent) => {
         action: async () => {
             isPositionLocked.value = !isPositionLocked.value;
             localStorage.setItem('nsd_position_locked', String(isPositionLocked.value));
-            // 锁定时保存当前位置，以便下次启动恢复
+            // 锁定时保存当前位置和宽度，以便下次启动恢复
             if (isPositionLocked.value) {
                 await saveIslandPosition();
+                saveIslandWidth();
             }
             // 同步状态给设置面板
             await emit('position-lock-sync', { locked: isPositionLocked.value });
@@ -1021,6 +1212,7 @@ const handleRightClick = async (event: MouseEvent) => {
     await menu.append(openSettingsItem);
     await menu.append(toggleGlowBorderItem);
     await menu.append(resetPositionItem);
+    await menu.append(resetWidthItem);
     await menu.append(toggleLockItem);
     await menu.append(closeItem);
 
@@ -1178,6 +1370,9 @@ const expandMusic = (e: MouseEvent) => {
 
 // 鼠标离开灵动岛时：立刻收缩！
 const handleMouseLeave = () => {
+    // 清除鼠标边缘检测状态
+    mouseNearEdge.value = null;
+
     if (!isMusicExpanded.value && !isMusicExpanding.value) return;
 
     // 直接呼叫收缩。如果锁着，collapseMusic 会自动把它记到账上稍后执行
@@ -1334,7 +1529,9 @@ onMounted(async () => {
 
     // 在启动调整位置前，根据当前的实际状态，校准初始宽高
     const { w, h } = getBaseSize();
-    currentWidth.value = w;
+    // 优先恢复用户自定义的宽度
+    const savedWidth = restoreIslandWidth();
+    currentWidth.value = savedWidth !== null ? savedWidth : w;
     currentHeight.value = h;
 
     // 根据本地记录决定启动时出现在哪
@@ -2264,5 +2461,68 @@ onUnmounted(() => {
     white-space: nowrap;
     opacity: 0.95;
     transform: translateX(-2px) translateY(-1px);
+}
+
+/* 宽度调整手柄样式 */
+.resize-handle {
+    position: absolute;
+    top: 0;
+    width: 6px;
+    height: 100%;
+    z-index: 100;
+    cursor: ew-resize;
+    transition: opacity 0.2s ease, background-color 0.2s ease;
+    opacity: 0;
+}
+
+.resize-handle:hover {
+    opacity: 1;
+    background-color: rgba(255, 255, 255, 0.3);
+}
+
+:deep(.island-container[style*="background-color: rgba(255, 255, 255"]) .resize-handle:hover {
+    background-color: rgba(0, 0, 0, 0.2);
+}
+
+.resize-handle.left {
+    left: 0;
+    border-radius: 100px 0 0 100px;
+}
+
+.resize-handle.right {
+    right: 0;
+    border-radius: 0 100px 100px 0;
+}
+
+/* 展开状态下调整手柄的圆角 */
+.island-container:has(.island-core-content[style*="border-radius: 22px"]) .resize-handle {
+    border-radius: 0;
+}
+
+.island-container:has(.island-core-content[style*="border-radius: 22px"]) .resize-handle.left {
+    border-radius: 24px 0 0 24px;
+}
+
+.island-container:has(.island-core-content[style*="border-radius: 22px"]) .resize-handle.right {
+    border-radius: 0 24px 24px 0;
+}
+
+/* 正在调整时的样式 */
+.resize-handle:active {
+    opacity: 1;
+    background-color: rgba(255, 255, 255, 0.4);
+}
+
+:deep(.island-container[style*="background-color: rgba(255, 255, 255"]) .resize-handle:active {
+    background-color: rgba(0, 0, 0, 0.3);
+}
+
+/* 光标样式 */
+.island-core-content.resize-cursor-left {
+    cursor: w-resize;
+}
+
+.island-core-content.resize-cursor-right {
+    cursor: e-resize;
 }
 </style>
