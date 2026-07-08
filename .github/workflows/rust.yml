@@ -11,7 +11,7 @@ env:
 
 jobs:
   build:
-    runs-on: windows-latest  # 修复：改为Windows环境，因为这是Windows应用
+    runs-on: windows-latest
 
     steps:
     - uses: actions/checkout@v4
@@ -22,10 +22,17 @@ jobs:
         rustup default stable
 
     - name: Build
-      run: cargo build --verbose
-      working-directory: src-tauri  # 切换到src-tauri目录，Cargo.toml在此处
+      run: cargo build --release
+      working-directory: src-tauri
 
     - name: Run tests
       run: cargo test --verbose
-      working-directory: src-tauri  # 切换到src-tauri目录
-      continue-on-error: true  # 允许测试失败，因为可能没有测试
+      working-directory: src-tauri
+      continue-on-error: true
+
+    - name: Upload Rust build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-build
+        path: src-tauri/target/release/
+        retention-days: 5
