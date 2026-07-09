@@ -174,16 +174,8 @@ MIT License
 
 Copyright (c) 2026 Ryen (GEORGEWU)
 
-## 捐赠
-
-如果 NSD 对你有帮助，欢迎请作者喝杯咖啡！
-
-| 方式 | 信息 |
-|------|------|
-| 微信支付 | [微信](./src/assets/wechat-pay.png) |
-| 支付宝 | [支付宝](./src/assets/alipay.jpg) |
-| GitHub Sponsors | [前往支持](https://github.com/sponsors/GEORGEWWWU) |
-
----
-
-> 感谢每一位支持者！
+## 修改信息
+1.添加了通用的SMTC读取，可以读取任何已接入SMTC的音乐软件
+2.添加了灵动岛位置的移动，宽度调整，自动折叠时间调整，自动隐藏支持
+3.砍去了ECharts
+4.灵动岛本体换用原生渲染
