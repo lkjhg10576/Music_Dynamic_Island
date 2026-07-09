@@ -1,0 +1,22 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  /* 预设一个平滑过渡 */
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* 亮色模式默认底色 */
+html {
+  background-color: #f8fafc;
+}
+
+/* 暗色模式覆盖底色 */
+html.dark-theme {
+  background-color: #1e2021;
+}
+
+/* 让 body 永远透明，完全透出 html 的颜色 */
+body {
+  background-color: transparent !important;
+}
