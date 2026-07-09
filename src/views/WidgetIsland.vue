@@ -556,18 +556,47 @@ const syncMusicStatus = async () => {
                 }
             }
 
+            const wasPlaying = isPlaying.value;
             isPlaying.value = playing;
             
-            // 自动恢复显示：当音乐开始播放时，如果灵动岛被隐藏，则自动恢复显示
-            if (playing && !isIslandVisible.value) {
-                getCurrentWindow().show();
-                isIslandVisible.value = true;
+            // 音乐播放器模式：有音乐就显示，没音乐就隐藏（类似通知模式）
+            if (displayMusic.value) {
+                if (playing && !isIslandVisible.value) {
+                    // 有音乐播放且灵动岛被隐藏，自动恢复显示
+                    getCurrentWindow().show();
+                    isIslandVisible.value = true;
+                } else if (!playing && wasPlaying && isIslandVisible.value && !isMouseOver.value) {
+                    // 音乐停止播放且鼠标不在灵动岛上，延迟隐藏
+                    if (autoHideTimer) {
+                        clearTimeout(autoHideTimer);
+                        autoHideTimer = null;
+                    }
+                    autoHideTimer = window.setTimeout(() => {
+                        if (!isMouseOver.value && isIslandVisible.value && !isPlaying.value) {
+                            isIslandVisible.value = false;
+                        }
+                    }, autoHideDelay.value);
+                }
             }
         } else {
             // 没检测到播放时，清空状态
             currentTrackInfo.value = `未在播放歌曲 - ${getPlayerName()}`;
+            const wasPlaying = isPlaying.value;
             isPlaying.value = false;
             coverUrl.value = ''; // 没歌时清空，显示默认的优美渐变色
+            
+            // 音乐播放器模式：音乐停止时隐藏灵动岛
+            if (displayMusic.value && wasPlaying && isIslandVisible.value && !isMouseOver.value) {
+                if (autoHideTimer) {
+                    clearTimeout(autoHideTimer);
+                    autoHideTimer = null;
+                }
+                autoHideTimer = window.setTimeout(() => {
+                    if (!isMouseOver.value && isIslandVisible.value && !isPlaying.value) {
+                        isIslandVisible.value = false;
+                    }
+                }, autoHideDelay.value);
+            }
         }
     } catch (err) {
         console.error('音乐信息获取失败:', err);
@@ -1516,15 +1545,14 @@ onMounted(async () => {
             showInfo.value = false;
             musicBoxKey.value++;
             
-            // 音乐控制器模式特殊处理：当音乐控制器模式打开且没有音乐播放时，触发自动隐藏
-            if (isAutoHideEnabled.value && !isPlaying.value && !isIslandVisible.value) {
-                // 启动自动隐藏定时器
+            // 音乐播放器模式：开启时如果没有音乐播放，隐藏灵动岛（类似通知模式）
+            if (!isPlaying.value && isIslandVisible.value && !isMouseOver.value) {
                 if (autoHideTimer) {
                     clearTimeout(autoHideTimer);
                     autoHideTimer = null;
                 }
                 autoHideTimer = window.setTimeout(() => {
-                    if (!isMouseOver.value && isIslandVisible.value) {
+                    if (!isMouseOver.value && isIslandVisible.value && !isPlaying.value) {
                         isIslandVisible.value = false;
                     }
                 }, autoHideDelay.value);
