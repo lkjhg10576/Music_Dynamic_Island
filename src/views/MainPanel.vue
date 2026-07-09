@@ -687,7 +687,7 @@ let speedTimer: number;
 let systemThemeMedia: MediaQueryList;
 
 const speedChartRef = ref<InstanceType<typeof SpeedChart> | null>(null);
-const chartDataQueue: number[] = Array(15).fill(0);
+const chartDataQueue = ref<number[]>(Array(15).fill(0));
 
 const formatSpeed = (bytes: number) => {
     if (bytes < 1024) return bytes + ' B/s';
@@ -709,8 +709,9 @@ const fetchSpeedStats = async () => {
 
             // 核心修复：直接压入完整的 speedMB 浮点数，不做保留两位的截断。
             // 从而使图表面对极小流量（如 B/s, KB/s 级别）也能捕捉到微小的轴缩放波动。
-            chartDataQueue.push(speedMB);
-            if (chartDataQueue.length > 15) chartDataQueue.shift();
+            const newData = [...chartDataQueue.value, speedMB];
+            if (newData.length > 15) newData.shift();
+            chartDataQueue.value = newData;
 
             if (rxDiff > 0 || txDiff > 0) {
                 const todayStr = getLocalYYYYMMDD(new Date());
