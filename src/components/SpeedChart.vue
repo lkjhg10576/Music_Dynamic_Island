@@ -11,6 +11,7 @@ const props = defineProps<{
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
+let rafId: number | null = null;
 
 const getColors = () => {
     const isDark = document.documentElement.classList.contains('dark-theme');
@@ -58,7 +59,7 @@ const draw = () => {
     ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const w = rect.width;
     const h = rect.height;
@@ -108,7 +109,10 @@ const draw = () => {
 
 // 监听数据变化重绘
 watch(() => props.data, () => {
-    requestAnimationFrame(draw);
+    if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+    }
+    rafId = requestAnimationFrame(draw);
 }, { deep: true });
 
 // 监听主题变化
@@ -129,11 +133,17 @@ onMounted(() => {
 
 onUnmounted(() => {
     themeObserver?.disconnect();
+    if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+    }
 });
 
 // 暴露 resize 方法
 const resize = () => {
-    requestAnimationFrame(draw);
+    if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+    }
+    rafId = requestAnimationFrame(draw);
 };
 
 defineExpose({ resize });

@@ -47,6 +47,7 @@ const props = defineProps<{
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
+let rafId: number | null = null;
 
 const tooltip = reactive({
     visible: false,
@@ -89,7 +90,7 @@ const draw = () => {
     ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const w = rect.width;
     const h = rect.height;
@@ -322,7 +323,10 @@ const handleMouseLeave = () => {
 };
 
 watch(() => [props.upData, props.downData, props.chartType, props.days], () => {
-    requestAnimationFrame(draw);
+    if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+    }
+    rafId = requestAnimationFrame(draw);
 }, { deep: true });
 
 let themeObserver: MutationObserver | null = null;
@@ -345,10 +349,16 @@ onUnmounted(() => {
     themeObserver?.disconnect();
     canvasRef.value?.removeEventListener('mousemove', handleMouseMove);
     canvasRef.value?.removeEventListener('mouseleave', handleMouseLeave);
+    if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+    }
 });
 
 const resize = () => {
-    requestAnimationFrame(draw);
+    if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+    }
+    rafId = requestAnimationFrame(draw);
 };
 
 defineExpose({ resize });
