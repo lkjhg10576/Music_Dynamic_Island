@@ -218,7 +218,7 @@ fn get_hardware_stats(state: State<'_, AppState>) -> (f32, u64, u64) {
 #[tauri::command]
 fn get_network_stats(state: State<'_, AppState>) -> (u64, u64) {
     let mut networks = state.networks.lock().unwrap();
-    networks.refresh_list();
+    networks.refresh();
 
     let mut total_rx = 0;
     let mut total_tx = 0;
@@ -254,8 +254,9 @@ fn is_widget_visible(app: tauri::AppHandle) -> bool {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let networks = Networks::new_with_refreshed_list();
-    let mut system = System::new_all();
+    let mut system = System::new();
     system.refresh_cpu_usage();
+    system.refresh_memory();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))

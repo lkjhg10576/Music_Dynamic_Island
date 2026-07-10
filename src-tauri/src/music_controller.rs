@@ -1,5 +1,7 @@
 use std::sync::Mutex;
 use tauri::command;
+use once_cell::sync::Lazy;
+use reqwest::Client;
 
 // --- 引入 SMTC 需要的模块 ---
 use windows::Media::Control::{
@@ -10,6 +12,14 @@ use windows::Media::Control::{
 
 // 全局记录当前选中的平台（默认空，由前端传来）
 static TARGET_PLAYER: Mutex<String> = Mutex::new(String::new());
+
+// 全局 HTTP 客户端单例，避免每次切歌都创建新的
+static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
+    Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .expect("failed to build reqwest client")
+});
 
 // 给前端调用的切换接口
 #[command]
@@ -179,10 +189,7 @@ pub async fn get_random_cover_url(song_name: String, artist_name: String) -> Res
         return Ok(base64_cover);
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(3))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = &*HTTP_CLIENT;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(3);
 

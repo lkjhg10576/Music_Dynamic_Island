@@ -1,10 +1,13 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use rustfft::{num_complex::Complex, FftPlanner};
+use rustfft::{num_complex::Complex, Fft, FftPlanner};
 use std::sync::Mutex;
 use std::thread;
 
 // 存储 5 个频段的全局数组，默认高度 0.35 (对应前端的 scaleY(0.35))
 static SPECTRUM: Mutex<[f32; 5]> = Mutex::new([0.35; 5]);
+
+// FFT 计划缓存，避免每次回调都重建 FftPlanner
+static FFT_CACHE: Mutex<Option<(usize, std::sync::Arc<dyn Fft<f32>>)>> = Mutex::new(None);
 
 #[tauri::command]
 pub fn get_audio_spectrum() -> [f32; 5] {
@@ -75,9 +78,16 @@ fn process_data(data: &[f32], channels: u16) {
     let n = mono.len();
     if n < 128 { return; } // 样本太少不做分析
 
-    // 2. FFT 准备
-    let mut planner = FftPlanner::new();
-    let fft = planner.plan_fft_forward(n);
+    // 2. FFT 准备 - 使用缓存避免每次重建
+    let fft = {
+        let mut cache = FFT_CACHE.lock().unwrap();
+        if cache.as_ref().map_or(true, |(len, _)| *len != n) {
+            let mut planner = FftPlanner::new();
+            let plan = planner.plan_fft_forward(n);
+            *cache = Some((n, plan));
+        }
+        cache.as_ref().unwrap().1.clone()
+    };
 
     // 3. 加汉宁窗 (Hanning Window) 平滑边缘，减少频谱泄漏
     let mut buffer: Vec<Complex<f32>> = mono.iter().enumerate().map(|(i, &val)| {
