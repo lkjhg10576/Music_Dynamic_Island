@@ -4,8 +4,8 @@ mod notification;
 mod system_events;
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU32, Ordering};
-use tauri::{State, Manager, Emitter};
+use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
+use tauri::{State, Manager, Emitter, WebviewWindowBuilder, WebviewUrl};
 use sysinfo::{Networks, System};
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
@@ -16,6 +16,9 @@ use winapi::shared::windef::RECT;
 
 // 全功能灵动岛智能双模动画锁
 static ANIMATION_ID: AtomicU32 = AtomicU32::new(0);
+
+// B1 省内存模式：关闭主窗口时彻底销毁 WebView（默认 false，保持原 hide 行为）
+static DESTROY_ON_CLOSE: AtomicBool = AtomicBool::new(false);
 
 // 将分散的坐标合并为一个结构体，并附带所有权 ID 防止误删
 struct AnchorState {
@@ -251,6 +254,49 @@ fn is_widget_visible(app: tauri::AppHandle) -> bool {
     }
 }
 
+#[tauri::command]
+fn set_destroy_on_close(enabled: bool) {
+    DESTROY_ON_CLOSE.store(enabled, Ordering::Relaxed);
+}
+
+/// 为主窗口绑定关闭事件处理：
+/// - 省内存模式关闭（默认）：prevent_close + hide（原行为）
+/// - 省内存模式开启：prevent_close + destroy（彻底销毁 WebView 释放内存）
+fn bind_main_window_close_event(window: &tauri::WebviewWindow) {
+    let win_clone = window.clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            if DESTROY_ON_CLOSE.load(Ordering::Relaxed) {
+                api.prevent_close();
+                let _ = win_clone.destroy();
+            } else {
+                api.prevent_close();
+                let _ = win_clone.hide();
+            }
+        }
+    });
+}
+
+/// 省内存模式下窗口已被销毁时，从托盘重建主窗口
+fn recreate_main_window(app: &tauri::AppHandle) {
+    let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("/".into()))
+        .title("NSD 控制台")
+        .inner_size(700.0, 550.0)
+        .resizable(false)
+        .maximizable(false)
+        .center();
+
+    match builder.build() {
+        Ok(new_window) => {
+            bind_main_window_close_event(&new_window);
+            let _ = new_window.set_focus();
+        }
+        Err(e) => {
+            eprintln!("[NSD] 重建主窗口失败: {}", e);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let networks = Networks::new_with_refreshed_list();
@@ -266,6 +312,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_network_stats,
             is_widget_visible,
+            set_destroy_on_close,
             get_network_latency,
             notification::fetch_latest_notification,
             get_hardware_stats,
@@ -305,23 +352,24 @@ pub fn run() {
                 })
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
-                        if let Some(main_window) = tray.app_handle().get_webview_window("main") {
-                            let _ = main_window.show();     
-                            let _ = main_window.unminimize(); 
-                            let _ = main_window.set_focus();  
+                        let app = tray.app_handle();
+                        match app.get_webview_window("main") {
+                            Some(main_window) => {
+                                let _ = main_window.show();
+                                let _ = main_window.unminimize();
+                                let _ = main_window.set_focus();
+                            }
+                            None => {
+                                // 省内存模式下窗口已被销毁，重建主窗口
+                                recreate_main_window(app);
+                            }
                         }
                     }
                 })
                 .build(app)?;
 
             if let Some(main_window) = app.get_webview_window("main") {
-                let w_clone = main_window.clone();
-                main_window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = w_clone.hide();
-                    }
-                });
+                bind_main_window_close_event(&main_window);
             }
 
             if let Some(widget_window) = app.get_webview_window("widget") {
