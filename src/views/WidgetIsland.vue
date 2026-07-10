@@ -573,6 +573,7 @@ const syncMusicStatus = async () => {
                     }
                     autoHideTimer = window.setTimeout(() => {
                         if (!isMouseOver.value && isIslandVisible.value && !isPlaying.value) {
+                            isAutoHiding = true;
                             isIslandVisible.value = false;
                         }
                     }, autoHideDelay.value);
@@ -584,7 +585,7 @@ const syncMusicStatus = async () => {
             const wasPlaying = isPlaying.value;
             isPlaying.value = false;
             coverUrl.value = ''; // 没歌时清空，显示默认的优美渐变色
-            
+
             // 音乐播放器模式：音乐停止时隐藏灵动岛
             if (displayMusic.value && wasPlaying && isIslandVisible.value && !isMouseOver.value) {
                 if (autoHideTimer) {
@@ -593,6 +594,7 @@ const syncMusicStatus = async () => {
                 }
                 autoHideTimer = window.setTimeout(() => {
                     if (!isMouseOver.value && isIslandVisible.value && !isPlaying.value) {
+                        isAutoHiding = true;
                         isIslandVisible.value = false;
                     }
                 }, autoHideDelay.value);
@@ -864,7 +866,11 @@ const onLeave = (el: Element, done: () => void) => {
             done();
             // 等待 DOM 动画播放完成后再隐藏窗口
             getCurrentWindow().hide().catch(console.error);
-            emit('island-status-sync', { visible: false });
+            // 只有用户主动关闭时才同步状态到控制台，自动隐藏不改变开关状态
+            if (!isAutoHiding) {
+                emit('island-status-sync', { visible: false });
+            }
+            isAutoHiding = false;
         }
     };
     requestAnimationFrame(animate);
@@ -873,6 +879,7 @@ const onLeave = (el: Element, done: () => void) => {
 let mouseDownX = 0;
 let mouseDownY = 0;
 let isMouseDown = false;
+let isAutoHiding = false; // 标记当前隐藏是否由自动隐藏触发（区别于用户主动关闭）
 
 // 自定义横向拖拽相关状态（任务栏模式下仅允许横向移动）
 let isCustomDragging = false;
@@ -1467,7 +1474,8 @@ const handleMouseLeave = () => {
     }
     autoHideTimer = window.setTimeout(() => {
         if (!isMouseOver.value && isIslandVisible.value) {
-            // 延迟后隐藏灵动岛
+            // 延迟后隐藏灵动岛（自动隐藏，不改变控制台开关状态）
+            isAutoHiding = true;
             isIslandVisible.value = false;
         }
     }, autoHideDelay.value);
@@ -1553,6 +1561,7 @@ onMounted(async () => {
                 }
                 autoHideTimer = window.setTimeout(() => {
                     if (!isMouseOver.value && isIslandVisible.value && !isPlaying.value) {
+                        isAutoHiding = true;
                         isIslandVisible.value = false;
                     }
                 }, autoHideDelay.value);
@@ -1620,6 +1629,7 @@ onMounted(async () => {
             }
             autoHideTimer = window.setTimeout(() => {
                 if (!isMouseOver.value && isIslandVisible.value) {
+                    isAutoHiding = true;
                     isIslandVisible.value = false;
                 }
             }, autoHideDelay.value);
@@ -1819,6 +1829,7 @@ onMounted(async () => {
                         }
                         autoHideTimer = window.setTimeout(() => {
                             if (!isMouseOver.value && isIslandVisible.value) {
+                                isAutoHiding = true;
                                 isIslandVisible.value = false;
                             }
                         }, autoHideDelay.value);
