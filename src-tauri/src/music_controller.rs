@@ -2,6 +2,7 @@ use std::sync::Mutex;
 use tauri::command;
 use once_cell::sync::Lazy;
 use reqwest::Client;
+use base64::Engine;
 
 // --- 引入 SMTC 需要的模块 ---
 use windows::Media::Control::{
@@ -44,25 +45,26 @@ fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSessio
 
     // SMTC模式：返回第一个活动的媒体会话
     if target == "smtc" {
+        // 收集为 Vec 以避免消耗迭代器后需要重新获取
+        let sessions: Vec<_> = sessions.into_iter().collect();
+
         // 优先级1: 正在播放的会话
-        for session in sessions {
+        for session in &sessions {
             if let Ok(playback_info) = session.GetPlaybackInfo() {
                 if let Ok(status) = playback_info.PlaybackStatus() {
                     if status == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing {
-                        return Some(session);
+                        return Some(session.clone());
                     }
                 }
             }
         }
         
         // 优先级2: 暂停但有媒体信息的会话
-        // 注意：这里需要重新获取sessions，因为上面的for循环已经消耗了sessions
-        let sessions = manager.GetSessions().ok()?;
-        for session in sessions {
+        for session in &sessions {
             if let Some(properties) = session.TryGetMediaPropertiesAsync().ok()?.get().ok() {
                 if let Ok(title) = properties.Title() {
                     if !title.to_string().is_empty() {
-                        return Some(session);
+                        return Some(session.clone());
                     }
                 }
             }
@@ -71,6 +73,9 @@ fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSessio
         return None;
     }
 
+    // 非 SMTC 模式：按 AppUserModelId 匹配
+    // 注意：如果上面 SMTC 分支已执行，sessions 已被 move，但那个分支必定 return，
+    // 所以编译器知道只有非 SMTC 路径才会到达这里，sessions 未被消费。
     for session in sessions {
         if let Ok(app_id) = session.SourceAppUserModelId() {
             let app_id_str = app_id.to_string().to_lowercase();
@@ -133,36 +138,6 @@ pub async fn control_system_media(action: String) -> Result<(), String> {
     Ok(())
 }
 
-// 纯手工轻量 Base64 编码器
-fn inline_base64_encode(input: &[u8]) -> String {
-    const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((input.len() + 2) / 3 * 4);
-    for chunk in input.chunks(3) {
-        match chunk.len() {
-            3 => {
-                result.push(CHARSET[(chunk[0] >> 2) as usize] as char);
-                result.push(CHARSET[(((chunk[0] & 0x03) << 4) | (chunk[1] >> 4)) as usize] as char);
-                result.push(CHARSET[(((chunk[1] & 0x0F) << 2) | (chunk[2] >> 6)) as usize] as char);
-                result.push(CHARSET[(chunk[2] & 0x3F) as usize] as char);
-            }
-            2 => {
-                result.push(CHARSET[(chunk[0] >> 2) as usize] as char);
-                result.push(CHARSET[(((chunk[0] & 0x03) << 4) | (chunk[1] >> 4)) as usize] as char);
-                result.push(CHARSET[(((chunk[1] & 0x0F) << 2)) as usize] as char);
-                result.push('=');
-            }
-            1 => {
-                result.push(CHARSET[(chunk[0] >> 2) as usize] as char);
-                result.push(CHARSET[(((chunk[0] & 0x03) << 4)) as usize] as char);
-                result.push('=');
-                result.push('=');
-            }
-            _ => {}
-        }
-    }
-    result
-}
-
 // 利用微软官方 SMTC API 直接把网易云的本地封面榨出来
 fn get_smtc_thumbnail() -> Option<String> {
     use windows::Storage::Streams::{Buffer, InputStreamOptions, DataReader};
@@ -180,7 +155,7 @@ fn get_smtc_thumbnail() -> Option<String> {
     let mut bytes = vec![0u8; size as usize];
     reader.ReadBytes(&mut bytes).ok()?;
 
-    Some(format!("data:image/jpeg;base64,{}", inline_base64_encode(&bytes)))
+    Some(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
 }
 
 #[command]

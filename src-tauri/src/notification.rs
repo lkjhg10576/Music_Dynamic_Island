@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
 // 静态状态迁移至此
 static LAST_NOTIFICATION_ID: AtomicU32 = AtomicU32::new(0);
 static IS_NOTIF_INIT: AtomicBool = AtomicBool::new(false);
+static ACCESS_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(serde::Serialize, Clone)]
 pub struct ToastData {
@@ -22,7 +23,11 @@ pub async fn fetch_latest_notification() -> Result<Option<ToastData>, String> {
         Err(_) => return Ok(None),
     };
 
-    let _ = listener.RequestAccessAsync();
+    // 仅在首次调用时请求权限，避免每次轮询都触发系统权限对话框
+    if !ACCESS_REQUESTED.load(Ordering::SeqCst) {
+        let _ = listener.RequestAccessAsync();
+        ACCESS_REQUESTED.store(true, Ordering::SeqCst);
+    }
 
     let notifications = match listener.GetNotificationsAsync(NotificationKinds::Toast) {
         Ok(op) => match op.get() {
