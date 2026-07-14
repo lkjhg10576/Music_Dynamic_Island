@@ -121,7 +121,7 @@ fn query_registry_command(root: windows_sys::Win32::System::Registry::HKEY, subk
 
     unsafe {
         let subkey_wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
-        let mut hkey: HKEY = 0;
+        let mut hkey: HKEY = std::ptr::null_mut();
         if RegOpenKeyExW(root, subkey_wide.as_ptr(), 0, KEY_READ, &mut hkey) != 0 {
             return None;
         }
