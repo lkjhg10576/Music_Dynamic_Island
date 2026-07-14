@@ -236,3 +236,58 @@ pub async fn get_random_cover_url(song_name: String, artist_name: String) -> Res
         _ => Ok("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTUwIiBoZWlnaHQ9IjE1MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPjxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiNhOGVkZWEiLz48c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiNmZWQ2ZTMiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iMTUwIiBoZWlnaHQ9IjE1MCIgcng9Ijc1IiBmaWxsPSJ1cmwoI2cpIi8+PC9zdmc+".to_string()),
     }
 }
+
+// ===== F6 音乐进度条：读取 SMTC Timeline 并支持拖动定位 =====
+
+#[derive(serde::Serialize)]
+pub struct MusicTimeline {
+    pub position_ms: u64,
+    pub end_ms: u64,
+}
+
+/// 读取当前媒体会话的播放进度与总时长（毫秒）
+#[command]
+pub async fn get_music_timeline() -> Result<Option<MusicTimeline>, String> {
+    let session = match get_target_media_session() {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+
+    let timeline = session.GetTimelinePropertiesAsync()
+        .map_err(|e| e.to_string())?
+        .get()
+        .map_err(|e| e.to_string())?;
+
+    // TimeSpan.Duration 单位为 100ns，除以 10000 得到毫秒
+    let position_ms = timeline.Position()
+        .map(|ts| (ts.Duration / 10000) as u64)
+        .unwrap_or(0);
+    let end_ms = timeline.EndTime()
+        .map(|ts| (ts.Duration / 10000) as u64)
+        .unwrap_or(0);
+
+    // 总时长为 0 视为无有效进度信息（如直播流）
+    if end_ms == 0 {
+        return Ok(None);
+    }
+
+    Ok(Some(MusicTimeline { position_ms, end_ms }))
+}
+
+/// 拖动定位：跳转到指定播放位置（毫秒）
+#[command]
+pub async fn seek_music(position_ms: u64) -> Result<(), String> {
+    let session = match get_target_media_session() {
+        Some(s) => s,
+        None => return Err("无活动媒体会话".to_string()),
+    };
+
+    // 毫秒转回 100ns 单位（ticks）
+    let position_ticks = (position_ms * 10000) as i64;
+    session.TryChangePlaybackPositionAsync(position_ticks)
+        .map_err(|e| e.to_string())?
+        .get()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
