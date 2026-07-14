@@ -16,7 +16,8 @@
             <div class="island-core-content" :style="coreContentStyle" :class="{ 'resize-cursor-left': mouseNearEdge === 'left', 'resize-cursor-right': mouseNearEdge === 'right' }">
                 <div class="inner-wrapper">
                     <transition mode="out-in" @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
-                        <div v-if="isMsgActive" class="msg-box" key="msg">
+                        <div v-if="isMsgActive" class="msg-box" key="msg" @click="handleNotificationClick"
+                            style="cursor: pointer;">
                             <div class="msg-avatar">
                                 <img :src="currentMsgIcon" alt="消息图标" class="msg-avatar-img">
                             </div>
@@ -152,6 +153,24 @@
                                             <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
                                         </svg>
                                     </button>
+                                </div>
+                            </transition>
+                            <transition name="fade">
+                                <div class="music-progress" v-show="isMusicExpanded && progressEnd > 0"
+                                    @click.stop>
+                                    <div class="progress-time-row">
+                                        <span class="progress-time">{{ formatTime(progressPosition) }}</span>
+                                        <span class="progress-time">{{ formatTime(progressEnd) }}</span>
+                                    </div>
+                                    <div class="progress-bar" ref="progressBarRef"
+                                        @pointerdown.stop="onProgressPointerDown"
+                                        @pointermove="onProgressPointerMove"
+                                        @pointerup="onProgressPointerUp">
+                                        <div class="progress-filled" :class="{ dragging: isDraggingProgress }"
+                                            :style="{ width: progressPercent + '%' }"></div>
+                                        <div class="progress-thumb" :style="{ left: progressPercent + '%' }"></div>
+                                    </div>
+                                    <div class="progress-remaining">-{{ formatTime(progressEnd - progressPosition) }}</div>
                                 </div>
                             </transition>
                         </div>
@@ -575,9 +594,13 @@ const syncMusicStatus = async () => {
             if (currentTrackInfo.value !== newTrackInfo) {
                 currentTrackInfo.value = newTrackInfo;
 
-                // 优先读取缓存
+                // 优先读取缓存（LRU：命中时刷新插入顺序，超限时淘汰最旧条目）
                 if (coverCache.has(newTrackInfo)) {
-                    coverUrl.value = coverCache.get(newTrackInfo)!;
+                    // 命中：先删再设，将该条目移到 Map 末尾（最新）
+                    const cached = coverCache.get(newTrackInfo)!;
+                    coverCache.delete(newTrackInfo);
+                    coverCache.set(newTrackInfo, cached);
+                    coverUrl.value = cached;
                 } else {
                     try {
                         const realCoverUrl = await invoke<string>('get_random_cover_url', {
@@ -585,8 +608,11 @@ const syncMusicStatus = async () => {
                             artistName: artist
                         });
                         coverUrl.value = realCoverUrl;
-                        // 写入缓存，最多缓存 50 首防止内存溢出
-                        if (coverCache.size > 50) coverCache.clear();
+                        // 写入缓存，超限逐条淘汰最旧条目（LRU）
+                        while (coverCache.size >= 50) {
+                            const oldest = coverCache.keys().next().value;
+                            if (oldest !== undefined) coverCache.delete(oldest);
+                        }
                         coverCache.set(newTrackInfo, realCoverUrl);
                     } catch (coverErr) {
                         console.error('所有封面源均获取失败:', coverErr);
@@ -645,6 +671,105 @@ const getPlayerName = () => {
 
 // 定义一个用于强制刷新的 key
 const musicBoxKey = ref(0);
+
+// ===== F6 音乐进度条：展开态拉取 SMTC Timeline 并支持拖动定位 =====
+const musicTimeline = ref<{ position: number; end: number }>({ position: 0, end: 0 });
+const isDraggingProgress = ref(false);
+const dragPosition = ref(0);
+let progressTimer: number | null = null;
+const progressBarRef = ref<HTMLElement | null>(null);
+
+const progressEnd = computed(() => musicTimeline.value.end);
+// 拖动时显示临时位置，否则显示实际播放位置
+const progressPosition = computed(() => isDraggingProgress.value ? dragPosition.value : musicTimeline.value.position);
+const progressPercent = computed(() => progressEnd.value > 0
+    ? Math.min(100, Math.max(0, (progressPosition.value / progressEnd.value) * 100))
+    : 0);
+
+// 毫秒转 m:ss
+const formatTime = (ms: number) => {
+    if (ms < 0 || isNaN(ms)) ms = 0;
+    const totalSec = Math.floor(ms / 1000);
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+};
+
+// 拉取播放进度（仅展开态且灵动岛可见时执行，折叠/隐藏时暂停）
+const fetchTimeline = async () => {
+    if (!isMusicExpanded.value || !isIslandVisible.value) return;
+    try {
+        const res = await invoke<{ position_ms: number; end_ms: number } | null>('get_music_timeline');
+        if (res) {
+            musicTimeline.value = { position: res.position_ms, end: res.end_ms };
+        } else {
+            musicTimeline.value = { position: 0, end: 0 };
+        }
+    } catch (e) {
+        // 静默失败，避免刷屏
+    }
+};
+
+const startProgressTimer = () => {
+    stopProgressTimer();
+    fetchTimeline();
+    progressTimer = setInterval(fetchTimeline, 500) as unknown as number;
+};
+
+const stopProgressTimer = () => {
+    if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+    }
+};
+
+// 拖动定位：将指针横坐标换算为播放位置
+const updateDragPosition = (e: PointerEvent) => {
+    if (!progressBarRef.value || progressEnd.value === 0) return;
+    const rect = progressBarRef.value.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    dragPosition.value = Math.round(ratio * progressEnd.value);
+};
+
+const onProgressPointerDown = (e: PointerEvent) => {
+    if (progressEnd.value === 0) return;
+    isDraggingProgress.value = true;
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch (_) {}
+    updateDragPosition(e);
+};
+
+const onProgressPointerMove = (e: PointerEvent) => {
+    if (!isDraggingProgress.value) return;
+    updateDragPosition(e);
+};
+
+const onProgressPointerUp = async (e: PointerEvent) => {
+    if (!isDraggingProgress.value) return;
+    const finalPos = dragPosition.value;
+    isDraggingProgress.value = false;
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch (_) {}
+    try {
+        await invoke('seek_music', { positionMs: finalPos });
+        // seek 成功后立即同步本地位置，再拉取一次确认
+        musicTimeline.value = { ...musicTimeline.value, position: finalPos };
+        fetchTimeline();
+    } catch (err) {
+        console.error('拖动定位失败:', err);
+    }
+};
+
+// 展开态 + 灵动岛可见 时启动进度条轮询；折叠/隐藏时暂停并清空数据
+watch([isMusicExpanded, isIslandVisible], () => {
+    if (isMusicExpanded.value && isIslandVisible.value) {
+        startProgressTimer();
+    } else {
+        stopProgressTimer();
+        if (!isMusicExpanded.value) {
+            // 折叠时清空，避免下次展开瞬间残留旧进度
+            musicTimeline.value = { position: 0, end: 0 };
+        }
+    }
+});
 
 // 定义双行文本所需的单独变量
 const currentSongName = ref('未在播放歌曲');
@@ -1388,6 +1513,39 @@ const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
     }
 };
 
+// ===== F11 通知点击打开：关闭通知显示并启动来源应用 =====
+// 关闭消息通知，恢复灵动岛到通知弹出前的状态
+const dismissMsgNotification = () => {
+    if (!isMsgActive.value) return;
+    if (msgTimer) {
+        clearTimeout(msgTimer);
+        msgTimer = null;
+    }
+    isMsgActive.value = false;
+    const { h } = getBaseSize();
+    const savedWidth = restoreIslandWidth();
+    const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
+    animateIslandSize(targetWidth, h);
+    if (isMsgModeEnabled.value) {
+        scheduleAutoHide();
+    }
+};
+
+// 点击灵动岛上的通知：立即返回通知弹出前状态，并打开来源应用
+const handleNotificationClick = async () => {
+    const aumid = msgAumid.value;
+    // 先关闭通知显示，恢复灵动岛状态
+    dismissMsgNotification();
+    // 再启动来源应用
+    if (aumid) {
+        try {
+            await invoke('launch_app_by_aumid', { aumid });
+        } catch (e) {
+            console.error('打开来源应用失败:', e);
+        }
+    }
+};
+
 // 动画锁与等待队列标志
 let isAnimationLocked = false;
 let isPendingCollapse = false;
@@ -1436,7 +1594,7 @@ const expandMusic = (e: MouseEvent) => {
     musicExpandAnimTimer = window.setTimeout(() => {
         isMusicExpanded.value = true;
         isMusicExpanding.value = false;
-        animateIslandSize(320, 115);
+        animateIslandSize(320, 150);
 
         // 3. 根据 Rust 端的弹簧衰减频率，约 400ms 后动画彻底结束，此时解锁
         setTimeout(() => {
@@ -1887,6 +2045,7 @@ onUnmounted(() => {
     clearInterval(musicTimer);
     clearInterval(notifyTimer);
     clearInterval(spectrumTimer);
+    stopProgressTimer();
     // 组件卸载时关闭频谱捕获，避免后端空跑
     invoke('set_spectrum_active', { active: false }).catch(() => {});
     if (speedCycleTimer) clearInterval(speedCycleTimer);
@@ -2273,6 +2432,16 @@ onUnmounted(() => {
     z-index: 10;
     gap: 12px;
     -webkit-app-region: no-drag;
+    transition: opacity 0.15s ease;
+}
+
+/* F11 通知可点击：hover 时给一点视觉反馈 */
+.msg-box:hover {
+    opacity: 0.8;
+}
+
+.msg-box:active {
+    opacity: 0.65;
 }
 
 /* 预制消息图标/头像样式 */
@@ -2531,6 +2700,78 @@ onUnmounted(() => {
     transform: scale(1.3);
     /* 把 all 换成具体的属性，防止抖动 */
     transition: opacity 0.3s ease, transform 0.3s ease !important;
+}
+
+/* F6 音乐进度条 */
+.music-progress {
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    z-index: 2;
+}
+
+.progress-time-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10.5px;
+    opacity: 0.85;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    letter-spacing: 0.3px;
+}
+
+.progress-bar {
+    position: relative;
+    height: 4px;
+    background: rgba(128, 128, 128, 0.25);
+    border-radius: 2px;
+    cursor: pointer;
+    transition: height 0.15s ease;
+}
+
+.progress-bar:hover {
+    height: 6px;
+}
+
+.progress-filled {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    background: currentColor;
+    border-radius: 2px;
+    transition: width 0.1s linear;
+}
+
+.progress-filled.dragging {
+    transition: none;
+}
+
+.progress-thumb {
+    position: absolute;
+    top: 50%;
+    width: 10px;
+    height: 10px;
+    background: currentColor;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+    transition: width 0.15s ease, height 0.15s ease;
+}
+
+.progress-bar:hover .progress-thumb {
+    width: 12px;
+    height: 12px;
+}
+
+.progress-remaining {
+    font-size: 9.5px;
+    opacity: 0.55;
+    text-align: center;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 /* 强制靠左对齐，干掉原本的 align-items: center。否则长文本会向两边溢出，导致开头被裁 */

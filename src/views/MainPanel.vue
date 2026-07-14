@@ -29,43 +29,104 @@
 
         <div class="main-content" :class="{ 'dynamicset-layout': isDynamicSet }">
             <template v-if="!isDynamicSet">
-                <div class="card status-card">
+                <div class="card status-card" @click="metricDropdownOpen = false">
                     <div class="card-header-row">
-                        <h3>实时状态</h3>
+                        <div class="metric-dropdown" :class="{ open: metricDropdownOpen }">
+                            <button class="metric-trigger" @click.stop="metricDropdownOpen = !metricDropdownOpen">
+                                <span>{{ metricLabel }}</span>
+                                <svg class="metric-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <polyline points="6 9 12 15 18 9" stroke-width="2.5" stroke-linecap="round"
+                                        stroke-linejoin="round" />
+                                </svg>
+                            </button>
+                            <transition name="metric-menu">
+                                <div class="metric-menu" v-show="metricDropdownOpen" @click.stop>
+                                    <div class="metric-option" :class="{ active: chartMetric === 'speed' }"
+                                        @click="switchMetric('speed')">网速状态</div>
+                                    <div class="metric-option" :class="{ active: chartMetric === 'cpu' }"
+                                        @click="switchMetric('cpu')">CPU状态</div>
+                                    <div class="metric-option" :class="{ active: chartMetric === 'ram' }"
+                                        @click="switchMetric('ram')">内存状态</div>
+                                </div>
+                            </transition>
+                        </div>
                         <button class="stats-toggle-btn" @click="toggleRightPanel">
                             {{ rightPanel === 'settings' ? '数据统计' : '退出' }}
                         </button>
                     </div>
                     <div class="speed-monitor">
-                        <div class="speed-item">
-                            <span class="arrow up">
-                                <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <path
-                                        d="M16 4C16.8 4 17.5 4.3 18.1 4.9L28.1 14.9C29.3 16.1 29.3 18 28.1 19.1C26.9 20.3 25 20.3 23.9 19.1L18 13.2V26C18 27.7 16.7 29 15 29C13.3 29 12 27.7 12 26V13.2L6.1 19.1C4.9 20.3 3 20.3 1.9 19.1C0.7 18 0.7 16.1 1.9 14.9L11.9 4.9C12.5 4.3 13.2 4 14 4H16Z"
-                                        fill="currentColor" />
-                                </svg>
-                            </span>
-                            <div class="speed-info">
-                                <span class="label">上传速度</span>
-                                <span class="value">{{ uploadSpeed }}</span>
+                        <template v-if="chartMetric === 'speed'">
+                            <div class="speed-item">
+                                <span class="arrow up">
+                                    <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M16 4C16.8 4 17.5 4.3 18.1 4.9L28.1 14.9C29.3 16.1 29.3 18 28.1 19.1C26.9 20.3 25 20.3 23.9 19.1L18 13.2V26C18 27.7 16.7 29 15 29C13.3 29 12 27.7 12 26V13.2L6.1 19.1C4.9 20.3 3 20.3 1.9 19.1C0.7 18 0.7 16.1 1.9 14.9L11.9 4.9C12.5 4.3 13.2 4 14 4H16Z"
+                                            fill="currentColor" />
+                                    </svg>
+                                </span>
+                                <div class="speed-info">
+                                    <span class="label">上传速度</span>
+                                    <span class="value">{{ uploadSpeed }}</span>
+                                </div>
                             </div>
-                        </div>
-                        <div class="speed-item">
-                            <span class="arrow down">
-                                <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <path
-                                        d="M16 28C15.2 28 14.5 27.7 13.9 27.1L3.9 17.1C2.7 15.9 2.7 14 3.9 12.9C5.1 11.7 7 11.7 8.1 12.9L14 18.8V6C14 4.3 15.3 3 17 3C18.7 3 20 4.3 20 6V18.8L25.9 12.9C27.1 11.7 29 11.7 30.1 12.9C31.3 14 31.3 15.9 30.1 17.1L20.1 27.1C19.5 27.7 18.8 28 18 28H16Z"
-                                        fill="currentColor" />
-                                </svg>
-                            </span>
-                            <div class="speed-info">
-                                <span class="label">下载速度</span>
-                                <span class="value">{{ downloadSpeed }}</span>
+                            <div class="speed-item">
+                                <span class="arrow down">
+                                    <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M16 28C15.2 28 14.5 27.7 13.9 27.1L3.9 17.1C2.7 15.9 2.7 14 3.9 12.9C5.1 11.7 7 11.7 8.1 12.9L14 18.8V6C14 4.3 15.3 3 17 3C18.7 3 20 4.3 20 6V18.8L25.9 12.9C27.1 11.7 29 11.7 30.1 12.9C31.3 14 31.3 15.9 30.1 17.1L20.1 27.1C19.5 27.7 18.8 28 18 28H16Z"
+                                            fill="currentColor" />
+                                    </svg>
+                                </span>
+                                <div class="speed-info">
+                                    <span class="label">下载速度</span>
+                                    <span class="value">{{ downloadSpeed }}</span>
+                                </div>
                             </div>
-                        </div>
+                        </template>
+                        <template v-else-if="chartMetric === 'cpu'">
+                            <div class="speed-item">
+                                <span class="arrow" :style="{ background: 'rgba(249,115,22,0.12)', color: '#f97316' }">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round">
+                                        <rect x="4" y="4" width="16" height="16" rx="2" />
+                                        <rect x="9" y="9" width="6" height="6" />
+                                        <line x1="9" y1="1" x2="9" y2="4" />
+                                        <line x1="15" y1="1" x2="15" y2="4" />
+                                        <line x1="9" y1="20" x2="9" y2="23" />
+                                        <line x1="15" y1="20" x2="15" y2="23" />
+                                        <line x1="20" y1="9" x2="23" y2="9" />
+                                        <line x1="20" y1="14" x2="23" y2="14" />
+                                        <line x1="1" y1="9" x2="4" y2="9" />
+                                        <line x1="1" y1="14" x2="4" y2="14" />
+                                    </svg>
+                                </span>
+                                <div class="speed-info">
+                                    <span class="label">CPU 占用率</span>
+                                    <span class="value" :class="{ 'high-usage': cpuUsageVal >= 90 }">{{ cpuUsageVal }}%</span>
+                                </div>
+                            </div>
+                        </template>
+                        <template v-else>
+                            <div class="speed-item">
+                                <span class="arrow" :style="{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round">
+                                        <line x1="5" y1="8" x2="19" y2="8" />
+                                        <line x1="5" y1="12" x2="19" y2="12" />
+                                        <line x1="5" y1="16" x2="19" y2="16" />
+                                        <rect x="3" y="4" width="18" height="16" rx="2" />
+                                    </svg>
+                                </span>
+                                <div class="speed-info">
+                                    <span class="label">内存占用 ({{ formatMem(memUsedVal) }} / {{ formatMem(memTotalVal) }})</span>
+                                    <span class="value" :class="{ 'high-usage': memUsageVal >= 90 }">{{ memUsageVal }}%</span>
+                                </div>
+                            </div>
+                        </template>
                     </div>
                     <div class="mini-chart">
-                        <SpeedChart ref="speedChartRef" :data="chartDataQueue" />
+                        <SpeedChart ref="speedChartRef" :data="chartDataQueue" :max-value="chartMaxValue"
+                            :color="chartColor" />
                     </div>
                 </div>
 
@@ -408,7 +469,8 @@ import {
     NSD_POSITION_LOCKED, NSD_DESTROY_ON_CLOSE,
     NSD_AUTO_HIDE_ENABLED, NSD_AUTO_HIDE_DELAY,
     NSD_AUTO_COLLAPSE_ENABLED, NSD_AUTO_COLLAPSE_DELAY,
-    NSD_THEME_MODE, NSD_TARGET_PLAYER, NSD_TRAFFIC_STATS
+    NSD_THEME_MODE, NSD_TARGET_PLAYER, NSD_TRAFFIC_STATS,
+    NSD_CHART_METRIC
 } from '../constants/storageKeys';
 
 const isWidgetVisible = ref(false);
@@ -714,9 +776,62 @@ let systemThemeMedia: MediaQueryList;
 const speedChartRef = ref<InstanceType<typeof SpeedChart> | null>(null);
 const chartDataQueue = ref<number[]>(Array(15).fill(0));
 
+// --- F7 实时状态下拉：网速 / CPU / 内存 ---
+type ChartMetric = 'speed' | 'cpu' | 'ram';
+const savedMetric = localStorage.getItem(NSD_CHART_METRIC) || '';
+const chartMetric = ref<ChartMetric>(['speed', 'cpu', 'ram'].includes(savedMetric) ? (savedMetric as ChartMetric) : 'speed');
+const metricDropdownOpen = ref(false);
+
+// CPU / 内存实时数值（用于卡片数字展示）
+const cpuUsageVal = ref(0);
+const memUsageVal = ref(0);
+const memUsedVal = ref(0);
+const memTotalVal = ref(0);
+
+const metricLabel = computed(() => {
+    if (chartMetric.value === 'cpu') return 'CPU状态';
+    if (chartMetric.value === 'ram') return '内存状态';
+    return '网速状态';
+});
+
+// 折线图固定上限：CPU/内存为 100，网速为 0（动态）
+const chartMaxValue = computed(() => (chartMetric.value === 'cpu' || chartMetric.value === 'ram') ? 100 : 0);
+
+// 折线图主色：CPU 橙色、内存 绿色、网速 默认蓝
+const chartColor = computed(() => {
+    if (chartMetric.value === 'cpu') return '#f97316';
+    if (chartMetric.value === 'ram') return '#10b981';
+    return ''; // 空串走 SpeedChart 默认蓝
+});
+
+// 切换指标：清空折线图、立即拉取一次新数据
+const switchMetric = async (m: ChartMetric) => {
+    if (chartMetric.value === m) {
+        metricDropdownOpen.value = false;
+        return;
+    }
+    chartMetric.value = m;
+    localStorage.setItem(NSD_CHART_METRIC, m);
+    // 立即清空，给用户"已切换"的视觉反馈
+    chartDataQueue.value = Array(15).fill(0);
+    metricDropdownOpen.value = false;
+    // 立即拉取一次，避免等下一个 tick
+    await fetchSpeedStats();
+};
+
+// 格式化内存字节数为人类可读
+const formatMem = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+};
+
 // 获取并更新网络流量统计
 const fetchSpeedStats = async () => {
     try {
+        // 1. 网络流量统计始终执行（保持 trafficData 累计与上传/下载速度展示）
         const [currentRx, currentTx] = await invoke<[number, number]>('get_network_stats');
         if (lastRx !== 0) {
             const rxDiff = currentRx - lastRx;
@@ -724,13 +839,11 @@ const fetchSpeedStats = async () => {
             downloadSpeed.value = formatSpeed(rxDiff);
             uploadSpeed.value = formatSpeed(txDiff);
 
-            const speedMB = rxDiff / (1024 * 1024);
-
-            // 核心修复：直接压入完整的 speedMB 浮点数，不做保留两位的截断。
-            // 从而使图表面对极小流量（如 B/s, KB/s 级别）也能捕捉到微小的轴缩放波动。
-            const newData = [...chartDataQueue.value, speedMB];
-            if (newData.length > 15) newData.shift();
-            chartDataQueue.value = newData;
+            // 网速模式：折线图填充下载速度（MB/s 浮点，不做截断以捕捉微小波动）
+            if (chartMetric.value === 'speed') {
+                const speedMB = rxDiff / (1024 * 1024);
+                pushChartData(speedMB);
+            }
 
             if (rxDiff > 0 || txDiff > 0) {
                 const todayStr = getLocalYYYYMMDD(new Date());
@@ -749,9 +862,31 @@ const fetchSpeedStats = async () => {
         }
         lastRx = currentRx;
         lastTx = currentTx;
+
+        // 2. CPU / 内存模式：拉取硬件数据并填充对应折线图
+        if (chartMetric.value === 'cpu' || chartMetric.value === 'ram') {
+            const [cpu, memUsed, memTotal] = await invoke<[number, number, number]>('get_hardware_stats');
+            cpuUsageVal.value = Math.round(cpu);
+            memUsedVal.value = memUsed;
+            memTotalVal.value = memTotal;
+            memUsageVal.value = memTotal > 0 ? Math.round((memUsed / memTotal) * 100) : 0;
+
+            if (chartMetric.value === 'cpu') {
+                pushChartData(cpuUsageVal.value);
+            } else {
+                pushChartData(memUsageVal.value);
+            }
+        }
     } catch (error) {
         console.error('控制台流量获取失败:', error);
     }
+};
+
+// 折线图数据压入辅助：保持滚动窗口长度 15
+const pushChartData = (val: number) => {
+    const newData = [...chartDataQueue.value, val];
+    if (newData.length > 15) newData.shift();
+    chartDataQueue.value = newData;
 };
 
 const openMywebsite = () => {
@@ -1925,6 +2060,87 @@ input:checked+.slider:before {
 
 .stats-toggle-btn:hover {
     background: var(--btn-sec-bg);
+}
+
+/* F7 实时状态下拉菜单 */
+.metric-dropdown {
+    position: relative;
+}
+
+.metric-trigger {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--card-h3-color);
+    transition: color 0.2s ease;
+}
+
+.metric-trigger:hover {
+    opacity: 0.75;
+}
+
+.metric-chevron {
+    width: 16px;
+    height: 16px;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.metric-dropdown.open .metric-chevron {
+    transform: rotate(180deg);
+}
+
+.metric-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    min-width: 120px;
+    background: var(--modal-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px var(--card-shadow-hover);
+    padding: 4px;
+    z-index: 100;
+}
+
+.metric-option {
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-body);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.metric-option:hover {
+    background: var(--btn-sec-bg);
+}
+
+.metric-option.active {
+    color: var(--btn-pri-bg);
+    font-weight: 700;
+}
+
+.metric-menu-enter-active,
+.metric-menu-leave-active {
+    transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.metric-menu-enter-from,
+.metric-menu-leave-to {
+    opacity: 0;
+    transform: translateY(-6px);
+}
+
+/* CPU/内存高占用警示 */
+.value.high-usage {
+    color: #ef4444;
 }
 
 .stats-card {
