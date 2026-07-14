@@ -5,15 +5,35 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
     data: number[];
-}>();
+    /** 固定最大值（如 CPU/内存曲线固定 100）。不传则按数据动态取最大值 */
+    maxValue?: number;
+    /** 曲线主色（十六进制）。不传则按主题使用默认蓝色 */
+    color?: string;
+}>(), {
+    maxValue: 0,
+    color: '',
+});
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
 let rafId: number | null = null;
 
 const getColors = () => {
+    // 显式传入颜色时，直接派生面积渐变色
+    if (props.color) {
+        const hex = props.color.replace('#', '');
+        const r = parseInt(hex.slice(0, 2), 16);
+        const g = parseInt(hex.slice(2, 4), 16);
+        const b = parseInt(hex.slice(4, 6), 16);
+        return {
+            line: props.color,
+            areaStart: `rgba(${r}, ${g}, ${b}, 0.4)`,
+            areaEnd: `rgba(${r}, ${g}, ${b}, 0.0)`,
+            grid: 'rgba(0,0,0,0.04)',
+        };
+    }
     const isDark = document.documentElement.classList.contains('dark-theme');
     return {
         line: isDark ? '#60a5fa' : '#3b82f6',
@@ -76,7 +96,8 @@ const draw = () => {
     const colors = getColors();
 
     // 计算数据点坐标
-    const maxVal = Math.max(...data, 0.01); // 防止全 0
+    // 若传入 maxValue（>0），则使用固定上限；否则按数据动态取最大值
+    const maxVal = props.maxValue > 0 ? props.maxValue : Math.max(...data, 0.01);
     const points: { x: number; y: number }[] = [];
     for (let i = 0; i < data.length; i++) {
         const x = padding.left + (i / (data.length - 1)) * chartW;
