@@ -4,10 +4,11 @@ mod notification;
 mod system_events;
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicBool, Ordering};
+use std::sync::Arc;
+use std::sync::mpsc::Receiver;
 use tauri::{State, Manager, Emitter, WebviewWindowBuilder, WebviewUrl};
 use sysinfo::{Networks, System};
-use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri::menu::{Menu, MenuItem};
@@ -20,6 +21,11 @@ static ANIMATION_ID: AtomicU32 = AtomicU32::new(0);
 // B1 省内存模式：关闭主窗口时彻底销毁 WebView（默认 false，保持原 hide 行为）
 static DESTROY_ON_CLOSE: AtomicBool = AtomicBool::new(false);
 
+// B1 硬件统计缓存：后台线程每 1s 刷新，command 零阻塞读取
+static HW_CPU_X100: AtomicU32 = AtomicU32::new(0);
+static HW_MEM_USED: AtomicU64 = AtomicU64::new(0);
+static HW_MEM_TOTAL: AtomicU64 = AtomicU64::new(0);
+
 // 将分散的坐标合并为一个结构体，并附带所有权 ID 防止误删
 struct AnchorState {
     center_x: i32,
@@ -29,6 +35,117 @@ struct AnchorState {
     active_id: u32,
 }
 static ANIMATION_ANCHOR: Mutex<Option<AnchorState>> = Mutex::new(None);
+
+// B3: 常驻动画线程的 channel，只保留最新一条动画参数（capacity=1，新任务覆盖旧任务）
+static ANIMATION_CHANNEL: Mutex<Option<std::sync::mpsc::Sender<AnimationCommand>>> = Mutex::new(None);
+
+// 一次动画的完整参数
+struct AnimationCommand {
+    id: u32,
+    hwnd_raw: isize,
+    window_clone: tauri::WebviewWindow,
+    scale_factor: f64,
+    anchor_cx: i32,
+    anchor_cy: i32,
+    anchor_lx: i32,
+    anchor_by: i32,
+    start_width: f64,
+    start_height: f64,
+    target_width: f64,
+    target_height: f64,
+    is_pinned: bool,
+}
+
+/// 启动常驻动画线程（单次创建，loop 监听 channel）
+fn start_animation_thread() {
+    let (tx, rx): (std::sync::mpsc::Sender<AnimationCommand>, Receiver<AnimationCommand>) = std::sync::mpsc::sync_channel(1);
+    let _ = ANIMATION_CHANNEL.lock().unwrap().insert(tx);
+
+    std::thread::spawn(move || {
+        let rx = Arc::new(rx);
+        loop {
+            // try_recv 非阻塞：只在有新任务时执行，空闲时零 CPU
+            let cmd = rx.recv();
+            match cmd {
+                Ok(cmd) => {
+                    let start_time = std::time::Instant::now();
+                    let duration = std::time::Duration::from_millis(400);
+                    let freq = 2.4;
+                    let decay = 12.0;
+
+                    while start_time.elapsed() < duration {
+                        // 在循环中继续检查 channel：如有新动画命令立即中断当前动画
+                        if let Ok(new_cmd) = rx.try_recv() {
+                            // 有更新，放弃当前动画，用新参数重新开始（覆盖旧命令）
+                            cmd = new_cmd;
+                            start_time = std::time::Instant::now();
+                            continue;
+                        }
+
+                        std::thread::sleep(std::time::Duration::from_millis(8));
+
+                        let elapsed = start_time.elapsed().as_secs_f64();
+                        let progress = elapsed / 0.4;
+                        if progress >= 1.0 { break; }
+
+                        let spring = 1.0 - (freq * elapsed * 2.0 * std::f64::consts::PI).cos() * (-decay * elapsed).exp();
+                        let current_w = cmd.start_width + (cmd.target_width - cmd.start_width) * spring;
+                        let current_h = cmd.start_height + (cmd.target_height - cmd.start_height) * spring;
+
+                        let phys_window_w = (current_w * cmd.scale_factor).round() as i32;
+                        let phys_window_h = (current_h * cmd.scale_factor).round() as i32;
+
+                        let (final_x, final_y) = if cmd.is_pinned {
+                            (cmd.anchor_lx, cmd.anchor_by - phys_window_h)
+                        } else {
+                            (cmd.anchor_cx - phys_window_w / 2, cmd.anchor_cy)
+                        };
+
+                        unsafe {
+                            winapi::um::winuser::SetWindowPos(
+                                cmd.hwnd_raw as _,
+                                std::ptr::null_mut(),
+                                final_x, final_y, phys_window_w, phys_window_h, 0x0014,
+                            );
+                        }
+                    }
+
+                    // 动画结束：设置最终目标尺寸，emit island-resize，清理锚点
+                    let phys_target_w = (cmd.target_width * cmd.scale_factor).round() as i32;
+                    let phys_target_h = (cmd.target_height * cmd.scale_factor).round() as i32;
+
+                    let (final_x, final_y) = if cmd.is_pinned {
+                        (cmd.anchor_lx, cmd.anchor_by - phys_target_h)
+                    } else {
+                        (cmd.anchor_cx - phys_target_w / 2, cmd.anchor_cy)
+                    };
+
+                    unsafe {
+                        winapi::um::winuser::SetWindowPos(
+                            cmd.hwnd_raw as _,
+                            std::ptr::null_mut(),
+                            final_x, final_y, phys_target_w, phys_target_h, 0x0014,
+                        );
+                    }
+                    let _ = cmd.window_clone.emit("island-resize", vec![cmd.target_width, cmd.target_height]);
+
+                    // 仅当当前动画仍是锚点持有者时才清理，防止误删新一轮动画的锁
+                    if let Ok(mut guard) = ANIMATION_ANCHOR.lock() {
+                        if let Some(anchor) = guard.as_ref() {
+                            if anchor.active_id == cmd.id {
+                                *guard = None;
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    // channel 关闭（应用退出），线程退出
+                    break;
+                }
+            }
+        }
+    });
+}
 
 #[tauri::command]
 fn force_window_topmost(app: tauri::AppHandle) {
@@ -104,17 +221,15 @@ async fn start_island_animation(
     #[cfg(target_os = "windows")]
     {
         if let Ok(hwnd) = window.hwnd() {
-            use winapi::um::winuser::{GetWindowRect, SetWindowPos};
+            use winapi::um::winuser::GetWindowRect;
             use winapi::shared::windef::RECT;
 
             let mut rect: RECT = unsafe { std::mem::zeroed() };
             unsafe { GetWindowRect(hwnd.0 as _, &mut rect); }
 
-            // 核心修复 1：在主线程安全地获取并克隆锚点值，避免进入子线程后再 unwrap
+            // 获取并克隆锚点值，与之前逻辑一致
             let (anchor_cx, anchor_cy, anchor_lx, anchor_by) = {
-                // 使用 unwrap_or_else 防止之前的 Panic 导致锁中毒
                 let mut anchor_guard = ANIMATION_ANCHOR.lock().unwrap_or_else(|e| e.into_inner());
-                
                 if let Some(anchor) = anchor_guard.as_mut() {
                     // 已经有动画锚点，说明正在连续打断动画，继承坐标并刷新所有权 ID
                     anchor.active_id = id;
@@ -136,86 +251,66 @@ async fn start_island_animation(
                 }
             };
 
-            let window_clone = window.clone();
             let hwnd_raw = hwnd.0 as isize;
 
-            std::thread::spawn(move || {
-                let start_time = std::time::Instant::now();
-                let duration = std::time::Duration::from_millis(400);
-                let freq = 2.4;
-                let decay = 12.0;
+            // B3: 不再每次 spawn 新线程，改为向常驻线程发送命令
+            let cmd = AnimationCommand {
+                id,
+                hwnd_raw,
+                window_clone: window.clone(),
+                scale_factor,
+                anchor_cx,
+                anchor_cy,
+                anchor_lx,
+                anchor_by,
+                start_width,
+                start_height,
+                target_width,
+                target_height,
+                is_pinned,
+            };
 
-                while start_time.elapsed() < duration {
-                    std::thread::sleep(std::time::Duration::from_millis(8));
-
-                    if ANIMATION_ID.load(Ordering::SeqCst) != id {
-                        return;
-                    }
-
-                    let elapsed = start_time.elapsed().as_secs_f64();
-                    let progress = elapsed / 0.4;
-                    if progress >= 1.0 { break; }
-
-                    let spring = 1.0 - (freq * elapsed * 2.0 * std::f64::consts::PI).cos() * (-decay * elapsed).exp();
-                    let current_w = start_width + (target_width - start_width) * spring;
-                    let current_h = start_height + (target_height - start_height) * spring;
-
-                    let phys_window_w = (current_w * scale_factor).round() as i32;
-                    let phys_window_h = (current_h * scale_factor).round() as i32;
-
-                    // 核心修复 2：直接使用预先拷贝进来的局部变量，完全告别 unwrap
-                    let (final_x, final_y) = if is_pinned {
-                        (anchor_lx, anchor_by - phys_window_h)
-                    } else {
-                        (anchor_cx - phys_window_w / 2, anchor_cy)
-                    };
-
-                    unsafe {
-                        SetWindowPos(hwnd_raw as _, std::ptr::null_mut(), final_x, final_y, phys_window_w, phys_window_h, 0x0014);
-                    }
+            let tx = ANIMATION_CHANNEL.lock().unwrap().clone();
+            if let Some(tx) = tx {
+                // send 会阻塞直到 channel 有空间（capacity=1），新命令自动覆盖旧命令
+                if tx.send(cmd).is_err() {
+                    return Err("动画线程已关闭".into());
                 }
-
-                if ANIMATION_ID.load(Ordering::SeqCst) == id {
-                    let phys_target_w = (target_width * scale_factor).round() as i32;
-                    let phys_target_h = (target_height * scale_factor).round() as i32;
-
-                    let (final_x, final_y) = if is_pinned {
-                        (anchor_lx, anchor_by - phys_target_h)
-                    } else {
-                        (anchor_cx - phys_target_w / 2, anchor_cy)
-                    };
-
-                    unsafe {
-                        SetWindowPos(hwnd_raw as _, std::ptr::null_mut(), final_x, final_y, phys_target_w, phys_target_h, 0x0014);
-                    }
-                    let _ = window_clone.emit("island-resize", vec![target_width, target_height]);
-
-                    // 核心修复 3：仅当当前动画仍是持有者时才清理锚点，防止误删新一轮动画的锁
-                    if let Ok(mut guard) = ANIMATION_ANCHOR.lock() {
-                        if let Some(anchor) = guard.as_ref() {
-                            if anchor.active_id == id {
-                                *guard = None;
-                            }
-                        }
-                    }
-                }
-            });
+            }
         }
     }
     Ok(())
 }
 
+/// B1 后台线程：每 1s 刷新 CPU / 内存统计，写入原子变量供 command 零阻塞读取
+fn start_hardware_monitor() {
+    std::thread::spawn(|| {
+        let mut sys = System::new();
+        // 首次刷新建立 CPU 基线，sysinfo 需要两次采样才能计算使用率
+        sys.refresh_cpu_usage();
+        std::thread::sleep(Duration::from_millis(200));
+        loop {
+            sys.refresh_cpu_usage();
+            sys.refresh_memory();
+            HW_CPU_X100.store((sys.global_cpu_info().cpu_usage() * 100.0) as u32, Ordering::Relaxed);
+            HW_MEM_USED.store(sys.used_memory(), Ordering::Relaxed);
+            HW_MEM_TOTAL.store(sys.total_memory(), Ordering::Relaxed);
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    });
+}
+
 struct AppState {
     networks: Mutex<Networks>,
-    system: Mutex<System>,
 }
 
 #[tauri::command]
-fn get_hardware_stats(state: State<'_, AppState>) -> (f32, u64, u64) {
-    let mut sys = state.system.lock().unwrap();
-    sys.refresh_cpu_usage(); 
-    sys.refresh_memory();    
-    (sys.global_cpu_info().cpu_usage(), sys.used_memory(), sys.total_memory())
+fn get_hardware_stats() -> (f32, u64, u64) {
+    (
+        HW_CPU_X100.load(Ordering::Relaxed) as f32 / 100.0,
+        HW_MEM_USED.load(Ordering::Relaxed),
+        HW_MEM_TOTAL.load(Ordering::Relaxed),
+    )
 }
 
 #[tauri::command]
@@ -235,14 +330,12 @@ fn get_network_stats(state: State<'_, AppState>) -> (u64, u64) {
 }
 
 #[tauri::command]
-fn get_network_latency() -> Result<u128, String> {
-    let addr: SocketAddr = "223.5.5.5:53".parse().unwrap();
-    let timeout = Duration::from_millis(1500);
-
+async fn get_network_latency() -> Result<u128, String> {
     let start = Instant::now();
-    match TcpStream::connect_timeout(&addr, timeout) {
-        Ok(_) => Ok(start.elapsed().as_millis()),
-        Err(_) => Err("Timeout".to_string()),
+    let connect_future = tokio::net::TcpStream::connect("223.5.5.5:53");
+    match tokio::time::timeout(Duration::from_millis(1500), connect_future).await {
+        Ok(Ok(_)) => Ok(start.elapsed().as_millis()),
+        _ => Err("Timeout".to_string()),
     }
 }
 
@@ -300,21 +393,19 @@ fn recreate_main_window(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let networks = Networks::new_with_refreshed_list();
-    let mut system = System::new();
-    system.refresh_cpu_usage();
-    system.refresh_memory();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--autostart"])))
-        .manage(AppState { networks: Mutex::new(networks), system: Mutex::new(system) })
+        .manage(AppState { networks: Mutex::new(networks) })
         .invoke_handler(tauri::generate_handler![
             get_network_stats,
             is_widget_visible,
             set_destroy_on_close,
             get_network_latency,
             notification::fetch_latest_notification,
+            notification::launch_app_by_aumid,
             get_hardware_stats,
             force_window_topmost,
             set_window_bounds,
@@ -325,10 +416,17 @@ pub fn run() {
             music_controller::fetch_netease_music_info,
             music_controller::control_system_media,
             music_controller::get_random_cover_url,
+            music_controller::get_music_timeline,
+            music_controller::seek_music,
         ])
         .setup(|app| {
+            // B8: 注册 AppHandle 到 audio_spectrum 模块，支持 emit 频谱事件
+            audio_spectrum::set_app_handle(Arc::new(app.handle().clone()));
+            // B3: 启动常驻动画线程（单次创建）
+            start_animation_thread();
             audio_spectrum::start_monitor();
             system_events::start_monitor(app.handle().clone());
+            start_hardware_monitor();
 
             let args: Vec<String> = std::env::args().collect();
             let is_autostart = args.iter().any(|arg| arg == "--autostart");

@@ -1,7 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rustfft::{num_complex::Complex, Fft, FftPlanner};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 // 存储 5 个频段的全局数组，默认高度 0.35 (对应前端的 scaleY(0.35))
@@ -12,6 +12,25 @@ static FFT_CACHE: Mutex<Option<(usize, std::sync::Arc<dyn Fft<f32>>)>> = Mutex::
 
 // 频谱处理开关：仅在前端需要频谱数据时才执行 FFT 运算，空闲时零分配零 CPU
 static SPECTRUM_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+// B8: 全局 AppHandle，用于向 Tauri 事件系统推送频谱数据（前端从 invoke 轮询改为 listen 被动接收）
+static APP_HANDLE: Mutex<Option<Arc<tauri::AppHandle>>> = Mutex::new(None);
+
+/// 注册 AppHandle（在 Tauri setup 阶段调用），用于 emit 事件到前端
+pub fn set_app_handle(handle: Arc<tauri::AppHandle>) {
+    *APP_HANDLE.lock().unwrap() = Some(handle);
+}
+
+/// 向 WebSocket 推送最新频谱数据（5 个频段，范围 0.35~0.95）
+fn emit_spectrum(data: &[f32; 5]) {
+    let handle = {
+        let guard = APP_HANDLE.lock().unwrap();
+        guard.clone()
+    };
+    if let Some(handle) = handle {
+        let _ = handle.emit("spectrum-data", &data.to_vec());
+    }
+}
 
 // 线程本地复用 buffer，避免每次回调都分配/释放 Vec（容量只增不减）
 // MONO_BUF: 多声道合并后的单声道数据
@@ -174,6 +193,8 @@ fn process_data(data: &[f32], channels: u16) {
             for i in 0..5 {
                 spec[i] = spec[i] * 0.6 + final_spectrum[i] * 0.4;
             }
+            // B8: FFT 处理后通过 Tauri emit 推送，替代前端 setInterval 轮询
+            emit_spectrum(&spec);
         }
     })();
 
