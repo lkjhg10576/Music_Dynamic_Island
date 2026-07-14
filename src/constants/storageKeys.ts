@@ -32,3 +32,4 @@ export const NSD_AUTO_COLLAPSE_DELAY = 'nsd_auto_collapse_delay';
 export const NSD_THEME_MODE = 'nsd_theme_mode';
 export const NSD_TARGET_PLAYER = 'nsd_target_player';
 export const NSD_TRAFFIC_STATS = 'nsd_traffic_stats';
+export const NSD_CHART_METRIC = 'nsd_chart_metric'; // 实时状态下拉选择：speed | cpu | ram
