@@ -1,4 +1,4 @@
-﻿<template>
+<template>
     <transition @enter="onEnter" @leave="onLeave" :css="false">
         <div v-show="isIslandVisible" :class="['island-container', { 'has-music-border': isGlowBorderEnabled }]"
             @mousedown="handleMouseDown" @mousemove="handleMouseMove" @mouseup="handleMouseUp"
@@ -7,7 +7,7 @@
 
             <div class="rainbow-border-glow" v-if="isGlowBorderEnabled" :style="{ opacity: glowOpacity }"></div>
 
-            <!-- 宸︿晶瀹藉害璋冩暣鎵嬫焺 -->
+            <!-- 左侧宽度调整手柄 -->
             <div class="resize-handle left"
                 v-if="!isPositionLocked && !isMusicExpanded && !isMusicExpanding && !isMsgActive && !displaySysToast"
                 @mousedown.stop="handleResizeStart($event, 'left')">
@@ -19,7 +19,7 @@
                         <div v-if="isMsgActive" class="msg-box" key="msg" @click="handleNotificationClick"
                             style="cursor: pointer;">
                             <div class="msg-avatar">
-                                <img :src="currentMsgIcon" alt="娑堟伅鍥炬爣" class="msg-avatar-img">
+                                <img :src="currentMsgIcon" alt="消息图标" class="msg-avatar-img">
                             </div>
                             <div class="msg-text-wrapper">
                                 <div class="msg-title">
@@ -177,7 +177,7 @@
                                         <div class="progress-remaining">-{{ formatTime(progressEnd - progressPosition) }}</div>
                                     </template>
                                     <div v-else class="progress-placeholder">
-                                        {{ timelineStatus === 'loading' ? '姝ｅ湪璇诲彇鎾斁杩涘害鈥? : '褰撳墠鎾斁鍣ㄦ湭鎻愪緵鎾斁杩涘害' }}
+                                        {{ timelineStatus === 'loading' ? '正在读取播放进度…' : '当前播放器未提供播放进度' }}
                                     </div>
                                 </div>
                             </transition>
@@ -186,11 +186,11 @@
                         <div v-else-if="displaySpeed" class="speed-box" key="speed">
                             <transition name="speed-fade" mode="out-in">
                                 <div v-if="isShowingUpload" class="speed-item" key="upload">
-                                    <span :class="['label', { 'high-traffic': isHighUpload }]">猬?/span>
+                                    <span :class="['label', { 'high-traffic': isHighUpload }]">⬆</span>
                                     <span class="value">{{ uploadSpeed }}</span>
                                 </div>
                                 <div v-else class="speed-item" key="download">
-                                    <span :class="['label', { 'high-traffic': isHighDownload }]">猬?/span>
+                                    <span :class="['label', { 'high-traffic': isHighDownload }]">⬇</span>
                                     <span class="value">{{ downloadSpeed }}</span>
                                 </div>
                             </transition>
@@ -209,7 +209,7 @@
                 </transition>
             </div>
 
-            <!-- 鍙充晶瀹藉害璋冩暣鎵嬫焺 -->
+            <!-- 右侧宽度调整手柄 -->
             <div class="resize-handle right"
                 v-if="!isPositionLocked && !isMusicExpanded && !isMusicExpanding && !isMsgActive && !displaySysToast"
                 @mousedown.stop="handleResizeStart($event, 'right')">
@@ -238,23 +238,23 @@ import {
 const isIslandVisible = ref(false);
 const isMenuOpen = ref(false);
 
-// 鑷姩闅愯棌鐩稿叧鍙橀噺
+// 自动隐藏相关变量
 const isMouseOver = ref(false);
 let autoHideTimer: number | null = null;
-const autoHideDelay = ref(Number(localStorage.getItem(NSD_AUTO_HIDE_DELAY) || '2000')); // 榛樿2绉?
-const isAutoHideEnabled = ref(localStorage.getItem(NSD_AUTO_HIDE_ENABLED) === 'true'); // 鑷姩闅愯棌鍔熻兘寮€鍏?
+const autoHideDelay = ref(Number(localStorage.getItem(NSD_AUTO_HIDE_DELAY) || '2000')); // 默认2秒
+const isAutoHideEnabled = ref(localStorage.getItem(NSD_AUTO_HIDE_ENABLED) === 'true'); // 自动隐藏功能开关
 
-// 鑷姩鎶樺彔鐩稿叧鍙橀噺锛堢伒鍔ㄥ矝灞曞紑鍚庯紝榧犳爣绂诲紑鑷姩鎶樺彔鍥炲皬宀涚姸鎬侊級
+// 自动折叠相关变量（灵动岛展开后，鼠标离开自动折叠回小岛状态）
 let autoCollapseTimer: number | null = null;
-const autoCollapseDelay = ref(Number(localStorage.getItem(NSD_AUTO_COLLAPSE_DELAY) || '2000')); // 榛樿2绉?
-const isAutoCollapseEnabled = ref(localStorage.getItem(NSD_AUTO_COLLAPSE_ENABLED) === 'true'); // 鑷姩鎶樺彔鍔熻兘寮€鍏?
+const autoCollapseDelay = ref(Number(localStorage.getItem(NSD_AUTO_COLLAPSE_DELAY) || '2000')); // 默认2秒
+const isAutoCollapseEnabled = ref(localStorage.getItem(NSD_AUTO_COLLAPSE_ENABLED) === 'true'); // 自动折叠功能开关
 
-// 璁板綍褰撳墠鏄惁鏄剧ず涓婅缃戦€燂紙鐢ㄤ簬杞崲锛?
+// 记录当前是否显示上行网速（用于轮换�?
 const isShowingUpload = ref(false);
 const isShowingCPU = ref(true);
 let speedCycleTimer: number | null = null;
 
-// 鎺у埗 DOM 鐪熸鐨勯珮瀹藉彉閲忎笌娑堟伅鏁版嵁
+// 控制 DOM 真正的高宽变量与消息数据
 const currentWidth = ref(150);
 const currentHeight = ref(34);
 const isMsgActive = ref(false);
@@ -263,19 +263,19 @@ const msgAppName = ref('');
 const msgBody = ref('');
 const msgAumid = ref('');
 
-// 绯荤粺鎿嶄綔閫氱煡涓撶敤鍙橀噺
+// 系统操作通知专用变量
 const displaySysToast = ref(false);
 const sysToastText = ref('');
 const sysToastType = ref<'app' | 'sys' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock'>('app');
 const toastQueue = ref<{ text: string, type: 'app' | 'sys' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' }[]>([]);
 let isProcessingToast = false;
 
-// 闃熷垪澶勭悊鍑芥暟
+// 队列处理函数
 const processToastQueue = async () => {
-    // 濡傛灉姝ｅ湪澶勭悊锛屾垨鑰呴槦鍒椾负绌猴紝鍒欑洿鎺ヨ繑鍥?
+    // 如果正在处理，或者队列为空，则直接返�?
     if (isProcessingToast || toastQueue.value.length === 0) return;
 
-    // 浼樺厛绾у垽鏂細濡傛灉褰撳墠姝ｅ湪鏄剧ず娑堟伅閫氱煡(鏈€楂樹紭鍏堢骇)锛屽垯鎸傝捣绛夊緟
+    // 优先级判断：如果当前正在显示消息通知(最高优先级)，则挂起等待
     if (isMsgActive.value) return;
 
     isProcessingToast = true;
@@ -286,32 +286,32 @@ const processToastQueue = async () => {
         sysToastType.value = nextToast.type;
         displaySysToast.value = true;
         
-        // 鑷姩鎭㈠鏄剧ず锛氬綋鏈夌郴缁熼€氱煡鏃讹紝濡傛灉鐏靛姩宀涜闅愯棌锛屽垯鑷姩鎭㈠鏄剧ず
+        // 自动恢复显示：当有系统通知时，如果灵动岛被隐藏，则自动恢复显示
         if (!isIslandVisible.value) {
             getCurrentWindow().show();
             isIslandVisible.value = true;
         }
 
-        // 鍋滅暀鏄剧ず
+        // 停留显示
         await new Promise(resolve => setTimeout(resolve, 2000));
 
         displaySysToast.value = false;
-        // 绛夊緟绂诲紑鍔ㄧ敾鎾畬 (绾?200ms) 鍐嶅鐞嗕笅涓€涓?
+        // 等待离开动画播完 (�?200ms) 再处理下一�?
         await new Promise(resolve => setTimeout(resolve, 200));
     }
 
     isProcessingToast = false;
-    processToastQueue(); // 閫掑綊妫€鏌ユ槸鍚﹁繕鏈変笅涓€涓€氱煡
+    processToastQueue(); // 递归检查是否还有下一个通知
 };
 
-// 鐩戝惉绯荤粺閫氱煡鏄剧ず鐘舵€侊紝瑙ｅ喅缃戦€熸ā寮忎笅灏哄杩囧皬瀵艰嚧鏂囧瓧婧㈠嚭/閬尅鎸囩ず鐏殑闂
+// 监听系统通知显示状态，解决网速模式下尺寸过小导致文字溢出/遮挡指示灯的问题
 watch(displaySysToast, (newVal) => {
     if (newVal) {
-        // 褰撴湁绯荤粺鎿嶄綔閫氱煡鍑虹幇鏃讹紝寮哄埗灞曞紑鍒伴粯璁ゆ爣鍑嗗昂瀵?
+        // 当有系统操作通知出现时，强制展开到默认标准尺�?
         animateIslandSize(260, 42);
     } else {
-        // 閫氱煡娑堝け鏃讹紝鎭㈠鍒板綋鍓嶇姸鎬佽鏈夌殑灏哄
-        // 锛堝墠鎻愭槸娌℃湁琚簲鐢ㄦ秷鎭垨闊充箰闈㈡澘闇稿崰锛?
+        // 通知消失时，恢复到当前状态该有的尺寸
+        // （前提是没有被应用消息或音乐面板霸占�?
         if (!isMsgActive.value && !isMusicExpanded.value && !isMusicExpanding.value) {
             const { h } = getBaseSize();
             const savedWidth = restoreIslandWidth();
@@ -321,34 +321,34 @@ watch(displaySysToast, (newVal) => {
     }
 });
 
-// 鏆撮湶缁欏閮ㄨ皟鐢ㄧ殑瑙﹀彂鍑芥暟
+// 暴露给外部调用的触发函数
 const showToast = (text: string, type: 'app' | 'sys' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' = 'app') => {
     toastQueue.value.push({ text, type });
     processToastQueue();
 };
 
-// 鐩戝惉娑堟伅閫氱煡鐘舵€侊紝涓€鏃︽秷鎭€氱煡娑堝け锛岀珛鍒诲敜閱掑彲鑳借鎸傝捣鐨勬搷浣滈€氱煡闃熷垪
+// 监听消息通知状态，一旦消息通知消失，立刻唤醒可能被挂起的操作通知队列
 watch(isMsgActive, (newVal) => {
     if (!newVal) {
         processToastQueue();
     }
 });
 
-// 璁板綍闊充箰宀涙槸鍚﹀浜庡睍寮€鐘舵€?
+// 记录音乐岛是否处于展开状�?
 const isMusicExpanded = ref(false);
-const isMusicExpanding = ref(false); // 璁板綍鏄惁姝ｅ湪鎾斁寮规€ф寜鍘嬪睍寮€鍔ㄧ敾
-let musicExpandAnimTimer: number | null = null; // 鐢ㄤ簬鎺ョ灞曞紑鏃剁殑瀹氭椂鍣紝闃叉鍐茬獊
+const isMusicExpanding = ref(false); // 记录是否正在播放弹性按压展开动画
+let musicExpandAnimTimer: number | null = null; // 用于接管展开时的定时器，防止冲突
 
-// 鐏靛姩宀涜嚜韬殑閫忔槑搴﹀彉閲忥紙榛樿100锛?
+// 灵动岛自身的透明度变量（默认100�?
 const islandOpacity = ref(Number(localStorage.getItem(NSD_ISLAND_OPACITY) || '100'));
 
-// 鐏靛姩宀涜嚜韬富棰樿壊
+// 灵动岛自身主题色
 const islandTheme = ref(localStorage.getItem(NSD_ISLAND_THEME) || 'black');
 
-// 1. 鐬棿鍒ゅ畾褰撳墠鏄惁澶勪簬澶х獥鍙ｇ姸鎬?
+// 1. 瞬间判定当前是否处于大窗口状�?
 const isExpandedSize = computed(() => isMusicExpanded.value || isMsgActive.value);
 
-// 2. 澶栧眰瀹瑰櫒锛氱姸鎬佷竴鍙橈紝绔嬮┈鍒囨垚鐩爣鍦嗚
+// 2. 外层容器：状态一变，立马切成目标圆角
 const islandStyle = computed<CSSProperties>(() => {
     const linear = islandOpacity.value / 100;
     const alpha = Math.pow(linear, 1 / 2.2);
@@ -364,18 +364,18 @@ const islandStyle = computed<CSSProperties>(() => {
         ...baseStyle,
         width: '100vw',
         height: '100vh',
-        // 鍙灞曞紑灏辨槸 24px锛屾敹璧峰氨鏄?100px
+        // 只要展开就是 24px，收起就�?100px
         borderRadius: isExpandedSize.value ? '24px' : '100px',
         position: 'relative',
     };
 });
 
-// 3. 鍐呭眰鏍稿績锛氭案杩滄瘮澶栧眰灏?2px
+// 3. 内层核心：永远比外层�?2px
 const coreContentStyle = computed(() => {
     const linear = islandOpacity.value / 100;
     const alpha = Math.pow(linear, 1 / 2.2);
 
-    // 灞曞紑 22px锛屾敹璧?98px
+    // 展开 22px，收�?98px
     const innerRadius = isExpandedSize.value ? '22px' : '98px';
 
     if (islandTheme.value === 'white') {
@@ -398,74 +398,74 @@ const glowOpacity = computed(() => {
 const uploadSpeed = ref('0 KB/s');
 const downloadSpeed = ref('0 KB/s');
 
-// 璁板綍褰撳墠鏄惁灞炰簬澶ф祦閲忕姸鎬?
+// 记录当前是否属于大流量状�?
 const isHighDownload = ref(false);
 const isHighUpload = ref(false);
 
-// 缃戠粶鐘舵€佹寚绀虹伅锛歡ood(缁?, warning(榛?, error(绾?
+// 网络状态指示灯：good(�?, warning(�?, error(�?
 const networkStatus = ref<'good' | 'warning' | 'error'>('good');
 
-// 绯荤粺纭欢鐩戞帶鐩稿叧
+// 系统硬件监控相关
 const isHardwareMonEnabled = ref(localStorage.getItem(NSD_HARDWARE_MON) === 'true');
 const cpuUsage = ref('0%');
 const memUsage = ref('0%');
 
-// 闊充箰鎺у埗鍔熻兘寮€鍏?
+// 音乐控制功能开�?
 const isMusicCtlEnabled = ref(localStorage.getItem(NSD_MUSIC_CTRL) === 'true');
 const isPlaying = ref(false);
-// 娴佸厜杈规榛樿鐘舵€佸畬鍏ㄩ暅鍍忛煶涔愭帶鍒跺櫒锛堝彧瑕侀煶涔愭帶鍒跺櫒寮€鐫€瀹冨氨寮€锛屽叧浜嗗氨涓€璧峰叧锛?
+// 流光边框默认状态完全镜像音乐控制器（只要音乐控制器开着它就开，关了就一起关�?
 const isGlowBorderEnabled = ref(localStorage.getItem(NSD_GLOW_BORDER) === 'true');
 
-// 寰嬪姩棰戣氨
+// 律动频谱
 const spectrumData = ref([0.35, 0.35, 0.35, 0.35, 0.35]);
 
-// 灏侀潰url
+// 封面url
 const coverUrl = ref('');
 const coverCache = new Map<string, string>();
 
-// 璁板綍鏄惁寮€鍚簡缃簬浠诲姟鏍?
+// 记录是否开启了置于任务�?
 const isPinnedToTaskbar = ref(localStorage.getItem(NSD_PIN_TASKBAR) === 'true');
-// 璁板綍鏄惁閿佸畾浜嗕綅缃紝骞跺瓨鍒版湰鍦?
+// 记录是否锁定了位置，并存到本�?
 const isPositionLocked = ref(localStorage.getItem(NSD_POSITION_LOCKED) === 'true');
 
-// 瀹藉害璋冩暣鐩稿叧鐘舵€?
+// 宽度调整相关状�?
 const isResizing = ref(false);
 const resizeSide = ref<'left' | 'right' | null>(null);
 let resizeStartX = 0;
 let resizeStartWidth = 0;
-const MIN_WIDTH = 100; // 鏈€灏忓搴?
-const MAX_WIDTH = 500; // 鏈€澶у搴?
+const MIN_WIDTH = 100; // 最小宽度
+const MAX_WIDTH = 500; // 最大宽度
 
-// 榧犳爣鏄惁鍦ㄨ竟缂樺尯鍩燂紙鐢ㄤ簬鍏夋爣鏍峰紡锛?
+// 鼠标是否在边缘区域（用于光标样式�?
 const mouseNearEdge = ref<'left' | 'right' | null>(null);
 
-// 璁＄畻鏄惁鍙互璋冩暣瀹藉害
+// 计算是否可以调整宽度
 const canResize = computed(() => {
     return !isPositionLocked.value && !isMusicExpanded.value && !isMusicExpanding.value && !isMsgActive.value && !displaySysToast.value;
 });
-// 璁板綍娑堟伅妯″紡寮€鍏崇姸鎬?
+// 记录消息模式开关状�?
 const isMsgModeEnabled = ref(localStorage.getItem(NSD_MSG_MODE) === 'true');
-// 杞崲鍔熻兘鏍稿績閫昏緫
+// 轮换功能核心逻辑
 const isRotationEnabled = ref(localStorage.getItem(NSD_ROTATION_MODE) === 'true');
-const currentRotIndex = ref(0); // 0=缃戦€? 1=闊充箰, 2=纭欢
+const currentRotIndex = ref(0); // 0=网速 1=音乐, 2=硬件
 let rotationTimer: number | null = null;
 
-// 浣跨敤璁＄畻灞炴€ф櫤鑳藉垽鏂綋鍓嶈鏄剧ず璋?
+// 使用计算属性智能判断当前该显示�?
 const displaySpeed = computed(() => !isMsgActive.value && !displaySysToast.value && (isRotationEnabled.value ? currentRotIndex.value === 0 : (!isMusicCtlEnabled.value && !isHardwareMonEnabled.value)));
 const displayMusic = computed(() => !isMsgActive.value && !displaySysToast.value && (isRotationEnabled.value ? currentRotIndex.value === 1 : isMusicCtlEnabled.value));
 const displayHardware = computed(() => !isMsgActive.value && !displaySysToast.value && (isRotationEnabled.value ? currentRotIndex.value === 2 : isHardwareMonEnabled.value));
 
-// 杈呭姪鍑芥暟锛氳幏鍙栧綋鍓嶇姸鎬佸簲璇ユ嫢鏈夌殑榛樿澶у皬
+// 辅助函数：获取当前状态应该拥有的默认大小
 const getBaseSize = () => {
-    // 缃戦€熷矝 鍜?纭欢鐩戞帶灏哄缁熶竴缂╁皬涓?150x34
+    // 网速岛 �?硬件监控尺寸统一缩小�?150x34
     if (displaySpeed.value || displayHardware.value) return { w: 150, h: 34 };
-    // 纭欢銆侀煶涔愶紙鏈睍寮€锛夌瓑鍏朵粬鐘舵€佹仮澶嶉粯璁ょ殑 260x42
+    // 硬件、音乐（未展开）等其他状态恢复默认的 260x42
     return { w: 260, h: 42 };
 };
 
-// 鐩戝惉鍐呭鍒囨崲锛岃Е鍙戜笣婊戝姩鐢昏繃娓?
+// 监听内容切换，触发丝滑动画过�?
 watch([displaySpeed, displayMusic, displayHardware], () => {
-    // 鍙湁鍦ㄦ病鏈夎涓存椂寮圭獥锛堟秷鎭€侀煶涔愬睍寮€锛夐湼鍗犳椂锛屾墠鎵ц鍩虹澶у皬鍒囨崲
+    // 只有在没有被临时弹窗（消息、音乐展开）霸占时，才执行基础大小切换
     if (!isMsgActive.value && !displaySysToast.value && !isMusicExpanded.value && !isMusicExpanding.value) {
         const { h } = getBaseSize();
         const savedWidth = restoreIslandWidth();
@@ -474,15 +474,15 @@ watch([displaySpeed, displayMusic, displayHardware], () => {
     }
 });
 
-// 涓撻棬鐢ㄤ簬鎺у埗鍙充晶甯搁┗鎸囩ず鐏殑鐙珛璁＄畻灞炴€э紙瀹屽叏涓嶅彈娑堟伅閫氱煡鎵撴柇锛?
+// 专门用于控制右侧常驻指示灯的独立计算属性（完全不受消息通知打断�?
 const showSpectrumIndicator = computed(() => {
     return isRotationEnabled.value ? currentRotIndex.value === 1 : isMusicCtlEnabled.value;
 });
 
-// 棰戣氨寮€鍏崇姸鎬佽拷韪紝閬垮厤閲嶅璋冪敤鍚庣
+// 频谱开关状态追踪，避免重复调用后端
 let isSpectrumActive = false;
 
-// 鎸夐渶鍚仠闊抽棰戣氨鎹曡幏锛氫粎鍦ㄥ墠绔渶瑕佹樉绀洪璋辨椂鎵嶆縺娲诲悗绔?FFT 杩愮畻锛岀┖闂叉椂闆?CPU 闆跺垎閰?
+// 按需启停音频频谱捕获：仅在前端需要显示频谱时才激活后�?FFT 运算，空闲时�?CPU 零分�?
 watch([isPlaying, showSpectrumIndicator], () => {
     const shouldActivate = isPlaying.value && showSpectrumIndicator.value;
     if (shouldActivate && !isSpectrumActive) {
@@ -498,10 +498,10 @@ const startRotation = () => {
     if (rotationTimer) clearInterval(rotationTimer);
     rotationTimer = window.setInterval(() => {
         currentRotIndex.value = (currentRotIndex.value + 1) % 3;
-    }, 5000); // 5绉掕疆鎹竴娆?
+    }, 5000); // 5秒轮换一次
 };
 
-// 缁熶竴鐨勮嚜鍔ㄩ殣钘忓畾鏃跺櫒绠＄悊鍑芥暟
+// 统一的自动隐藏定时器管理函数
 const scheduleAutoHide = (delay?: number) => {
     if (autoHideTimer) {
         clearTimeout(autoHideTimer);
@@ -522,7 +522,7 @@ const stopRotation = () => {
     }
 };
 
-// 璁＄畻骞跺惛闄勫埌宸︿笅瑙掔殑鏂规硶
+// 计算并吸附到左下角的方法
 const snapToBottomLeft = async () => {
     try {
         const appWindow = getCurrentWindow();
@@ -538,38 +538,38 @@ const snapToBottomLeft = async () => {
 
             const monitorLeftPhysical = monitor.position.x;
             const monitorTopPhysical = monitor.position.y;
-            // 鎭㈠浣跨敤 Tauri 鏈€搴曞眰鐨勭‖浠剁湡瀹炲垎杈ㄧ巼锛堢粷瀵逛笉浼氱缉姘达級
+            // 恢复使用 Tauri 最底层的硬件真实分辨率（绝对不会缩水）
             const monitorHeightPhysical = monitor.size.height;
 
-            // X鍧愭爣: 灞忓箷鏈€宸︿晶 + 10px鐨勮竟璺?
+            // X坐标: 屏幕最左侧 + 10px的边�?
             const x = monitorLeftPhysical + (10 * scaleFactor);
-            // Y鍧愭爣: 鐗╃悊鏈€搴曢儴 - 绐楀彛楂樺害 - 3px寰皟
+            // Y坐标: 物理最底部 - 窗口高度 - 3px微调
             const y = monitorTopPhysical + monitorHeightPhysical - ((WINDOW_INIT_HEIGHT + 3) * scaleFactor);
 
-            // 銆愮粓鏋佺粷鏉€鏍稿績銆戯細缁曡繃 Windows 绯荤粺鐨勪换鍔℃爮闃查伄鎸℃満鍒?
-            // 鍦ㄥ己鍒惰鐩栦换鍔℃爮鍧愭爣涔嬪墠锛屽厛闅愯韩锛?
+            // 【终极绝杀核心】：绕过 Windows 系统的任务栏防遮挡机�?
+            // 在强制覆盖任务栏坐标之前，先隐身�?
             await appWindow.hide();
 
             await appWindow.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
 
-            // 绉诲姩瀹屾垚鍚庯紝鐬棿鐜拌韩锛岀敓绫崇叜鎴愮啛楗紝Windows 涔熸嫤涓嶄綇浜嗭紒
+            // 移动完成后，瞬间现身，生米煮成熟饭，Windows 也拦不住了！
             await appWindow.show();
         }
     } catch (error) {
-        console.error('鍋滈潬宸︿笅瑙掑け璐?', error);
+        console.error('停靠左下角失败', error);
     }
 };
 
 const togglePlay = async () => {
-    // 1. 鍓嶇鍏堢珛鍒诲垏鎹㈠浘鏍囷紝缁欑敤鎴锋瀬閫熺殑瑙嗚鍙嶉
+    // 1. 前端先立刻切换图标，给用户极速的视觉反馈
     isPlaying.value = !isPlaying.value;
 
-    // 2. 鍙戦€佹寚浠ょ粰 Rust 鍜?SMTC
+    // 2. 发送指令给 Rust �?SMTC
     try {
         await invoke('control_system_media', { action: 'play_pause' });
     } catch (err) {
-        console.error('鎾斁鎺у埗澶辫触:', err);
-        // 濡傛灉搴曞眰鎺у埗澶辫触浜嗭紝鍐嶆妸鍥炬爣鐘舵€佸洖婊氬洖鏉?
+        console.error('播放控制失败:', err);
+        // 如果底层控制失败了，再把图标状态回滚回�?
         isPlaying.value = !isPlaying.value;
     }
 };
@@ -582,28 +582,28 @@ const nextTrack = async () => {
     await invoke('control_system_media', { action: 'next' });
 };
 
-// 鏍稿績鍚屾鍑芥暟锛氬鍏ュ埌浣犵殑 fetchSpeedStats 鍚屼竴棰戞鐨勫畾鏃跺櫒涓?
+// 核心同步函数：塞入到你的 fetchSpeedStats 同一频次的定时器�?
 const syncMusicStatus = async () => {
     try {
-        // 1. 璋冪敤 Rust 鎻愬彇缃戞槗浜戞爣棰?[姝屽悕, 姝屾墜, 鏄惁鍦ㄦ挱鏀綸
+        // 1. 调用 Rust 提取网易云标�?[歌名, 歌手, 是否在播放]
         const res = await invoke<[string, string, boolean] | null>('fetch_netease_music_info');
 
         if (res) {
             const [song, artist, playing] = res;
 
-            // 鏂板杩欎袱琛屼负浜嗗睍寮€鍚庣殑鍙岃鏄剧ず鍒嗗埆璧嬪€?
+            // 新增这两行为了展开后的双行显示分别赋�?
             currentSongName.value = song;
-            currentArtistName.value = artist || '鏈煡姝屾墜';
+            currentArtistName.value = artist || '未知歌手';
 
-            // 鎷兼帴鏂扮殑姝屾洸淇℃伅
+            // 拼接新的歌曲信息
             const newTrackInfo = artist ? `${song} - ${artist}` : song;
 
             if (currentTrackInfo.value !== newTrackInfo) {
                 currentTrackInfo.value = newTrackInfo;
 
-                // 浼樺厛璇诲彇缂撳瓨锛圠RU锛氬懡涓椂鍒锋柊鎻掑叆椤哄簭锛岃秴闄愭椂娣樻卑鏈€鏃ф潯鐩級
+                // 优先读取缓存（LRU：命中时刷新插入顺序，超限时淘汰最旧条目）
                 if (coverCache.has(newTrackInfo)) {
-                    // 鍛戒腑锛氬厛鍒犲啀璁撅紝灏嗚鏉＄洰绉诲埌 Map 鏈熬锛堟渶鏂帮級
+                    // 命中：先删再设，将该条目移到 Map 末尾（最新）
                     const cached = coverCache.get(newTrackInfo)!;
                     coverCache.delete(newTrackInfo);
                     coverCache.set(newTrackInfo, cached);
@@ -615,15 +615,15 @@ const syncMusicStatus = async () => {
                             artistName: artist
                         });
                         coverUrl.value = realCoverUrl;
-                        // 鍐欏叆缂撳瓨锛岃秴闄愰€愭潯娣樻卑鏈€鏃ф潯鐩紙LRU锛?
+                        // 写入缓存，超限逐条淘汰最旧条目（LRU�?
                         while (coverCache.size >= 50) {
                             const oldest = coverCache.keys().next().value;
                             if (oldest !== undefined) coverCache.delete(oldest);
                         }
                         coverCache.set(newTrackInfo, realCoverUrl);
                     } catch (coverErr) {
-                        console.error('鎵€鏈夊皝闈㈡簮鍧囪幏鍙栧け璐?', coverErr);
-                        // 浣跨敤鏈湴鍥炬爣鎴栫函鑹茶儗鏅紝涓嶈鍐嶇敤澶栭儴 URL 浣滀负閿欒鍏滃簳
+                        console.error('所有封面源均获取失败', coverErr);
+                        // 使用本地图标或纯色背景，不要再用外部 URL 作为错误兜底
                         coverUrl.value = '';
                     }
                 }
@@ -632,54 +632,54 @@ const syncMusicStatus = async () => {
             const wasPlaying = isPlaying.value;
             isPlaying.value = playing;
             
-            // 闊充箰鎾斁鍣ㄦā寮忥細鏈夐煶涔愬氨鏄剧ず锛屾病闊充箰灏遍殣钘忥紙绫讳技閫氱煡妯″紡锛?
+            // 音乐播放器模式：有音乐就显示，没音乐就隐藏（类似通知模式�?
             if (displayMusic.value) {
                 if (playing && !isIslandVisible.value) {
-                    // 鏈夐煶涔愭挱鏀句笖鐏靛姩宀涜闅愯棌锛岃嚜鍔ㄦ仮澶嶆樉绀?
+                    // 有音乐播放且灵动岛被隐藏，自动恢复显�?
                     getCurrentWindow().show();
                     isIslandVisible.value = true;
                 } else if (!playing && wasPlaying && isIslandVisible.value && !isMouseOver.value) {
-                    // 闊充箰鍋滄鎾斁涓旈紶鏍囦笉鍦ㄧ伒鍔ㄥ矝涓婏紝寤惰繜闅愯棌
+                    // 音乐停止播放且鼠标不在灵动岛上，延迟隐藏
                     scheduleAutoHide();
                 }
             }
         } else {
-            // 娌℃娴嬪埌鎾斁鏃讹紝娓呯┖鐘舵€?
-            currentTrackInfo.value = `鏈湪鎾斁姝屾洸 - ${getPlayerName()}`;
+            // 没检测到播放时，清空状�?
+            currentTrackInfo.value = `未在播放歌曲 - ${getPlayerName()}`;
             const wasPlaying = isPlaying.value;
             isPlaying.value = false;
-            coverUrl.value = ''; // 娌℃瓕鏃舵竻绌猴紝鏄剧ず榛樿鐨勪紭缇庢笎鍙樿壊
+            coverUrl.value = ''; // 没歌时清空，显示默认的优美渐变色
 
-            // 闊充箰鎾斁鍣ㄦā寮忥細闊充箰鍋滄鏃堕殣钘忕伒鍔ㄥ矝
+            // 音乐播放器模式：音乐停止时隐藏灵动岛
             if (displayMusic.value && wasPlaying && isIslandVisible.value && !isMouseOver.value) {
                 scheduleAutoHide();
             }
         }
     } catch (err) {
-        console.error('闊充箰淇℃伅鑾峰彇澶辫触:', err);
+        console.error('音乐信息获取失败:', err);
     }
 };
 
 const showInfo = ref(false);
-// 榛樿鏄剧ず鍐呭鍔ㄦ€佷粠鏈湴缂撳瓨璇诲彇
+// 默认显示内容动态从本地缓存读取
 const getPlayerName = () => {
     const key = localStorage.getItem(NSD_TARGET_PLAYER) || 'netease';
     const map: Record<string, string> = { 
-        'netease': '缃戞槗浜戦煶涔?, 
+        'netease': '网易云音乐', 
         'spotify': 'Spotify', 
         'apple': 'Apple Music', 
-        'qqmusic': 'QQ闊充箰', 
-        'kugou': '閰风嫍闊充箰', 
+        'qqmusic': 'QQ音乐', 
+        'kugou': '酷狗音乐', 
         'echo': 'Echo Music',
-        'smtc': 'SMTC',  // Windows鍘熺敓濯掍綋鎺т欢妯″紡
+        'smtc': 'SMTC',  // Windows原生媒体控件模式
     };
-    return map[key] || '鏈煡骞冲彴';
+    return map[key] || '未知平台';
 };
 
-// 瀹氫箟涓€涓敤浜庡己鍒跺埛鏂扮殑 key
+// 定义一个用于强制刷新的 key
 const musicBoxKey = ref(0);
 
-// ===== F6 闊充箰杩涘害鏉★細灞曞紑鎬佹媺鍙?SMTC Timeline 骞舵敮鎸佹嫋鍔ㄥ畾浣?=====
+// ===== F6 音乐进度条：展开态拉�?SMTC Timeline 并支持拖动定�?=====
 type TimelineStatus = 'idle' | 'loading' | 'available' | 'unavailable';
 type MusicTimelineResponse = { position_ms: number; end_ms: number; can_seek: boolean };
 
@@ -696,7 +696,7 @@ let isTimelineRequestInFlight = false;
 const progressBarRef = ref<HTMLElement | null>(null);
 
 const progressEnd = computed(() => musicTimeline.value.end);
-// 鎷栧姩鏃舵樉绀轰复鏃朵綅缃紱鎾斁鏃跺湪涓ゆ SMTC 鍚屾涔嬮棿鎸夋湰鍦版椂閽熷钩婊戞帹杩涖€?
+// 拖动时显示临时位置；播放时在两次 SMTC 同步之间按本地时钟平滑推进�?
 const progressPosition = computed(() => {
     if (isDraggingProgress.value) return dragPosition.value;
     const elapsed = isPlaying.value ? Math.max(0, timelineClock.value - timelineSyncedAt.value) : 0;
@@ -706,7 +706,7 @@ const progressPercent = computed(() => progressEnd.value > 0
     ? Math.min(100, Math.max(0, (progressPosition.value / progressEnd.value) * 100))
     : 0);
 
-// 姣杞?m:ss
+// 毫秒�?m:ss
 const formatTime = (ms: number) => {
     if (ms < 0 || isNaN(ms)) ms = 0;
     const totalSec = Math.floor(ms / 1000);
@@ -725,7 +725,7 @@ const resetTimeline = (status: TimelineStatus = 'idle') => {
     timelineClock.value = timelineSyncedAt.value;
 };
 
-// 鎷夊彇鎾斁杩涘害锛堜粎灞曞紑鎬佷笖鐏靛姩宀涘彲瑙佹椂鎵ц锛屾姌鍙?闅愯棌鏃舵殏鍋滐級銆?
+// 拉取播放进度（仅展开态且灵动岛可见时执行，折�?隐藏时暂停）�?
 const fetchTimeline = async () => {
     if (!isMusicExpanded.value || !isIslandVisible.value || isDraggingProgress.value || isTimelineRequestInFlight) return;
     isTimelineRequestInFlight = true;
@@ -743,7 +743,7 @@ const fetchTimeline = async () => {
             timelineMissCount = 0;
             timelineStatus.value = 'available';
         } else {
-            // SMTC 鍋跺皵浼氬湪鍒囨瓕鏃剁煭鏆傝繑鍥炵┖ Timeline锛岃繛缁け璐ュ悗鎵嶅垽瀹氫笉鍙敤銆?
+            // SMTC 偶尔会在切歌时短暂返回空 Timeline，连续失败后才判定不可用�?
             timelineMissCount++;
             if (timelineMissCount >= 3) timelineStatus.value = 'unavailable';
         }
@@ -776,7 +776,7 @@ const stopProgressTimer = () => {
     }
 };
 
-// 鎷栧姩瀹氫綅锛氬皢鎸囬拡妯潗鏍囨崲绠椾负鎾斁浣嶇疆
+// 拖动定位：将指针横坐标换算为播放位置
 const updateDragPosition = (e: PointerEvent) => {
     if (!progressBarRef.value || progressEnd.value === 0) return;
     const rect = progressBarRef.value.getBoundingClientRect();
@@ -825,28 +825,28 @@ const onProgressPointerUp = async (e: PointerEvent) => {
         musicTimeline.value = { ...musicTimeline.value, position: previousPosition };
         timelineSyncedAt.value = Date.now();
         timelineClock.value = timelineSyncedAt.value;
-        console.error('鎷栧姩瀹氫綅澶辫触:', err);
+        console.error('拖动定位失败:', err);
         await fetchTimeline();
     }
 };
 
-// 灞曞紑鎬?+ 鐏靛姩宀涘彲瑙?鏃跺惎鍔ㄨ繘搴︽潯杞锛涙姌鍙?闅愯棌鏃舵殏鍋滃苟娓呯┖鏁版嵁
+// 展开�?+ 灵动岛可�?时启动进度条轮询；折�?隐藏时暂停并清空数据
 watch([isMusicExpanded, isIslandVisible], () => {
     if (isMusicExpanded.value && isIslandVisible.value) {
         startProgressTimer();
     } else {
         stopProgressTimer();
         if (!isMusicExpanded.value) {
-            // 鎶樺彔鏃舵竻绌猴紝閬垮厤涓嬫灞曞紑鐬棿娈嬬暀鏃ф瓕鏇茶繘搴︺€?
+            // 折叠时清空，避免下次展开瞬间残留旧歌曲进度�?
             resetTimeline();
         }
     }
 });
 
-// 瀹氫箟鍙岃鏂囨湰鎵€闇€鐨勫崟鐙彉閲?
-const currentSongName = ref('鏈湪鎾斁姝屾洸');
+// 定义双行文本所需的单独变�?
+const currentSongName = ref('未在播放歌曲');
 const currentArtistName = ref(getPlayerName());
-const currentTrackInfo = ref(`鏈湪鎾斁姝屾洸 - ${getPlayerName()}`);
+const currentTrackInfo = ref(`未在播放歌曲 - ${getPlayerName()}`);
 
 watch(currentTrackInfo, () => {
     if (!isMusicExpanded.value) return;
@@ -854,34 +854,34 @@ watch(currentTrackInfo, () => {
     fetchTimeline();
 });
 
-// 闊充箰婊氬姩鐩稿叧鍙橀噺
+// 音乐滚动相关变量
 const maskBoxRef = ref<HTMLElement | null>(null);
 const textInnerRef = ref<HTMLElement | null>(null);
 const scrollDist = ref(0);
 const scrollDuration = ref('0s');
 
-// 鏍稿績璁＄畻鍑芥暟锛氬垽鏂枃鏈槸鍚﹁秴鍑哄鍣紝骞跺姩鎬佽皟鏁存粴鍔ㄩ€熷害鍜屾椂闀?
+// 核心计算函数：判断文本是否超出容器，并动态调整滚动速度和时�?
 const calculateScroll = () => {
     if (!textInnerRef.value || !maskBoxRef.value) return;
 
-    // 灞曞紑鐘舵€佷笅涓嶆墽琛屾粴鍔?
+    // 展开状态下不执行滚�?
     if (isMusicExpanded.value) {
         scrollDist.value = 0;
         return;
     }
 
-    // 鏍稿績淇 1锛氫娇鐢?getBoundingClientRect() 鑾峰彇鏃犺鐖剁骇闄愬埗鐨勭湡瀹炴覆鏌撳搴?
+    // 核心修复 1：使�?getBoundingClientRect() 获取无视父级限制的真实渲染宽�?
     const textWidth = textInnerRef.value.getBoundingClientRect().width;
     const containerWidth = maskBoxRef.value.clientWidth;
 
     if (textWidth > containerWidth) {
-        // 鏍稿績淇 1锛氫娇鐢?Math.ceil() 寮哄埗鍙栨暣锛岀粷瀵逛笉鍏佽鍑虹幇灏忔暟鍍忕礌锛?
+        // 核心修复 1：使�?Math.ceil() 强制取整，绝对不允许出现小数像素�?
         scrollDist.value = Math.ceil(textWidth - containerWidth + 20);
 
-        // 鎸夌収 30px/s 鐨勯€熷害闃呰锛岃绠楃函绉诲姩鏃堕棿
+        // 按照 30px/s 的速度阅读，计算纯移动时间
         const timeToMove = scrollDist.value / 30;
 
-        // 灏嗛灏惧悇鍋滅暀鐨?1s 宸﹀彸锛堝熀浜?0%鍗犳瘮璁＄畻锛夎瀺鍏ユ€绘椂闀夸腑锛岀‘淇濆寑閫?
+        // 将首尾各停留�?1s 左右（基�?0%占比计算）融入总时长中，确保匀�?
         const totalDuration = timeToMove / 0.6;
 
         scrollDuration.value = `${Math.max(totalDuration, 4.5)}s`;
@@ -890,14 +890,14 @@ const calculateScroll = () => {
     }
 };
 
-// 鏍稿績淇 2锛氱洃鍚暟缁勫繀椤诲甫涓?displayMusic锛屽苟鍦?nextTick 鍚庡姞涓婂井灏忓欢杩燂紝闃叉 v-else-if 瀵艰嚧瀹藉害鎷垮埌 0
+// 核心修复 2：监听数组必须带�?displayMusic，并�?nextTick 后加上微小延迟，防止 v-else-if 导致宽度拿到 0
 watch([currentTrackInfo, displayMusic, isMusicExpanded], async () => {
     await nextTick();
     setTimeout(() => {
         if (displayMusic.value) {
             calculateScroll();
         } else {
-            // 鍒囧埌鍏朵粬鐣岄潰锛堟瘮濡傜綉閫燂級鏃讹紝褰掗浂閲嶇疆
+            // 切到其他界面（比如网速）时，归零重置
             scrollDist.value = 0;
         }
     }, 100);
@@ -911,11 +911,11 @@ let musicTimer: number;
 let msgTimer: number | null = null;
 let notifyTimer: number;
 
-// 闃叉姈鎺у埗鍙橀噺
+// 防抖控制变量
 let lowTrafficStartTime = Date.now();
 const RED_DELAY_MS = 5000;
 
-// 璁＄畻娴侀噺鏁板瓧锛屽苟瀹炴椂鏇存柊澶ф祦閲忕姸鎬?
+// 计算流量数字，并实时更新大流量状�?
 const fetchSpeedStats = async () => {
     try {
         const [currentRx, currentTx] = await invoke<[number, number]>('get_network_stats');
@@ -926,7 +926,7 @@ const fetchSpeedStats = async () => {
             downloadSpeed.value = formatSpeed(rxDiff);
             uploadSpeed.value = formatSpeed(txDiff);
 
-            // 1MB = 1048576 瀛楄妭
+            // 1MB = 1048576 字节
             const limit = 1024 * 1024;
             const currentDownloadHigh = rxDiff >= limit;
             const currentUploadHigh = txDiff >= limit;
@@ -934,64 +934,64 @@ const fetchSpeedStats = async () => {
             isHighDownload.value = currentDownloadHigh;
             isHighUpload.value = currentUploadHigh;
 
-            // 缁存姢浣庢祦閲忔寔缁椂闂?
+            // 维护低流量持续时�?
             if (currentDownloadHigh || currentUploadHigh) {
-                // 濡傛灉鐩墠渚濈劧鏄ぇ娴侀噺锛岄噸缃鏃跺櫒
+                // 如果目前依然是大流量，重置计时器
                 lowTrafficStartTime = Date.now();
             }
         }
         lastRx = currentRx;
         lastTx = currentTx;
     } catch (error) {
-        console.error('娴侀噺鑾峰彇澶辫触:', error);
+        console.error('流量获取失败:', error);
     }
 };
 
-// 閫氳繃鐪熷疄寤惰繜鎺у埗鐘舵€佺伅锛堝姞鍏ュぇ娴侀噺閬胯鍒ゆ柇锛?
+// 通过真实延迟控制状态灯（加入大流量避让判断�?
 const checkNetworkLatency = async () => {
     try {
         const latency = await invoke<number>('get_network_latency');
 
-        // 鍙鑳芥嬁鍒板欢杩熸暟瀛楋紝璇存槑缃戠粶鑲畾鏄€氱殑
+        // 只要能拿到延迟数字，说明网络肯定是通的
         if (latency < 150) {
-            networkStatus.value = 'good';      // 寤惰繜浼樼锛岀豢鑹?
+            networkStatus.value = 'good';      // 延迟优秀，绿灯
         } else {
-            networkStatus.value = 'warning';   // 寤惰繜楂?涓嶇ǔ瀹氾紝榛勮壊
+            networkStatus.value = 'warning';   // 延迟较高不稳定，黄色
         }
     } catch (error) {
-        // 褰揜ust鎶涘嚭瓒呮椂寮傚父鏃讹紝璇存槑缃戠粶鍙兘鏂紑杩炴帴
+        // 当Rust抛出超时异常时，说明网络可能断开连接
 
-        // 1. 濡傛灉褰撳墠姝ｅ浜庡ぇ娴侀噺鐘舵€侊紝缁濅笉鍙樼孩锛岄檷绾ф樉绀轰负榛勭伅
+        // 1. 如果当前正处于大流量状态，绝不变红，降级显示为黄灯
         if (isHighDownload.value || isHighUpload.value) {
             networkStatus.value = 'warning';
             return;
         }
 
-        // 2. 濡傛灉娴侀噺鍒氬垰娑堝け锛屽垽鏂窛绂诲ぇ娴侀噺缁撴潫鏄惁瓒呰繃浜嗚瀹氱殑缂撳啿鏃堕棿
+        // 2. 如果流量刚刚消失，判断距离大流量结束是否超过了设定的缓冲时间
         const timeSinceLowTraffic = Date.now() - lowTrafficStartTime;
         if (timeSinceLowTraffic < RED_DELAY_MS) {
-            // 杩樺湪缂撳啿鏈熷唴锛屽垽瀹氫负澶ф祦閲忓甫鏉ョ殑浣欐尝鍗￠】锛屼緷鐒朵繚鎸侀粍鐏?
+            // 还在缓冲期内，判定为大流量带来的余波卡顿，依然保持黄�?
             networkStatus.value = 'warning';
         } else {
-            // 宸茬粡涓嬩簡濂藉嚑绉掗兘娌℃祦閲忎簡锛岀粨鏋滆繕杩炰笉涓婏紝璇存槑鏄湡鐨勬柇缃戜簡锛屽彉绾紒
+            // 已经下了好几秒都没流量了，结果还连不上，说明是真的断网了，变红！
             networkStatus.value = 'error';
         }
     }
 };
 
-// 鐩戝惉缃戠粶鐘舵€佸彉鍖栵紝瑙﹀彂绯荤粺閫氱煡
+// 监听网络状态变化，触发系统通知
 watch(networkStatus, (newStatus, oldStatus) => {
-    // 蹇界暐鍒濆鍖栨椂鐨勫彉鍖栵紝纭繚鏄湡鐨勭姸鎬佺炕杞?
+    // 忽略初始化时的变化，确保是真的状态翻�?
     if (oldStatus && oldStatus !== newStatus) {
         if (newStatus === 'error') {
-            showToast('缃戠粶杩炴帴宸叉柇寮€', 'sys');
+            showToast('网络连接已断开', 'sys');
         } else if (newStatus === 'good' && oldStatus === 'error') {
-            showToast('缃戠粶宸叉仮澶嶈繛鎺?, 'sys');
+            showToast('网络已恢复连接', 'sys');
         }
     }
 });
 
-// 璋冩暣绐楀彛浣嶇疆鍒版纭綅缃?
+// 调整窗口位置到正确位�?
 const adjustWindowPosition = async () => {
     try {
         const appWindow = getCurrentWindow();
@@ -1001,15 +1001,15 @@ const adjustWindowPosition = async () => {
         if (monitor) {
             const scaleFactor = window.devicePixelRatio;
 
-            const WINDOW_INIT_WIDTH = currentWidth.value;   // 榛樿 260
-            const WINDOW_INIT_HEIGHT = currentHeight.value; // 榛樿 42
+            const WINDOW_INIT_WIDTH = currentWidth.value;   // 默认 260
+            const WINDOW_INIT_HEIGHT = currentHeight.value; // 默认 42
             await appWindow.setSize(new PhysicalSize(Math.ceil(WINDOW_INIT_WIDTH * scaleFactor), Math.ceil(WINDOW_INIT_HEIGHT * scaleFactor)));
 
             const monitorWidthPhysical = monitor.size.width;
             const monitorLeftPhysical = monitor.position.x;
             const monitorTopPhysical = monitor.position.y;
 
-            // 2. 閲嶆柊鑾峰彇璁惧畾鍚庣殑鐪熷疄鐗╃悊灏哄锛岀敤浜庣簿鍑嗗眳涓?
+            // 2. 重新获取设定后的真实物理尺寸，用于精准居�?
             const windowSize = await appWindow.innerSize();
             const windowWidthPhysical = windowSize.width;
 
@@ -1019,7 +1019,7 @@ const adjustWindowPosition = async () => {
             await appWindow.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
         }
     } catch (error) {
-        console.error('璋冩暣绐楀彛浣嶇疆澶辫触:', error);
+        console.error('调整窗口位置失败:', error);
     } finally {
         try {
             await getCurrentWindow().show();
@@ -1029,23 +1029,23 @@ const adjustWindowPosition = async () => {
     }
 };
 
-// 鏍稿績鍔ㄧ敾瀹炵幇锛氬熀浜庝綘鐨?AE 鍏紡杞寲
+// 核心动画实现：基于你�?AE 公式转化
 const onEnter = (el: Element, done: () => void) => {
     const HTMLElement = el as HTMLElement;
-    HTMLElement.style.transformOrigin = 'center top'; // 绫讳技鑻规灉鐏靛姩宀涗粠椤堕儴灞曞紑
+    HTMLElement.style.transformOrigin = 'center top'; // 类似苹果灵动岛从顶部展开
     let start = performance.now();
 
     const freq = 2.0;
-    const decay = 10.5; // 閫傚害鎷夐珮闃诲姏
+    const decay = 10.5; // 适度拉高阻力
     const duration = 600;
 
     const animate = (time: number) => {
         let t = (time - start) / 1000;
         let progress = (time - start) / duration;
 
-        // 鏁板鏂圭▼锛? - cos(2蟺ft) * e^(-dt)
+        // 数学方程�? - cos(2πft) * e^(-dt)
         let scale = 1 - Math.cos(freq * t * 2 * Math.PI) * Math.exp(-decay * t);
-        let opacity = Math.min(1, progress * 4); // 蹇€熸贰鍏?
+        let opacity = Math.min(1, progress * 4); // 快速淡入
 
         HTMLElement.style.transform = `scale(${scale})`;
         HTMLElement.style.opacity = opacity.toString();
@@ -1053,7 +1053,7 @@ const onEnter = (el: Element, done: () => void) => {
         if (progress < 1) {
             requestAnimationFrame(animate);
         } else {
-            // 閲嶇疆涓烘渶缁堝共鍑€鐨勭姸鎬?
+            // 重置为最终干净的状�?
             HTMLElement.style.transform = `scale(1)`;
             HTMLElement.style.opacity = '1';
             done();
@@ -1067,14 +1067,14 @@ const onLeave = (el: Element, done: () => void) => {
     HTMLElement.style.transformOrigin = 'center top';
     let start = performance.now();
 
-    const duration = 300; // 鏀惰捣鍔ㄧ敾閫氬父鏇村共鑴嗐€佹洿蹇?
+    const duration = 300; // 收起动画通常更干脆、更快
 
     const animate = (time: number) => {
         let progress = (time - start) / duration;
 
-        // 绂诲紑鍔ㄧ敾锛氬揩閫熷钩婊戝洖缂?
-        // 浣跨敤 easing 鏇茬嚎鎴栫畝鍖栫殑琛板噺
-        let scale = 1 - Math.pow(progress, 3); // 蹇€熷唴鏀?
+        // 离开动画：快速平滑回�?
+        // 使用 easing 曲线或简化的衰减
+        let scale = 1 - Math.pow(progress, 3); // 快速内缩
         let opacity = 1 - progress * 1.5;
 
         HTMLElement.style.transform = `scale(${Math.max(0, scale)})`;
@@ -1084,9 +1084,9 @@ const onLeave = (el: Element, done: () => void) => {
             requestAnimationFrame(animate);
         } else {
             done();
-            // 绛夊緟 DOM 鍔ㄧ敾鎾斁瀹屾垚鍚庡啀闅愯棌绐楀彛
+            // 等待 DOM 动画播放完成后再隐藏窗口
             getCurrentWindow().hide().catch(console.error);
-            // 鍙湁鐢ㄦ埛涓诲姩鍏抽棴鏃舵墠鍚屾鐘舵€佸埌鎺у埗鍙帮紝鑷姩闅愯棌涓嶆敼鍙樺紑鍏崇姸鎬?
+            // 只有用户主动关闭时才同步状态到控制台，自动隐藏不改变开关状�?
             if (!isAutoHiding) {
                 emit('island-status-sync', { visible: false });
             }
@@ -1099,9 +1099,9 @@ const onLeave = (el: Element, done: () => void) => {
 let mouseDownX = 0;
 let mouseDownY = 0;
 let isMouseDown = false;
-let isAutoHiding = false; // 鏍囪褰撳墠闅愯棌鏄惁鐢辫嚜鍔ㄩ殣钘忚Е鍙戯紙鍖哄埆浜庣敤鎴蜂富鍔ㄥ叧闂級
+let isAutoHiding = false; // 标记当前隐藏是否由自动隐藏触发（区别于用户主动关闭）
 
-// 鑷畾涔夋í鍚戞嫋鎷界浉鍏崇姸鎬侊紙浠诲姟鏍忔ā寮忎笅浠呭厑璁告í鍚戠Щ鍔級
+// 自定义横向拖拽相关状态（任务栏模式下仅允许横向移动）
 let isCustomDragging = false;
 let customDragStartScreenX = 0;
 let customDragStartWindowX = 0;
@@ -1113,7 +1113,7 @@ const handleMouseDown = (event: MouseEvent) => {
     if ((event.target as HTMLElement).closest('.ctl-btn')) return;
     if ((event.target as HTMLElement).closest('.resize-handle')) return;
 
-    // 妫€娴嬫槸鍚﹀湪杈圭紭鍖哄煙锛屽鏋滄槸鍒欏紑濮嬪搴﹁皟鏁?
+    // 检测是否在边缘区域，如果是则开始宽度调�?
     if (!isPositionLocked.value && !isMusicExpanded.value && !isMusicExpanding.value && !isMsgActive.value && !displaySysToast.value) {
         if (isNearEdge(event, 'left')) {
             handleResizeStart(event, 'left');
@@ -1125,18 +1125,18 @@ const handleMouseDown = (event: MouseEvent) => {
         }
     }
 
-    // 鏃犺鏈夋病鏈夐攣瀹氾紝閮藉繀椤昏€佽€佸疄瀹炶褰曞潗鏍囷紝缁欏悗闈㈢殑"鐐瑰嚮灞曞紑"鎻愪緵鍒ゆ柇渚濇嵁锛?
+    // 无论有没有锁定，都必须老老实实记录坐标，给后面的"点击展开"提供判断依据�?
     mouseDownX = event.clientX;
     mouseDownY = event.clientY;
     isMouseDown = true;
 };
 
-// ===== 瀹藉害璋冩暣鐩稿叧鍑芥暟 =====
+// ===== 宽度调整相关函数 =====
 const handleResizeStart = (event: MouseEvent, side: 'left' | 'right') => {
-    // 浣嶇疆閿佸畾鏃剁姝㈣皟鏁?
+    // 位置锁定时禁止调�?
     if (isPositionLocked.value) return;
 
-    // 闊充箰灞曞紑銆佹秷鎭€氱煡绛夌姸鎬佷笅绂佹璋冩暣
+    // 音乐展开、消息通知等状态下禁止调整
     if (isMusicExpanded.value || isMusicExpanding.value || isMsgActive.value || displaySysToast.value) return;
 
     event.preventDefault();
@@ -1164,25 +1164,25 @@ const handleResizeMove = async (event: MouseEvent) => {
         newWidth = resizeStartWidth - deltaXLogical;
     }
 
-    // 杈圭晫绾︽潫
+    // 边界约束
     newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, newWidth));
 
-    // 鏇存柊鐏靛姩宀涘搴?
+    // 更新灵动岛宽�?
     try {
         const appWindow = getCurrentWindow();
         await appWindow.setSize(new PhysicalSize(Math.ceil(newWidth * scaleFactor), Math.ceil(currentHeight.value * scaleFactor)));
 
-        // 濡傛灉鏄乏渚ц皟鏁达紝闇€瑕佸悓鏃剁Щ鍔ㄧ獥鍙ｄ綅缃互淇濇寔鍙充晶鍥哄畾
+        // 如果是左侧调整，需要同时移动窗口位置以保持右侧固定
         if (resizeSide.value === 'left') {
             const pos = await appWindow.outerPosition();
             const widthDelta = (newWidth - currentWidth.value) * scaleFactor;
             await appWindow.setPosition(new PhysicalPosition(Math.round(pos.x + widthDelta), Math.round(pos.y)));
         }
 
-        // 鏇存柊褰撳墠瀹藉害
+        // 更新当前宽度
         currentWidth.value = newWidth;
     } catch (error) {
-        console.error('璋冩暣瀹藉害澶辫触:', error);
+        console.error('调整宽度失败:', error);
     }
 };
 
@@ -1193,12 +1193,12 @@ const handleResizeEnd = () => {
     document.removeEventListener('mouseup', handleResizeEnd);
 };
 
-// 淇濆瓨鐢ㄦ埛鑷畾涔夌殑瀹藉害
+// 保存用户自定义的宽度
 const saveIslandWidth = () => {
     localStorage.setItem(NSD_ISLAND_WIDTH, String(currentWidth.value));
 };
 
-// 鎭㈠鐢ㄦ埛鑷畾涔夌殑瀹藉害
+// 恢复用户自定义的宽度
 const restoreIslandWidth = () => {
     const saved = localStorage.getItem(NSD_ISLAND_WIDTH);
     if (saved) {
@@ -1210,7 +1210,7 @@ const restoreIslandWidth = () => {
     return null;
 };
 
-// 妫€娴嬮紶鏍囨槸鍚﹀湪鐏靛姩宀涜竟缂橈紙鐢ㄤ簬鏄剧ず璋冩暣鍏夋爣锛?
+// 检测鼠标是否在灵动岛边缘（用于显示调整光标�?
 const isNearEdge = (event: MouseEvent, side: 'left' | 'right'): boolean => {
     if (isPositionLocked.value) return false;
 
@@ -1218,7 +1218,7 @@ const isNearEdge = (event: MouseEvent, side: 'left' | 'right'): boolean => {
     if (!target) return false;
 
     const rect = target.getBoundingClientRect();
-    const EDGE_THRESHOLD = 8; // 杈圭紭妫€娴嬮槇鍊硷紙鍍忕礌锛?
+    const EDGE_THRESHOLD = 8; // 边缘检测阈值（像素）
 
     if (side === 'left') {
         return event.clientX - rect.left <= EDGE_THRESHOLD;
@@ -1228,13 +1228,13 @@ const isNearEdge = (event: MouseEvent, side: 'left' | 'right'): boolean => {
 };
 
 const handleMouseMove = async (event: MouseEvent) => {
-    // 瀹藉害璋冩暣妯″紡
+    // 宽度调整模式
     if (isResizing.value) {
         await handleResizeMove(event);
         return;
     }
 
-    // 妫€娴嬮紶鏍囨槸鍚﹀湪杈圭紭鍖哄煙锛堢敤浜庡厜鏍囨牱寮忥級
+    // 检测鼠标是否在边缘区域（用于光标样式）
     if (canResize.value) {
         const target = event.currentTarget as HTMLElement;
         if (target) {
@@ -1257,20 +1257,20 @@ const handleMouseMove = async (event: MouseEvent) => {
 
     if (!isMouseDown) return;
 
-    // 1. 鍏ㄥ眬鍔ㄧ敾閿侊細浠讳綍鍙樺舰鍔ㄧ敾鏈熼棿锛岀粷瀵圭姝㈡嫋鎷?
+    // 1. 全局动画锁：任何变形动画期间，绝对禁止拖�?
     if (isSizeAnimating) return;
 
-    // 2. 鐘舵€侀攣锛氶煶涔愬睍寮€銆佹秷鎭€氱煡銆佺郴缁熸彁绀烘湡闂达紝缁熺粺绂佹鎷栨嫿锛?
+    // 2. 状态锁：音乐展开、消息通知、系统提示期间，统统禁止拖拽�?
     if (isMusicExpanded.value || isMusicExpanding.value || isMsgActive.value || displaySysToast.value) {
-        // 鍙戠幇浼佸浘鎷栨嫿锛岀珛鍒绘墦鏂柦娉?
+        // 发现企图拖拽，立刻打断施�?
         isMouseDown = false;
         return;
     }
 
-    // 3. 浣嶇疆宸查攣瀹氭椂锛岀姝竴鍒囨嫋鎷?
+    // 3. 位置已锁定时，禁止一切拖�?
     if (isPositionLocked.value) return;
 
-    // 4. 浠诲姟鏍忔ā寮?+ 宸茶В閿侊細浠呭厑璁告í鍚戞嫋鎷斤紙鑷畾涔夊疄鐜帮紝绾︽潫 Y 杞翠笉鍙橈級
+    // 4. 任务栏模�?+ 已解锁：仅允许横向拖拽（自定义实现，约束 Y 轴不变）
     if (isPinnedToTaskbar.value) {
         if (Math.abs(event.clientX - mouseDownX) > 5) {
             isMouseDown = false;
@@ -1279,19 +1279,19 @@ const handleMouseMove = async (event: MouseEvent) => {
         return;
     }
 
-    // 5. 宀涙ā寮?+ 宸茶В閿侊細鑷敱鎷栨嫿锛堝師鐢?startDragging锛孹/Y 鍧囧彲绉诲姩锛?
+    // 5. 岛模�?+ 已解锁：自由拖拽（原�?startDragging，X/Y 均可移动�?
     if (Math.abs(event.clientX - mouseDownX) > 5 || Math.abs(event.clientY - mouseDownY) > 5) {
         isMouseDown = false;
         try {
             await getCurrentWindow().startDragging();
         } catch (error) {
-            console.error('鎷栨嫿澶辫触:', error);
+            console.error('拖拽失败:', error);
         }
     }
 };
 
 const handleMouseUp = () => {
-    // 瀹藉害璋冩暣缁撴潫鏃朵繚瀛樺搴?
+    // 宽度调整结束时保存宽�?
     if (isResizing.value) {
         handleResizeEnd();
         saveIslandWidth();
@@ -1301,28 +1301,28 @@ const handleMouseUp = () => {
     handleCustomDragEnd();
 };
 
-// ===== 鑷畾涔夋í鍚戞嫋鎷斤紙浠诲姟鏍忔ā寮忎笅浠呭厑璁?X 杞寸Щ鍔級=====
+// ===== 自定义横向拖拽（任务栏模式下仅允�?X 轴移动）=====
 const startCustomHorizontalDrag = async (event: MouseEvent) => {
     try {
         const appWindow = getCurrentWindow();
-        // 鑾峰彇绐楀彛褰撳墠鐗╃悊鍧愭爣锛屼綔涓烘嫋鎷借捣鐐?
+        // 获取窗口当前物理坐标，作为拖拽起�?
         const pos = await appWindow.outerPosition();
         customDragStartWindowX = pos.x;
         customDragStartWindowY = pos.y;
         customDragStartScreenX = event.screenX;
 
-        // 鑾峰彇鏄剧ず鍣ㄤ俊鎭笌绐楀彛瀹藉害锛岀敤浜庤竟鐣岀害鏉?
+        // 获取显示器信息与窗口宽度，用于边界约�?
         customDragMonitor = await currentMonitor();
         const size = await appWindow.innerSize();
         customDragWindowWidth = size.width;
 
         isCustomDragging = true;
 
-        // 娣诲姞鏂囨。绾х洃鍚櫒锛岀‘淇濋紶鏍囩Щ鍑虹伒鍔ㄥ矝绐楀彛鍚庝粛鑳芥寔缁拷韪?
+        // 添加文档级监听器，确保鼠标移出灵动岛窗口后仍能持续追�?
         document.addEventListener('mousemove', handleCustomDragMove);
         document.addEventListener('mouseup', handleCustomDragEnd);
     } catch (e) {
-        console.error('妯悜鎷栨嫿鍒濆鍖栧け璐?', e);
+        console.error('横向拖拽初始化失败', e);
     }
 };
 
@@ -1334,7 +1334,7 @@ const handleCustomDragMove = async (event: MouseEvent) => {
     const deltaXPhysical = deltaXLogical * scaleFactor;
     let newX = customDragStartWindowX + deltaXPhysical;
 
-    // 杈圭晫绾︽潫锛氶槻姝㈡嫋鍑哄睆骞曞乏鍙宠竟缂?
+    // 边界约束：防止拖出屏幕左右边�?
     if (customDragMonitor) {
         const monitorLeft = customDragMonitor.position.x;
         const monitorRight = customDragMonitor.position.x + customDragMonitor.size.width;
@@ -1346,7 +1346,7 @@ const handleCustomDragMove = async (event: MouseEvent) => {
             new PhysicalPosition(Math.round(newX), Math.round(customDragStartWindowY))
         );
     } catch (e) {
-        console.error('妯悜鎷栨嫿澶辫触:', e);
+        console.error('横向拖拽失败:', e);
     }
 };
 
@@ -1357,14 +1357,14 @@ const handleCustomDragEnd = () => {
     document.removeEventListener('mouseup', handleCustomDragEnd);
 };
 
-// ===== 浣嶇疆鎸佷箙鍖栵紙閿佸畾鏃朵繚瀛橈紝鍚姩鏃舵仮澶嶏級=====
+// ===== 位置持久化（锁定时保存，启动时恢复）=====
 const saveIslandPosition = async () => {
     try {
         const appWindow = getCurrentWindow();
         const pos = await appWindow.outerPosition();
         localStorage.setItem(NSD_ISLAND_POSITION, JSON.stringify({ x: pos.x, y: pos.y }));
     } catch (e) {
-        console.error('淇濆瓨浣嶇疆澶辫触:', e);
+        console.error('保存位置失败:', e);
     }
 };
 
@@ -1377,120 +1377,120 @@ const restoreIslandPosition = async (): Promise<boolean> => {
             return true;
         }
     } catch (e) {
-        console.error('鎭㈠浣嶇疆澶辫触:', e);
+        console.error('恢复位置失败:', e);
     }
     return false;
 };
 
 const handleRightClick = async (event: MouseEvent) => {
     event.preventDefault();
-    event.stopPropagation(); // 闃绘鍐掓场
+    event.stopPropagation(); // 阻止冒泡
 
-    // 濡傛灉闊充箰鐏靛姩宀涙鍦ㄥ睍寮€鎴栧凡瀹屽叏灞曞紑锛屽己鍒剁姝㈠懠鍑哄彸閿彍鍗?
+    // 如果音乐灵动岛正在展开或已完全展开，强制禁止呼出右键菜�?
     if (isMusicExpanded.value || isMusicExpanding.value || isMsgActive.value || displaySysToast.value) {
         return;
     }
 
-    // 鎵撳紑璁剧疆
+    // 打开设置
     const openSettingsItem = await MenuItem.new({
-        text: '鎵撳紑璁剧疆',
+        text: '打开设置',
         id: 'open_settings',
         action: async () => {
             await emit('open-settings-panel');
-            showToast('宸叉墦寮€璁剧疆');
+            showToast('已打开设置');
         }
     });
 
-    // 鍒囨崲娴佸厜杈规
+    // 切换流光边框
     const toggleGlowBorderItem = await MenuItem.new({
-        text: isGlowBorderEnabled.value ? '鍏抽棴娴佸厜杈规' : '寮€鍚祦鍏夎竟妗?,
+        text: isGlowBorderEnabled.value ? '关闭流光边框' : '开启流光边框',
         id: 'toggle_glow_border',
         enabled: true,
         action: () => {
             isGlowBorderEnabled.value = !isGlowBorderEnabled.value;
             localStorage.setItem(NSD_GLOW_BORDER, String(isGlowBorderEnabled.value));
-            showToast(isGlowBorderEnabled.value ? '宸插紑鍚祦鍏夎竟妗? : '宸插叧闂祦鍏夎竟妗?);
+            showToast(isGlowBorderEnabled.value ? '已开启流光边框' : '已关闭流光边框');
         }
     });
 
-    // 閲嶇疆浣嶇疆
+    // 重置位置
     const resetPositionItem = await MenuItem.new({
-        text: isPinnedToTaskbar.value ? '閲嶇疆浣嶇疆 (宸查攣瀹?' : '閲嶇疆浣嶇疆',
+        text: isPinnedToTaskbar.value ? '重置位置 (已锁定)' : '重置位置',
         id: 'reset_position',
         enabled: !isPinnedToTaskbar.value,
         action: async () => {
             try {
                 await adjustWindowPosition();
-                // 濡傛灉宸查攣瀹氾紝閲嶇疆鍚庨噸鏂颁繚瀛樻柊浣嶇疆
+                // 如果已锁定，重置后重新保存新位置
                 if (isPositionLocked.value) {
                     await saveIslandPosition();
                 }
-                showToast('宸查噸缃綅缃?);
+                showToast('已重置位置');
             } catch (error) {
                 console.error(error);
             }
         }
     });
 
-    // 閲嶇疆瀹藉害
+    // 重置宽度
     const resetWidthItem = await MenuItem.new({
-        text: '閲嶇疆瀹藉害',
+        text: '重置宽度',
         id: 'reset_width',
         enabled: !isPositionLocked.value,
         action: async () => {
             try {
-                // 鍒犻櫎淇濆瓨鐨勮嚜瀹氫箟瀹藉害
+                // 删除保存的自定义宽度
                 localStorage.removeItem(NSD_ISLAND_WIDTH);
-                // 鎭㈠鍒伴粯璁ゅ搴?
+                // 恢复到默认宽�?
                 const { w, h } = getBaseSize();
                 currentWidth.value = w;
                 animateIslandSize(w, h);
-                showToast('宸查噸缃搴?);
+                showToast('已重置宽度');
             } catch (error) {
                 console.error(error);
             }
         }
     });
 
-    // 閿佸畾浣嶇疆鑿滃崟椤?
+    // 锁定位置菜单�?
     const toggleLockItem = await MenuItem.new({
-        text: isPositionLocked.value ? '瑙ｉ攣 (褰撳墠宸查攣瀹?' : '閿佸畾',
+        text: isPositionLocked.value ? '解锁 (当前已锁定)' : '锁定',
         id: 'toggle_lock',
         enabled: !isPinnedToTaskbar.value,
         action: async () => {
             isPositionLocked.value = !isPositionLocked.value;
             localStorage.setItem(NSD_POSITION_LOCKED, String(isPositionLocked.value));
-            // 閿佸畾鏃朵繚瀛樺綋鍓嶄綅缃拰瀹藉害锛屼互渚夸笅娆″惎鍔ㄦ仮澶?
+            // 锁定时保存当前位置和宽度，以便下次启动恢�?
             if (isPositionLocked.value) {
                 await saveIslandPosition();
                 saveIslandWidth();
             }
-            // 鍚屾鐘舵€佺粰璁剧疆闈㈡澘
+            // 同步状态给设置面板
             await emit('position-lock-sync', { locked: isPositionLocked.value });
-            // 鏍规嵁鐘舵€佽Е鍙?lock 鎴?unlock 涓撳睘閫氱煡
+            // 根据状态触�?lock �?unlock 专属通知
             showToast(
-                isPositionLocked.value ? '閿佸畾浣嶇疆鎴愬姛' : '浣嶇疆宸茶В閿?,
+                isPositionLocked.value ? '锁定位置成功' : '位置已解锁',
                 isPositionLocked.value ? 'lock' : 'unlock'
             );
         }
     });
 
-    // 鍏抽棴鐏靛姩宀?
+    // 关闭灵动�?
     const closeItem = await MenuItem.new({
-        text: '鍏抽棴',
+        text: '关闭',
         id: 'close',
         action: () => {
             isIslandVisible.value = false;
         }
     });
 
-    // 浣跨敤瀹㈡埛绔潗鏍囪浆閫昏緫鍧愭爣锛堥伩鍏嶆棤杈规瑁佸壀甯︽潵鐨勬紓绉伙級
+    // 使用客户端坐标转逻辑坐标（避免无边框裁剪带来的漂移）
     const position = new LogicalPosition(
         event.clientX,
         event.clientY
     );
 
-    // 3. 鍒涘缓鑿滃崟骞舵寜椤哄簭杩藉姞杩涘幓
+    // 3. 创建菜单并按顺序追加进去
     const menu = await Menu.new();
     await menu.append(openSettingsItem);
     await menu.append(toggleGlowBorderItem);
@@ -1499,14 +1499,14 @@ const handleRightClick = async (event: MouseEvent) => {
     await menu.append(toggleLockItem);
     await menu.append(closeItem);
 
-    // 4. 寮瑰嚭鑿滃崟
+    // 4. 弹出菜单
     try {
-        isMenuOpen.value = true; // 馃憟 寮瑰嚭鍓嶏紝鍛婅瘔绯荤粺鑿滃崟鎵撳紑浜?
+        isMenuOpen.value = true; // 👈 弹出前，告诉系统菜单打开了
         await menu.popup(position);
     } catch (error) {
-        console.error('鑿滃崟寮瑰嚭澶辫触:', error);
+        console.error('菜单弹出失败:', error);
     } finally {
-        isMenuOpen.value = false; // 馃憟 鏃犺鐢ㄦ埛鏄偣鍑讳簡鑿滃崟锛岃繕鏄偣绌虹櫧澶勫彇娑堜簡锛岄兘浼氱灛闂存仮澶嶇疆椤剁姸鎬?
+        isMenuOpen.value = false; // 👈 无论用户是点击了菜单，还是点空白处取消了，都会瞬间恢复置顶状态
     }
 };
 
@@ -1514,11 +1514,11 @@ const onInnerEnter = (el: Element, done: () => void) => {
     const htmlEl = el as HTMLElement;
     let start = performance.now();
 
-    // 缁熶竴浣跨敤绠€鍗曠殑娓愬彉娣″叆 (200姣)
+    // 统一使用简单的渐变淡入 (200毫秒)
     const duration = 180;
     htmlEl.style.transformOrigin = 'center';
     htmlEl.style.opacity = '0';
-    htmlEl.style.transform = 'none'; // 纭繚娌℃湁浣嶇Щ
+    htmlEl.style.transform = 'none'; // 确保没有位移
 
     const animate = (time: number) => {
         let progress = (time - start) / duration;
@@ -1554,18 +1554,18 @@ const onInnerLeave = (el: Element, done: () => void) => {
     requestAnimationFrame(animate);
 };
 
-// 璁板綍鍏ㄥ眬鐏靛姩宀涙槸鍚︽鍦ㄦ墽琛屽舰鍙樺姩鐢?
+// 记录全局灵动岛是否正在执行形变动�?
 let isSizeAnimating = false;
 let sizeAnimTimer: number | null = null;
 
-// 鐏靛姩宀涙牳蹇冧唬鐮侊紒锛堝畬缇庨槻婕傜Щ+闃茶鍒?闃叉墦鏂姈鍔級
+// 灵动岛核心代码！（完美防漂移+防裁�?防打断抖动）
 const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
     try {
-        // 1. 瑙﹀彂褰㈠彉鍓嶏細绔嬪埢涓婇攣
+        // 1. 触发形变前：立刻上锁
         isSizeAnimating = true;
         if (sizeAnimTimer) clearTimeout(sizeAnimTimer);
 
-        // 2. 璁惧畾 500ms 鍚庤嚜鍔ㄨВ閿侊紙瑕嗙洊澶у鏁板脊绨у姩鐢荤殑鎸佺画鏃堕棿锛?
+        // 2. 设定 500ms 后自动解锁（覆盖大多数弹簧动画的持续时间�?
         sizeAnimTimer = window.setTimeout(() => {
             isSizeAnimating = false;
         }, 500);
@@ -1585,14 +1585,14 @@ const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
             isPinned: isPinnedToTaskbar.value
         });
     } catch (err) {
-        console.error('鍛煎彨 Rust 鍔ㄧ敾澶辫触:', err);
-        // 濡傛灉璋冪敤澶辫触锛屽畨鍏ㄨ捣瑙佺珛鍒昏В閿侊紝闃叉姝婚攣
+        console.error('呼叫 Rust 动画失败:', err);
+        // 如果调用失败，安全起见立刻解锁，防止死锁
         isSizeAnimating = false;
     }
 };
 
-// ===== F11 閫氱煡鐐瑰嚮鎵撳紑锛氬叧闂€氱煡鏄剧ず骞跺惎鍔ㄦ潵婧愬簲鐢?=====
-// 鍏抽棴娑堟伅閫氱煡锛屾仮澶嶇伒鍔ㄥ矝鍒伴€氱煡寮瑰嚭鍓嶇殑鐘舵€?
+// ===== F11 通知点击打开：关闭通知显示并启动来源应�?=====
+// 关闭消息通知，恢复灵动岛到通知弹出前的状�?
 const dismissMsgNotification = () => {
     if (!isMsgActive.value) return;
     if (msgTimer) {
@@ -1609,30 +1609,30 @@ const dismissMsgNotification = () => {
     }
 };
 
-// 鐐瑰嚮鐏靛姩宀涗笂鐨勯€氱煡锛氱珛鍗宠繑鍥為€氱煡寮瑰嚭鍓嶇姸鎬侊紝骞舵墦寮€鏉ユ簮搴旂敤
+// 点击灵动岛上的通知：立即返回通知弹出前状态，并打开来源应用
 const handleNotificationClick = async () => {
     const aumid = msgAumid.value;
-    // 鍏堝叧闂€氱煡鏄剧ず锛屾仮澶嶇伒鍔ㄥ矝鐘舵€?
+    // 先关闭通知显示，恢复灵动岛状�?
     dismissMsgNotification();
-    // 鍐嶅惎鍔ㄦ潵婧愬簲鐢?
+    // 再启动来源应�?
     if (aumid) {
         try {
             await invoke('launch_app_by_aumid', { aumid });
         } catch (e) {
-            console.error('鎵撳紑鏉ユ簮搴旂敤澶辫触:', e);
+            console.error('打开来源应用失败:', e);
         }
     }
 };
 
-// 鍔ㄧ敾閿佷笌绛夊緟闃熷垪鏍囧織
+// 动画锁与等待队列标志
 let isAnimationLocked = false;
 let isPendingCollapse = false;
 
-// 闊充箰鎺у埗鍣ㄨ嚜鍔ㄦ敹缂╂柟娉?
+// 音乐控制器自动收缩方�?
 const collapseMusic = () => {
     if (!isMusicExpanded.value && !isMusicExpanding.value) return;
 
-    // 銆愭牳蹇冮€昏緫銆戯細濡傛灉姝ｅ湪鐚涚儓灞曞紑涓紝缁濆涓嶆墦鏂紒鎶婃敹缂╄姹傛寕璧凤紝绛夊畠灞曞紑瀹岃嚜鍔ㄦ墽琛屻€?
+    // 【核心逻辑】：如果正在猛烈展开中，绝对不打断！把收缩请求挂起，等它展开完自动执行�?
     if (isAnimationLocked) {
         isPendingCollapse = true;
         return;
@@ -1640,21 +1640,21 @@ const collapseMusic = () => {
 
     isMusicExpanded.value = false;
     isMusicExpanding.value = false;
-    isPendingCollapse = false; // 娓呴櫎闃熷垪
+    isPendingCollapse = false; // 清除队列
 
     if (musicExpandAnimTimer) {
         clearTimeout(musicExpandAnimTimer);
         musicExpandAnimTimer = null;
     }
 
-    // 鎶樺彔鏃舵仮澶嶇敤鎴疯嚜瀹氫箟鐨勫搴︼紝鑰屼笉鏄娇鐢ㄩ粯璁ゅ搴?
+    // 折叠时恢复用户自定义的宽度，而不是使用默认宽�?
     const { h } = getBaseSize();
     const savedWidth = restoreIslandWidth();
     const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
     animateIslandSize(targetWidth, h);
 };
 
-// 闊充箰鎺у埗鍣ㄧ偣鍑诲睍寮€鏂规硶
+// 音乐控制器点击展开方法
 const expandMusic = (e: MouseEvent) => {
     if (Math.abs(e.clientX - mouseDownX) > 5 || Math.abs(e.clientY - mouseDownY) > 5) return;
     if ((e.target as HTMLElement).closest('.ctl-btn')) return;
@@ -1662,23 +1662,23 @@ const expandMusic = (e: MouseEvent) => {
     if (isMusicExpanded.value || isMusicExpanding.value) return;
 
     isMusicExpanding.value = true;
-    isPendingCollapse = false;  // 閲嶇疆寰呭姙浠诲姟
-    isAnimationLocked = true;   // 鈿?涓婇攣锛佸甯冭繘鍏ョ鍦ｄ笉鍙镜鐘殑灞曞紑鍛ㄦ湡
+    isPendingCollapse = false;  // 重置待办任务
+    isAnimationLocked = true;   // 上锁！宣布进入神圣不可侵犯的展开周期
 
-    // 1. 寮规€ф寜鍘嬪姩鐢?(鍏堝井寰彉灏?
+    // 1. 弹性按压动�?(先微微变�?
     animateIslandSize(245, 38);
 
-    // 2. 寤惰繜 120 姣鍚庯紝鎵撴柇缂╁皬锛岀洿鎺ョ寷鐑堝睍寮€
+    // 2. 延迟 120 毫秒后，打断缩小，直接猛烈展开
     musicExpandAnimTimer = window.setTimeout(() => {
         isMusicExpanded.value = true;
         isMusicExpanding.value = false;
         animateIslandSize(320, 150);
 
-        // 3. 鏍规嵁 Rust 绔殑寮圭哀琛板噺棰戠巼锛岀害 400ms 鍚庡姩鐢诲交搴曠粨鏉燂紝姝ゆ椂瑙ｉ攣
+        // 3. 根据 Rust 端的弹簧衰减频率，约 400ms 后动画彻底结束，此时解锁
         setTimeout(() => {
             isAnimationLocked = false;
 
-            // 妫€鏌ワ細濡傛灉鍦ㄥ睍寮€鐨勮繖 520ms 閲岋紝鐢ㄦ埛榧犳爣宸茬粡绉昏蛋浜嗭紝閭ｅ氨绔嬪埢琛ュ彂鏀剁缉鍛戒护锛?
+            // 检查：如果在展开的这 520ms 里，用户鼠标已经移走了，那就立刻补发收缩命令�?
             if (isPendingCollapse) {
                 isPendingCollapse = false;
                 collapseMusic();
@@ -1687,15 +1687,15 @@ const expandMusic = (e: MouseEvent) => {
     }, 120);
 };
 
-// 榧犳爣绂诲紑鐏靛姩宀涙椂锛氳嚜鍔ㄦ姌鍙犳垨鑷姩闅愯棌
+// 鼠标离开灵动岛时：自动折叠或自动隐藏
 const handleMouseLeave = () => {
-    // 娓呴櫎榧犳爣杈圭紭妫€娴嬬姸鎬?
+    // 清除鼠标边缘检测状�?
     mouseNearEdge.value = null;
     isMouseOver.value = false;
 
-    // 1. 鑷姩鎶樺彔閫昏緫锛氬綋鐏靛姩宀涘睍寮€鏃讹紝榧犳爣绂诲紑鍚庡欢杩熸姌鍙犲洖灏忓矝鐘舵€?
+    // 1. 自动折叠逻辑：当灵动岛展开时，鼠标离开后延迟折叠回小岛状�?
     if (isAutoCollapseEnabled.value && (isMusicExpanded.value || isMusicExpanding.value)) {
-        // 鍚姩鑷姩鎶樺彔瀹氭椂鍣?
+        // 启动自动折叠定时�?
         if (autoCollapseTimer) {
             clearTimeout(autoCollapseTimer);
             autoCollapseTimer = null;
@@ -1707,36 +1707,36 @@ const handleMouseLeave = () => {
         }, autoCollapseDelay.value);
     }
 
-    // 2. 鑷姩闅愯棌閫昏緫锛氬綋娌℃湁娲诲姩鏃讹紝寤惰繜闅愯棌鐏靛姩宀?
+    // 2. 自动隐藏逻辑：当没有活动时，延迟隐藏灵动�?
     if (!isAutoHideEnabled.value) {
         return;
     }
 
-    // 妫€鏌ユ槸鍚︽湁娲诲姩鐘舵€侊紙娑堟伅銆侀煶涔愬睍寮€銆佺郴缁熼€氱煡锛?
+    // 检查是否有活动状态（消息、音乐展开、系统通知�?
     const hasActivity = isMsgActive.value || isMusicExpanded.value || isMusicExpanding.value || displaySysToast.value;
     
-    // 濡傛灉鏈夋椿鍔紝涓嶈Е鍙戣嚜鍔ㄩ殣钘?
+    // 如果有活动，不触发自动隐�?
     if (hasActivity) {
         return;
     }
 
-    // 鍚姩鑷姩闅愯棌瀹氭椂鍣?
+    // 启动自动隐藏定时�?
     scheduleAutoHide();
 };
 
-// 榧犳爣閲嶆柊绉诲叆鐏靛姩宀涙椂锛氱珛鍒绘墦鏂敹缂╀紒鍥?
+// 鼠标重新移入灵动岛时：立刻打断收缩企�?
 const handleMouseEnter = () => {
-    // 濡傛灉涔嬪墠绉诲嚭鐣欎笅浜嗘敹缂╂搴曪紝浣嗗姩鐢昏繕娌℃挱瀹岄紶鏍囧張鍥炴潵浜嗭紝鐩存帴鍙栨秷杩欎釜妗堝簳
+    // 如果之前移出留下了收缩案底，但动画还没播完鼠标又回来了，直接取消这个案底
     isPendingCollapse = false;
     isMouseOver.value = true;
 
-    // 鍙栨秷鑷姩闅愯棌瀹氭椂鍣?
+    // 取消自动隐藏定时�?
     if (autoHideTimer) {
         clearTimeout(autoHideTimer);
         autoHideTimer = null;
     }
 
-    // 鍙栨秷鑷姩鎶樺彔瀹氭椂鍣?
+    // 取消自动折叠定时�?
     if (autoCollapseTimer) {
         clearTimeout(autoCollapseTimer);
         autoCollapseTimer = null;
@@ -1745,29 +1745,29 @@ const handleMouseEnter = () => {
 
 watch(displayMusic, (newVal: boolean) => {
     if (!newVal) {
-        collapseMusic(); // 涓€鏃﹂煶涔愬矝琚殣钘忥紙涓嶇鏄洜涓鸿疆鎹㈣繕鏄墜鍔ㄥ叧浜嗭級锛岀珛鍒绘敹缂?
+        collapseMusic(); // 一旦音乐岛被隐藏（不管是因为轮换还是手动关了），立刻收缩
     }
 });
 
-// 寮曞叆浣犵殑榛樿鍥炬爣浣滀负鍏滃簳
+// 引入你的默认图标作为兜底
 import defaultLogo from '../assets/logo.png';
 const currentMsgIcon = ref(defaultLogo);
 
-// 鍥炬爣鏄犲皠鍣?
+// 图标映射�?
 const getAppIcon = (appName: string) => {
     const name = appName.toLowerCase();
 
     if (name.includes('qq')) {
-        // 浣跨敤 new URL 璁?Vite 鐭ラ亾浣犺寮曞叆杩欎釜璧勬簮
+        // 使用 new URL �?Vite 知道你要引入这个资源
         return new URL('../assets/qq.png', import.meta.url).href;
     }
-    if (name.includes('閽夐拤') || name.includes('dingtalk')) {
+    if (name.includes('钉钉') || name.includes('dingtalk')) {
         return new URL('../assets/dingtalk.png', import.meta.url).href;
     }
-    if (name.includes('mail') || name.includes('閭欢')) {
+    if (name.includes('mail') || name.includes('邮件')) {
         return new URL('../assets/mail.png', import.meta.url).href;
     }
-    if (name.includes('wechat') || name.includes('寰俊')) {
+    if (name.includes('wechat') || name.includes('微信')) {
         return new URL('../assets/wechat.png', import.meta.url).href;
     }
 
@@ -1775,7 +1775,7 @@ const getAppIcon = (appName: string) => {
 };
 
 onMounted(async () => {
-    // widget 鍙兘鍦ㄤ富闈㈡澘鏈垱寤烘垨鐪佸唴瀛橀攢姣佸悗鐙珛杩愯锛岄渶鑷鎭㈠鐩爣鎾斁鍣ㄣ€?
+    // widget 可能在主面板未创建或省内存销毁后独立运行，需自行恢复目标播放器�?
     await invoke('set_target_player', {
         player: localStorage.getItem(NSD_TARGET_PLAYER) || 'netease',
     }).catch(() => {});
@@ -1784,31 +1784,31 @@ onMounted(async () => {
 
     document.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-    }, { capture: true }); // 浣跨敤鎹曡幏闃舵锛岀‘淇濆厛浜?Tauri 搴曞眰鎷︽埅
+    }, { capture: true }); // 使用捕获阶段，确保先于 Tauri 底层拦截
 
-    // 闊充箰鎺у埗鍣ㄧ姸鎬佺洃鍚櫒
+    // 音乐控制器状态监听器
     await listen<{ enabled: boolean }>('control-music-ctl', (event) => {
         const isEnabled = event.payload.enabled;
         isMusicCtlEnabled.value = isEnabled;
 
         if (isEnabled) {
-            // 鍒ゆ柇鏄笉鏄?棣栨"锛堟湰鍦版湁娌℃湁瀛樿繃娴佸厜杈规鐨勬暟鎹級
+            // 判断是不�?首次"（本地有没有存过流光边框的数据）
             if (localStorage.getItem(NSD_GLOW_BORDER) === null) {
-                isGlowBorderEnabled.value = true; // 鑷姩寮€鍚祦鍏夎竟妗?
-                localStorage.setItem(NSD_GLOW_BORDER, 'true'); // 瀛樺叆璁板繂锛屼互鍚庡氨涓嶇畻"棣栨"浜?
+                isGlowBorderEnabled.value = true; // 自动开启流光边框
+                localStorage.setItem(NSD_GLOW_BORDER, 'true'); // 存入记忆，以后就不算"首次"了
             }
 
             showInfo.value = false;
             musicBoxKey.value++;
             
-            // 闊充箰鎾斁鍣ㄦā寮忥細寮€鍚椂濡傛灉娌℃湁闊充箰鎾斁锛岄殣钘忕伒鍔ㄥ矝锛堢被浼奸€氱煡妯″紡锛?
+            // 音乐播放器模式：开启时如果没有音乐播放，隐藏灵动岛（类似通知模式�?
             if (!isPlaying.value && isIslandVisible.value && !isMouseOver.value) {
                 scheduleAutoHide();
             }
         }
     });
 
-    // 鐩戝惉绯荤粺搴曞眰浜嬩欢锛堥煶閲忋€佺數婧愶級
+    // 监听系统底层事件（音量、电源）
     await listen<string>('system-event', (event) => {
         showToast(event.payload, 'sys');
     });
@@ -1817,51 +1817,51 @@ onMounted(async () => {
         const { state, percent } = event.payload;
 
         if (state === 'charging') {
-            showToast(`宸叉帴鍏ョ數婧愶紝褰撳墠鐢甸噺 ${percent}%`, 'battery-charge');
+            showToast(`已接入电源，当前电量 ${percent}%`, 'battery-charge');
         } else if (state === 'discharging' && percent <= 20) {
-            // 杩欓噷杩樺彲浠ュ姞鍏ラ槻鎶栵細鍙湪鍒氭帀鍒?20%銆?0%銆?% 绛夊叧閿妭鐐硅Е鍙戜竴娆★紝閬垮厤鐤媯寮圭獥
-            showToast(`鐢垫睜鐢甸噺浣庯紝鍓╀綑 ${percent}%`, 'battery-low');
+            // 这里还可以加入防抖：只在刚掉�?20%�?0%�?% 等关键节点触发一次，避免疯狂弹窗
+            showToast(`电池电量低，剩余 ${percent}%`, 'battery-low');
         }
     });
 
-    // 鐩戝惉鏉ヨ嚜鎺у埗鍙扮殑閫忔槑搴﹀悓姝ユ寚浠?
+    // 监听来自控制台的透明度同步指�?
     await listen<{ opacity: number }>('control-island-opacity', (event) => {
         islandOpacity.value = event.payload.opacity;
     });
 
-    // 鐩戝惉鏉ヨ嚜鎺у埗鍙扮殑涓婚鍚屾鎸囦护
+    // 监听来自控制台的主题同步指令
     await listen<{ theme: string }>('control-island-theme', (event) => {
         islandTheme.value = event.payload.theme;
     });
 
-    // 鐩戝惉缃簬浠诲姟鏍忓紑鍏?
+    // 监听置于任务栏开�?
     await listen<{ enabled: boolean }>('control-pin-taskbar', async (event) => {
         isPinnedToTaskbar.value = event.payload.enabled;
         if (isPinnedToTaskbar.value) {
-            await snapToBottomLeft(); // 寮€鍚椂锛氶鍒板乏涓嬭
+            await snapToBottomLeft(); // 开启时：飞到左下角
         } else {
-            await adjustWindowPosition(); // 鍏抽棴鏃讹細绛夊悓浜庣偣鍑?閲嶇疆浣嶇疆"锛岄鍥為《閮ㄥ眳涓?
+            await adjustWindowPosition(); // 关闭时：等同于点"重置位置"，飞回顶部居�?
         }
-        // 濡傛灉浣嶇疆宸查攣瀹氾紝妯″紡鍒囨崲鍚庨噸鏂颁繚瀛樻柊浣嶇疆锛堥伩鍏嶄笅娆″惎鍔ㄦ仮澶嶅埌杩囨湡鍧愭爣锛?
+        // 如果位置已锁定，模式切换后重新保存新位置（避免下次启动恢复到过期坐标�?
         if (isPositionLocked.value) {
             await saveIslandPosition();
         }
     });
 
-    // 鐩戝惉鏉ヨ嚜璁剧疆闈㈡澘鐨勪綅缃攣瀹氫俊鍙?
+    // 监听来自设置面板的位置锁定信�?
     await listen<{ locked: boolean }>('control-position-lock', async (event) => {
         isPositionLocked.value = event.payload.locked;
-        // 閿佸畾鏃朵繚瀛樺綋鍓嶄綅缃紝浠ヤ究涓嬫鍚姩鎭㈠
+        // 锁定时保存当前位置，以便下次启动恢复
         if (isPositionLocked.value) {
             await saveIslandPosition();
         }
     });
 
-    // 鐩戝惉娑堟伅妯″紡寮€鍏?
+    // 监听消息模式开�?
     await listen<{ enabled: boolean }>('control-msg-mode', async (event) => {
         isMsgModeEnabled.value = event.payload.enabled;
         if (isMsgModeEnabled.value && !isMsgActive.value) {
-            // 濡傛灉寮€鍚簡娑堟伅妯″紡锛屽苟涓斿綋鍓嶆病鏈夋秷鎭紝寤惰繜闅愯棌
+            // 如果开启了消息模式，并且当前没有消息，延迟隐藏
             if (autoHideTimer) {
                 clearTimeout(autoHideTimer);
                 autoHideTimer = null;
@@ -1873,27 +1873,27 @@ onMounted(async () => {
                 }
             }, autoHideDelay.value);
         } else if (!isMsgModeEnabled.value) {
-            // 濡傛灉鍏抽棴浜嗘秷鎭ā寮忥紝绔嬪埢鎭㈠鏄剧ず
+            // 如果关闭了消息模式，立刻恢复显示
             await getCurrentWindow().show();
             isIslandVisible.value = true;
 
-            // 閫氱煡鎺у埗鍙版仮澶嶅紑鍏崇姸鎬侊紝璁╀富闈㈡澘鐨勫紑鍏冲悓姝ュ彉缁匡紙寮€鍚級
+            // 通知控制台恢复开关状态，让主面板的开关同步变绿（开启）
             await emit('island-status-sync', { visible: true });
         }
     });
 
-    // 鐩戝惉杞崲妯″紡寮€鍏?
+    // 监听轮换模式开�?
     await listen<{ enabled: boolean }>('control-rotation-mode', (event) => {
         isRotationEnabled.value = event.payload.enabled;
         if (isRotationEnabled.value) {
             startRotation();
         } else {
             stopRotation();
-            currentRotIndex.value = 0; // 鍏抽棴鏃堕噸缃洖缃戦€?
+            currentRotIndex.value = 0; // 关闭时重置回网速
         }
     });
 
-    // 鐩戝惉鑷姩闅愯棌璁剧疆
+    // 监听自动隐藏设置
     await listen<{ enabled: boolean, delay: number }>('control-auto-hide', (event) => {
         isAutoHideEnabled.value = event.payload.enabled;
         autoHideDelay.value = event.payload.delay;
@@ -1901,7 +1901,7 @@ onMounted(async () => {
         localStorage.setItem(NSD_AUTO_HIDE_DELAY, String(autoHideDelay.value));
     });
 
-    // 鐩戝惉鑷姩鎶樺彔璁剧疆
+    // 监听自动折叠设置
     await listen<{ enabled: boolean, delay: number }>('control-auto-collapse', (event) => {
         isAutoCollapseEnabled.value = event.payload.enabled;
         autoCollapseDelay.value = event.payload.delay;
@@ -1909,39 +1909,39 @@ onMounted(async () => {
         localStorage.setItem(NSD_AUTO_COLLAPSE_DELAY, String(autoCollapseDelay.value));
     });
 
-    // 鍚姩鏃跺鏋滃紑浜嗚疆鎹紝灏辫窇璧锋潵
+    // 启动时如果开了轮换，就跑起来
     if (isRotationEnabled.value) {
         startRotation();
     }
 
-    // 鍒濆鍖栦綅缃拷韪?
+    // 初始化位置追�?
     const appWindow = getCurrentWindow();
     try {
         await appWindow.innerPosition();
     } catch (e) { }
 
-    // 鍦ㄥ惎鍔ㄨ皟鏁翠綅缃墠锛屾牴鎹綋鍓嶇殑瀹為檯鐘舵€侊紝鏍″噯鍒濆瀹介珮
+    // 在启动调整位置前，根据当前的实际状态，校准初始宽高
     const { w, h } = getBaseSize();
-    // 浼樺厛鎭㈠鐢ㄦ埛鑷畾涔夌殑瀹藉害
+    // 优先恢复用户自定义的宽度
     const savedWidth = restoreIslandWidth();
     currentWidth.value = savedWidth !== null ? savedWidth : w;
     currentHeight.value = h;
 
-    // 绔嬪嵆璁剧疆绐楀彛澶у皬锛岀‘淇濆搴︽仮澶嶇敓鏁?
+    // 立即设置窗口大小，确保宽度恢复生�?
     try {
         const appWindow = getCurrentWindow();
         const scaleFactor = window.devicePixelRatio;
         await appWindow.setSize(new PhysicalSize(Math.ceil(currentWidth.value * scaleFactor), Math.ceil(currentHeight.value * scaleFactor)));
     } catch (error) {
-        console.error('璁剧疆鍒濆绐楀彛澶у皬澶辫触:', error);
+        console.error('设置初始窗口大小失败:', error);
     }
 
-    // 鏍规嵁鏈湴璁板綍鍐冲畾鍚姩鏃跺嚭鐜板湪鍝?
+    // 根据本地记录决定启动时出现在�?
     if (isPositionLocked.value) {
-        // 宸查攣瀹氫綅缃細灏濊瘯鎭㈠涓婃淇濆瓨鐨勫潗鏍?
+        // 已锁定位置：尝试恢复上次保存的坐�?
         const restored = await restoreIslandPosition();
         if (!restored) {
-            // 娌℃湁淇濆瓨杩囦綅缃紝鍥為€€鍒伴粯璁ゅ畾浣?
+            // 没有保存过位置，回退到默认定�?
             if (isPinnedToTaskbar.value) {
                 await snapToBottomLeft();
             } else {
@@ -1949,7 +1949,7 @@ onMounted(async () => {
             }
         }
     } else {
-        // 鏈攣瀹氾細浣跨敤榛樿瀹氫綅
+        // 未锁定：使用默认定位
         if (isPinnedToTaskbar.value) {
             await snapToBottomLeft();
         } else {
@@ -1957,14 +1957,14 @@ onMounted(async () => {
         }
     }
 
-    // 鍏堟樉绀洪€忔槑鐨?Tauri 绐楀彛锛屽啀瑙﹀彂 Vue 鐨勭伒鍔ㄥ矝鍏ュ満寮圭哀鍔ㄧ敾
-    // 濡傛灉娌″紑娑堟伅妯″紡锛屾墠鍦ㄥ惎鍔ㄦ椂鐩存帴鏄剧ず鐏靛姩宀?
+    // 先显示透明�?Tauri 窗口，再触发 Vue 的灵动岛入场弹簧动画
+    // 如果没开消息模式，才在启动时直接显示灵动�?
     if (!isMsgModeEnabled.value) {
         await getCurrentWindow().show();
         isIslandVisible.value = true;
     }
 
-    // 鐩戝惉鏉ヨ嚜鎺у埗鍙扮殑绯荤粺纭欢鐩戞帶寮€鍏?
+    // 监听来自控制台的系统硬件监控开�?
     await listen<{ enabled: boolean }>('control-hardware-mon', (event) => {
         isHardwareMonEnabled.value = event.payload.enabled;
     });
@@ -1972,30 +1972,30 @@ onMounted(async () => {
     fetchSpeedStats();
     checkNetworkLatency();
 
-    // 鍚姩缃戦€熷拰纭欢鏄剧ず杞崲瀹氭椂鍣?(姣?5 绉掑垏鎹竴娆?
+    // 启动网速和硬件显示轮换定时�?(�?5 秒切换一�?
     speedCycleTimer = window.setInterval(() => {
-        // 缃戦€熻疆鎹?
+        // 网速轮�?
         if (displaySpeed.value) {
             isShowingUpload.value = !isShowingUpload.value;
         }
-        // 纭欢杞崲
+        // 硬件轮换
         if (displayHardware.value) {
             isShowingCPU.value = !isShowingCPU.value;
         }
     }, 5000);
 
-    // 鍦ㄤ綘鍘熸湁鐨勬瘡绉掑埛鏂板畾鏃跺櫒涓紝椤哄甫鎵ц闊充箰鍚屾
-    // 1. 楂橀瀹氭椂鍣細涓撻棬璐熻矗缃戦€熷拰纭欢鐩戞帶锛堟瘡 500ms ~ 1000ms 鍒锋柊涓€娆★級
+    // 在你原有的每秒刷新定时器中，顺带执行音乐同步
+    // 1. 高频定时器：专门负责网速和硬件监控（每 500ms ~ 1000ms 刷新一次）
     speedTimer = setInterval(async () => {
-        // 寮虹疆椤堕€昏緫锛堟嫋鎷戒腑璺宠繃锛岄伩鍏嶄笌 setPosition 鍐茬獊锛?
+        // 强置顶逻辑（拖拽中跳过，避免与 setPosition 冲突�?
         if (isPinnedToTaskbar.value && isIslandVisible.value && !isMenuOpen.value && !isCustomDragging) {
             invoke('force_window_topmost').catch(() => { });
         }
 
-        // 鍒锋柊缃戦€?
+        // 刷新网�?
         fetchSpeedStats();
 
-        // 鍒锋柊纭欢鐘舵€?
+        // 刷新硬件状�?
         if (isHardwareMonEnabled.value || isRotationEnabled.value) {
             try {
                 const [cpu, usedMem, totalMem] = await invoke<[number, number, number]>('get_hardware_stats');
@@ -2004,13 +2004,13 @@ onMounted(async () => {
                     memUsage.value = Math.round((usedMem / totalMem) * 100) + '%';
                 }
             } catch (err) {
-                console.error('鑾峰彇纭欢淇℃伅澶辫触:', err);
+                console.error('获取硬件信息失败:', err);
             }
         }
     }, 800) as unknown as number;
 
 
-    // 2. 涓瀹氭椂鍣細涓撻棬璐熻矗闊充箰鐘舵€佸悓姝ワ紙姣?2000ms 鍒锋柊涓€娆″嵆鍙級
+    // 2. 中频定时器：专门负责音乐状态同步（�?2000ms 刷新一次即可）
     musicTimer = setInterval(() => {
         if (isMusicCtlEnabled.value || isRotationEnabled.value) {
             syncMusicStatus();
@@ -2018,7 +2018,7 @@ onMounted(async () => {
     }, 2000);
 
 
-    // 3. 浣庨瀹氭椂鍣細涓撻棬杞绯荤粺閫氱煡锛堥€氱煡涓嶉渶瑕佹姠鏃堕棿锛?.5绉掓崲鏉ユ瀬浣庣殑璧勬簮鍗犵敤锛?
+    // 3. 低频定时器：专门轮询系统通知（通知不需要抢时间�?.5秒换来极低的资源占用�?
     notifyTimer = setInterval(async () => {
         const enabled = localStorage.getItem(NSD_MSG_NOTIFY) === 'true';
         if (!enabled) return;
@@ -2028,18 +2028,18 @@ onMounted(async () => {
             if (res) {
                 msgAumid.value = res.aumid;
 
-                // 鏍囬鍙瓨鍙戦€佽€咃紙濡傛灉娌℃湁鍗曠嫭鏍囬灏辨樉绀?'鏂伴€氱煡'锛?
-                msgTitle.value = (res.title && res.title !== res.app_name) ? res.title : '鏂伴€氱煡';
-                // 鍗曠嫭鎶婄▼搴忓悕瀛樿捣鏉?
+                // 标题只存发送者（如果没有单独标题就显�?'新通知'�?
+                msgTitle.value = (res.title && res.title !== res.app_name) ? res.title : '新通知';
+                // 单独把程序名存起�?
                 msgAppName.value = res.app_name;
-                // 鍐呭鍏滃簳閫昏緫淇濇寔涓嶅彉
-                msgBody.value = res.body || (res.title === res.app_name ? '鏀跺埌涓€鏉℃柊閫氱煡' : res.title);
+                // 内容兜底逻辑保持不变
+                msgBody.value = res.body || (res.title === res.app_name ? '收到一条新通知' : res.title);
 
                 currentMsgIcon.value = getAppIcon(res.app_name);
 
                 if (!isMsgActive.value) {
                     isMsgActive.value = true;
-                    // 鑷姩鎭㈠鏄剧ず锛氬綋鏈夋秷鎭椿鍔ㄦ椂锛屽鏋滅伒鍔ㄥ矝琚殣钘忥紝鍒欒嚜鍔ㄦ仮澶嶆樉绀?
+                    // 自动恢复显示：当有消息活动时，如果灵动岛被隐藏，则自动恢复显�?
                     if (!isIslandVisible.value) {
                         getCurrentWindow().show();
                         isIslandVisible.value = true;
@@ -2070,38 +2070,38 @@ onMounted(async () => {
         }
     }, 2500);
 
-    // 璋冨ぇPing闂撮殧锛氫粠2.5绉掕皟澶у埌5.5绉?
+    // 调大Ping间隔：从2.5秒调大到5.5�?
     pingTimer = setInterval(checkNetworkLatency, 5500) as unknown as number;
 
-    // 鐩戝惉鎺у埗鍙板彂鏉ョ殑鏄鹃殣璋冨害鎸囦护
+    // 监听控制台发来的显隐调度指令
     await listen<{ show: boolean }>('control-island-visibility', async (event) => {
         if (event.payload.show) {
-            // 1. 鍏堣閫忔槑鐨?OS 绐楀彛瀹瑰櫒鏄剧ず锛屾鏃跺唴閮?DOM 涓?v-show="false"锛岃瑙変笂浠嶆槸闅愬舰鐨?
+            // 1. 先让透明�?OS 窗口容器显示，此时内�?DOM �?v-show="false"，视觉上仍是隐形�?
             await getCurrentWindow().show();
             await getCurrentWindow().setAlwaysOnTop(true);
-            // 2. 缁欎簣 40ms 鐨勬祻瑙堝櫒娓叉煋甯х紦鍐诧紝鍐嶆挄寮€ Vue 鐨?v-show 鐘舵€侊紝寮哄埗瑙﹀彂 enter 鍔ㄧ敾
+            // 2. 给予 40ms 的浏览器渲染帧缓冲，再撕开 Vue �?v-show 状态，强制触发 enter 动画
             setTimeout(() => {
                 isIslandVisible.value = true;
             }, 40);
         } else {
-            // 鎺у埗鍙板叧闂寚浠?-> 瑙﹀彂甯歌绂诲紑鍔ㄧ敾
+            // 控制台关闭指�?-> 触发常规离开动画
             isIslandVisible.value = false;
         }
     });
 
-    // 瀹炴椂鐩戝惉鏉ヨ嚜 Rust 搴曞眰鍙戞潵鐨勬竻閫忓儚绱犳祦锛屾棤缂濆悓姝ョ粰 Vue 鐨勫搷搴斿紡 DOM 瀹介珮
+    // 实时监听来自 Rust 底层发来的清透像素流，无缝同步给 Vue 的响应式 DOM 宽高
     await listen<number[]>("island-resize", (event) => {
         const [w, h] = event.payload;
         currentWidth.value = w;
         currentHeight.value = h;
     });
 
-    // B8: 鐩戝惉鍚庣鎺ㄦ潵鐨勯璋辨暟鎹紙鏇夸唬 50ms setInterval 杞锛屾樉钁楀噺灏?IPC 璋冪敤娆℃暟锛?
+    // B8: 监听后端推来的频谱数据（替代 50ms setInterval 轮询，显著减�?IPC 调用次数�?
     await listen<number[]>("spectrum-data", (event) => {
         spectrumData.value = event.payload;
     });
 
-    // 鍒濆鍖栨椂瑙﹀彂涓€娆¤绠?
+    // 初始化时触发一次计�?
     setTimeout(() => {
         calculateScroll();
     }, 700);
@@ -2109,7 +2109,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
     window.removeEventListener('blur', collapseMusic);
-    // 娓呯悊鑷畾涔夋í鍚戞嫋鎷界殑鏂囨。绾х洃鍚櫒
+    // 清理自定义横向拖拽的文档级监听器
     document.removeEventListener('mousemove', handleCustomDragMove);
     document.removeEventListener('mouseup', handleCustomDragEnd);
     clearInterval(speedTimer);
@@ -2118,7 +2118,7 @@ onUnmounted(() => {
     clearInterval(musicTimer);
     clearInterval(notifyTimer);
     stopProgressTimer();
-    // 缁勪欢鍗歌浇鏃跺叧闂璋辨崟鑾凤紝閬垮厤鍚庣绌鸿窇
+    // 组件卸载时关闭频谱捕获，避免后端空跑
     invoke('set_spectrum_active', { active: false }).catch(() => {});
     if (speedCycleTimer) clearInterval(speedCycleTimer);
 });
@@ -2147,11 +2147,11 @@ onUnmounted(() => {
     border: none !important;
 }
 
-/* 澶栧眰鍖呰９灞傦細璐熻矗瑁佸垏澶氫綑鐨勬祦鍏?*/
+/* 外层包裹层：负责裁切多余的流�?*/
 .island-container {
-    /* 绉婚櫎 position: absolute; top: 0; */
+    /* 移除 position: absolute; top: 0; */
     margin: 0 auto;
-    /* 璁╁畠鍦ㄧ獥鍙ｅ唴姘村钩灞呬腑 */
+    /* 让它在窗口内水平居中 */
     border-radius: 100px;
     display: flex;
     align-items: center;
@@ -2168,28 +2168,28 @@ onUnmounted(() => {
     contain: strict;
 }
 
-/* 闅愯棌鍦ㄥ簳灞傜殑宸ㄥぇ鏃嬭浆娓愬彉灞?*/
+/* 隐藏在底层的巨大旋转渐变�?*/
 .rainbow-border-glow {
     position: absolute;
     width: 500px;
     height: 500px;
 
-    /* 淇鏃嬭浆涓績鍋忕Щ闂 */
+    /* 修正旋转中心偏移问题 */
     top: calc(50% - 250px);
     left: calc(50% - 250px);
 
     z-index: 1;
 
-    /* 閲嶆柊缁樺埗鐨勫畬缇庡绉扮幆褰㈡笎鍙橈紝娓呴€忎笉鍙戣剰 */
+    /* 重新绘制的完美对称环形渐变，清透不发脏 */
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='500'%3E%3Cdefs%3E%3Cfilter id='b' x='-50%25' y='-50%25' width='200%25' height='200%25'%3E%3CfeGaussianBlur in='SourceGraphic' stdDeviation='60'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23b)'%3E%3Ccircle cx='250' cy='90' r='150' fill='%23ff3b30'/%3E%3Ccircle cx='390' cy='170' r='150' fill='%23ff9500'/%3E%3Ccircle cx='390' cy='330' r='150' fill='%234cd964'/%3E%3Ccircle cx='250' cy='410' r='150' fill='%23007aff'/%3E%3Ccircle cx='110' cy='330' r='150' fill='%235856d6'/%3E%3Ccircle cx='110' cy='170' r='150' fill='%23ff2d55'/%3E%3C/g%3E%3C/svg%3E");
     background-size: cover;
 
-    /* 10绉掍竴鍦堝垰鍒氬ソ锛屾煍鍜屼笖涓嶆€庝箞鍚?GPU */
+    /* 10秒一圈刚刚好，柔和且不怎么�?GPU */
     animation: rainbow-rotate 10s linear infinite;
     will-change: transform;
 }
 
-/* 鏍稿績閬僵鍐呭鍧楋細鎸″湪鏃嬭浆娓愬彉灞傜殑涓婃柟 */
+/* 核心遮罩内容块：挡在旋转渐变层的上方 */
 .island-core-content {
     position: relative;
     z-index: 2;
@@ -2204,7 +2204,7 @@ onUnmounted(() => {
     overflow: hidden;
 }
 
-/* 椤烘椂閽堝寑閫熸棆杞?*/
+/* 顺时针匀速旋�?*/
 @keyframes rainbow-rotate {
     from {
         transform: rotate(0deg);
@@ -2224,7 +2224,7 @@ onUnmounted(() => {
     cursor: grabbing;
 }
 
-/* 淇敼缃戦€熺洅瀛愬竷灞€锛屽己鍒堕潬宸︼紝骞跺姞鍏ュ乏渚у唴杈硅窛 */
+/* 修改网速盒子布局，强制靠左，并加入左侧内边距 */
 .speed-box {
     position: absolute;
     left: 0;
@@ -2240,14 +2240,14 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     gap: 6px;
-    /* 绋嶅井鎷夊紑绠ご鍜屾暟瀛楃殑璺濈 */
+    /* 稍微拉开箭头和数字的距离 */
     transform: translateY(-1px);
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
 }
 
 .label {
     font-size: 10px;
-    /* 绋嶅井璋冨ぇ绠ご */
+    /* 稍微调大箭头 */
     color: currentColor;
     opacity: 0.5;
     font-weight: 800;
@@ -2255,10 +2255,10 @@ onUnmounted(() => {
     border-radius: 4px;
     transition: all 0.3s ease;
     background: rgba(150, 150, 150, 0.15);
-    /* 榛樿缁欎竴涓贰娣＄殑搴曡壊锛屽鍔犺川鎰?*/
+    /* 默认给一个淡淡的底色，增加质�?*/
 }
 
-/* 楂樻祦閲忔椂鐨?label 鏍峰紡 */
+/* 高流量时�?label 样式 */
 .label.high-traffic {
     color: currentColor;
     opacity: 1;
@@ -2279,7 +2279,7 @@ onUnmounted(() => {
     text-align: left;
 }
 
-/* 缃戦€熻疆鎹㈢殑娣″叆娣″嚭鍔ㄧ敾 */
+/* 网速轮换的淡入淡出动画 */
 .speed-fade-enter-active,
 .speed-fade-leave-active {
     transition: opacity 0.3s ease, transform 0.3s ease;
@@ -2288,13 +2288,13 @@ onUnmounted(() => {
 .speed-fade-enter-from {
     opacity: 0;
     transform: translateY(4px);
-    /* 寰井浠庝笅鏂规粦鍏?*/
+    /* 微微从下方滑�?*/
 }
 
 .speed-fade-leave-to {
     opacity: 0;
     transform: translateY(-4px);
-    /* 寰井鍚戜笂婊戝嚭 */
+    /* 微微向上滑出 */
 }
 
 .status-dot {
@@ -2304,7 +2304,7 @@ onUnmounted(() => {
     transition: background-color 0.4s ease;
 }
 
-/* 鍘绘帀鍙戝厜闃村奖锛屾敼涓虹函绮圭殑鎵佸钩鍖栧渾鐐癸紝骞插噣鍒╄惤 */
+/* 去掉发光阴影，改为纯粹的扁平化圆点，干净利落 */
 .good {
     background-color: #34C759;
 }
@@ -2317,11 +2317,11 @@ onUnmounted(() => {
     background-color: #FF3B30;
 }
 
-/* 璁╀袱涓洅瀛愯劚绂诲郊姝ょ殑褰卞搷锛屽湪鍚屼竴涓寘瑁瑰眰鍐呭畬缇庣殑鈥滈噸鍙犫€濇斁缃?*/
+/* 让两个盒子脱离彼此的影响，在同一个包裹层内完美的“重叠”放�?*/
 .music-ctl-box,
 .speed-box {
     position: absolute;
-    /* 鏀逛负缁濆瀹氫綅锛屽疄鐜版棤缂濆钩鏇?*/
+    /* 改为绝对定位，实现无缝平�?*/
     left: 0;
     top: 0;
     display: flex;
@@ -2334,7 +2334,7 @@ onUnmounted(() => {
     justify-content: flex-start;
 }
 
-/* 澧炲姞缁熶竴鐨勫唴閮ㄧ粷瀵瑰畾浣嶅钩鏇垮寘瑁瑰眰 */
+/* 增加统一的内部绝对定位平替包裹层 */
 .inner-wrapper {
     position: relative;
     flex-grow: 1;
@@ -2361,7 +2361,7 @@ onUnmounted(() => {
     transform: translateX(-8px);
 }
 
-/* 浜壊妯″紡涓嬬殑澶栫幆棰滆壊鑷姩鍙樻殫 */
+/* 亮色模式下的外环颜色自动变暗 */
 :deep(.island-container[style*="background-color: rgba(255, 255, 255"]) .album-cover {
     border-color: rgba(0, 0, 0, 0.15);
 }
@@ -2370,7 +2370,7 @@ onUnmounted(() => {
     transform: scale(1.08) translateX(-8px);
 }
 
-/* 灏侀潰鍐呴儴缁戝畾鑳屾櫙鍥剧殑 div */
+/* 封面内部绑定背景图的 div */
 .cover-inner {
     width: 100%;
     height: 100%;
@@ -2380,13 +2380,13 @@ onUnmounted(() => {
     transition: background-image 0.3s ease;
     animation: rotate 8s linear infinite;
     animation-play-state: paused;
-    /* 榛樿璁╁姩鐢诲浜庢殏鍋滅姸鎬?*/
+    /* 默认让动画处于暂停状�?*/
 }
 
-/* 姝ｅ湪鎾斁鏃剁殑鏃嬭浆鍔ㄧ敾 */
+/* 正在播放时的旋转动画 */
 .is-playing .cover-inner {
     animation-play-state: running;
-    /* 褰撴湁鎾斁鐘舵€佹椂锛岃鍔ㄧ敾璺戣捣鏉?*/
+    /* 当有播放状态时，让动画跑起�?*/
 }
 
 @keyframes rotate {
@@ -2425,7 +2425,7 @@ onUnmounted(() => {
     -webkit-app-region: no-drag;
 }
 
-/* 鍙湁鍦?hover 鐨勬椂鍊欐墠鍑虹幇鑳屾櫙鑹?*/
+/* 只有�?hover 的时候才出现背景�?*/
 .ctl-btn:hover {
     background-color: rgba(255, 255, 255, 0.15);
 }
@@ -2445,13 +2445,13 @@ onUnmounted(() => {
     pointer-events: none;
 }
 
-/* 鎾斁閿◢寰瘮鍒囨瓕閿ぇ涓€鐐圭偣锛岀獊鍑鸿瑙変腑蹇?*/
+/* 播放键稍微比切歌键大一点点，突出视觉中�?*/
 .play-btn svg {
     width: 20px;
     height: 20px;
 }
 
-/* 鎺т欢鏄鹃殣娣″叆娣″嚭鍔ㄧ敾杩囨浮 */
+/* 控件显隐淡入淡出动画过渡 */
 .fade-enter-active,
 .fade-leave-active {
     transition: opacity 0.25s ease;
@@ -2462,7 +2462,7 @@ onUnmounted(() => {
     opacity: 0;
 }
 
-/* 姝屾洸淇℃伅閬僵瀹瑰櫒锛氭尐鐫€灏侀潰闈犲乏锛屽崰鎹彸渚у墿浣欑┖闂?*/
+/* 歌曲信息遮罩容器：挨着封面靠左，占据右侧剩余空�?*/
 .music-info-mask-box {
     position: absolute;
     left: 30px;
@@ -2478,19 +2478,19 @@ onUnmounted(() => {
     -webkit-mask-image: linear-gradient(to right, #000000 75%, transparent 100%);
 }
 
-/* 姝屾洸鏂囨湰鍩虹鏍峰紡 */
+/* 歌曲文本基础样式 */
 .music-info-text {
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
     font-size: 12.5px;
     font-weight: 500;
     white-space: nowrap;
-    /* 寮哄埗鍗曡涓嶆崲琛?*/
+    /* 强制单行不换�?*/
     overflow: hidden;
     color: inherit;
     opacity: 0.9;
 }
 
-/* 鐏靛姩宀涙秷鎭€氱煡鏍峰紡 */
+/* 灵动岛消息通知样式 */
 .msg-box {
     position: absolute;
     left: 0;
@@ -2507,7 +2507,7 @@ onUnmounted(() => {
     transition: opacity 0.15s ease;
 }
 
-/* F11 閫氱煡鍙偣鍑伙細hover 鏃剁粰涓€鐐硅瑙夊弽棣?*/
+/* F11 通知可点击：hover 时给一点视觉反�?*/
 .msg-box:hover {
     opacity: 0.8;
 }
@@ -2516,7 +2516,7 @@ onUnmounted(() => {
     opacity: 0.65;
 }
 
-/* 棰勫埗娑堟伅鍥炬爣/澶村儚鏍峰紡 */
+/* 预制消息图标/头像样式 */
 .msg-avatar {
     width: 35px;
     height: 35px;
@@ -2537,7 +2537,7 @@ onUnmounted(() => {
     object-fit: cover;
 }
 
-/* 鏂囨湰闈犲乏瀵归綈鍖呰９灞?*/
+/* 文本靠左对齐包裹�?*/
 .msg-text-wrapper {
     display: flex;
     flex-direction: column;
@@ -2547,7 +2547,7 @@ onUnmounted(() => {
     flex-grow: 1;
 }
 
-/* 娑堟伅寮圭獥瀹瑰櫒 */
+/* 消息弹窗容器 */
 .msg-title {
     display: flex;
     align-items: center;
@@ -2559,14 +2559,14 @@ onUnmounted(() => {
     overflow: hidden;
 }
 
-/* 鍙戦€佽€呮樀绉帮紙鍏佽瓒呴暱鐪佺暐鍙凤級 */
+/* 发送者昵称（允许超长省略号） */
 .sender-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-/* 灏鹃儴鐨勭▼搴忓悕 */
+/* 尾部的程序名 */
 .app-name {
     font-size: 10.5px;
     font-weight: 600;
@@ -2580,7 +2580,7 @@ onUnmounted(() => {
     transform: translateY(-0.5px);
 }
 
-/* 璋冨ぇ鍚庣殑鍐呭鏍峰紡 */
+/* 调大后的内容样式 */
 .msg-body {
     font-size: 12.5px;
     line-height: 1.4;
@@ -2597,7 +2597,7 @@ onUnmounted(() => {
 }
 
 
-/* 闊充箰寰嬪姩棰戣氨鏍峰紡 */
+/* 音乐律动频谱样式 */
 .audio-spectrum {
     display: flex;
     align-items: center;
@@ -2607,14 +2607,14 @@ onUnmounted(() => {
     padding-right: 2px;
 }
 
-/* 鏆傚仠鐘舵€佷笅鐨勭珫绾匡紙缁熶竴楂樺害锛?*/
+/* 暂停状态下的竖线（统一高度�?*/
 .audio-spectrum .bar {
     width: 2px;
     height: 18px;
     background-color: #b6e0ee;
     border-radius: 3px;
     transform-origin: center;
-    /* 鏀圭敤鏋侀€熺殑 ease-out 杩囨浮锛岃鍓嶇瀹岀編琛旀帴鍚庣鐨勫抚鐜?*/
+    /* 改用极速的 ease-out 过渡，让前端完美衔接后端的帧�?*/
     transition: transform 0.08s ease-out;
     will-change: transform;
 }
@@ -2630,7 +2630,7 @@ onUnmounted(() => {
     padding: 0 !important;
 }
 
-/* 椤堕儴瀹瑰櫒锛氬彇娑?all 杩囨浮锛岃瀹冭窡鐫€ Rust 绐楀彛鐨勬媺浼镐弗涓濆悎缂濆湴閲嶆帓 */
+/* 顶部容器：取�?all 过渡，让它跟着 Rust 窗口的拉伸严丝合缝地重排 */
 .music-top-row {
     display: flex;
     align-items: center;
@@ -2638,7 +2638,7 @@ onUnmounted(() => {
     height: 100%;
     position: relative;
     transition: none !important;
-    /* 鏍稿績闃叉姈榄旀硶锛屽彇娑?CSS 鐨勬專鎵?*/
+    /* 核心防抖魔法，取�?CSS 的挣�?*/
 }
 
 .music-ctl-box.expanded .music-top-row {
@@ -2648,7 +2648,7 @@ onUnmounted(() => {
     border: none;
 }
 
-/* 灏侀潰锛氳鐩栨帀涓婇潰鐨?transition: all锛屽彧淇濈暀鍙樺舰鍜屽渾瑙掔殑杩囨浮 */
+/* 封面：覆盖掉上面�?transition: all，只保留变形和圆角的过渡 */
 .album-cover {
     transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.2), border-radius 0.3s ease !important;
 }
@@ -2673,7 +2673,7 @@ onUnmounted(() => {
     transform: scale(1.05) translateX(0px) rotate(0deg) !important;
 }
 
-/* 姝屾洸鏂囨湰閬僵锛氬彇娑堣繃娓★紝闅忕獥鍙ｅぇ灏忕灛闂村彉鍖?*/
+/* 歌曲文本遮罩：取消过渡，随窗口大小瞬间变�?*/
 .music-ctl-box.expanded .music-info-mask-box {
     left: 60px !important;
     right: 55px !important;
@@ -2683,7 +2683,7 @@ onUnmounted(() => {
     transition: none !important;
 }
 
-/* 浣犵殑涓ゅ鏂囧瓧杩囨浮閫昏緫闈炲父瀹岀編锛屽叏閮ㄤ繚鐣欏師鏍凤紙鍥犱负 opacity 涓嶅奖鍝嶆帓鐗堬級 */
+/* 你的两套文字过渡逻辑非常完美，全部保留原样（因为 opacity 不影响排版） */
 .music-info-text {
     position: absolute;
     left: 0 !important;
@@ -2744,7 +2744,7 @@ onUnmounted(() => {
     text-align: left !important;
 }
 
-/* 濯掍綋鎺т欢涓庨璋?*/
+/* 媒体控件与频�?*/
 .music-ctl-box.expanded .music-controls {
     position: absolute;
     left: 50%;
@@ -2770,11 +2770,11 @@ onUnmounted(() => {
     right: 18px !important;
     top: 27px !important;
     transform: scale(1.3);
-    /* 鎶?all 鎹㈡垚鍏蜂綋鐨勫睘鎬э紝闃叉鎶栧姩 */
+    /* �?all 换成具体的属性，防止抖动 */
     transition: opacity 0.3s ease, transform 0.3s ease !important;
 }
 
-/* F6 闊充箰杩涘害鏉?*/
+/* F6 音乐进度�?*/
 .music-progress {
     position: absolute;
     left: 16px;
@@ -2871,14 +2871,14 @@ onUnmounted(() => {
     letter-spacing: 0.2px;
 }
 
-/* 寮哄埗闈犲乏瀵归綈锛屽共鎺夊師鏈殑 align-items: center銆傚惁鍒欓暱鏂囨湰浼氬悜涓よ竟婧㈠嚭锛屽鑷村紑澶磋瑁?*/
+/* 强制靠左对齐，干掉原本的 align-items: center。否则长文本会向两边溢出，导致开头被�?*/
 .music-info-text.single-line {
     overflow: visible !important;
     align-items: flex-start !important;
     text-align: left !important;
 }
 
-/* 婊氬姩鐨勫唴閮ㄥ鍣?*/
+/* 滚动的内部容�?*/
 .scroll-inner {
     display: inline-block;
     white-space: nowrap;
@@ -2890,12 +2890,12 @@ onUnmounted(() => {
     transform-style: preserve-3d;
 }
 
-/* 鎸傝浇鍔ㄧ敾 */
+/* 挂载动画 */
 .scroll-inner.is-scrolling {
     animation: scroll-ping-pong var(--scroll-duration) linear infinite alternate;
 }
 
-/* 婊氬姩鍔ㄧ敾甯э細鍒╃敤 0-20% 鍜?80-100% 鐨勫尯闂村疄鐜颁袱绔仠鐣?*/
+/* 滚动动画帧：利用 0-20% �?80-100% 的区间实现两端停�?*/
 @keyframes scroll-ping-pong {
 
     0%,
@@ -2905,12 +2905,12 @@ onUnmounted(() => {
 
     80%,
     100% {
-        /* JS 閲屽凡缁忔嫾濂戒簡 px 鍗曚綅锛岃繖閲岀洿鎺?-1 涔樿繃鍘诲嵆鍙?*/
+        /* JS 里已经拼好了 px 单位，这里直�?-1 乘过去即�?*/
         transform: translateX(calc(-1 * var(--scroll-dist)));
     }
 }
 
-/* 绯荤粺鎿嶄綔閫氱煡鏍峰紡 */
+/* 系统操作通知样式 */
 .system-toast-box {
     position: absolute;
     left: 0;
@@ -2935,12 +2935,12 @@ onUnmounted(() => {
     transform: translateX(-8px);
 }
 
-/* 鐏靛姩宀涢€氱煡 */
+/* 灵动岛通知 */
 .toast-icon.app-icon {
     color: currentColor;
 }
 
-/* 绯荤粺閫氱煡浣跨敤璺熼殢瀛椾綋鐨勫師鐢熷姣旇壊 (榛戠櫧) */
+/* 系统通知使用跟随字体的原生对比色 (黑白) */
 .toast-icon.sys-icon {
     color: currentColor;
     opacity: 0.85;
@@ -2969,7 +2969,7 @@ onUnmounted(() => {
     transform: translateX(-2px) translateY(-1px);
 }
 
-/* 瀹藉害璋冩暣鎵嬫焺鏍峰紡 */
+/* 宽度调整手柄样式 */
 .resize-handle {
     position: absolute;
     top: 0;
@@ -3000,7 +3000,7 @@ onUnmounted(() => {
     border-radius: 0 100px 100px 0;
 }
 
-/* 灞曞紑鐘舵€佷笅璋冩暣鎵嬫焺鐨勫渾瑙?*/
+/* 展开状态下调整手柄的圆�?*/
 .island-container:has(.island-core-content[style*="border-radius: 22px"]) .resize-handle {
     border-radius: 0;
 }
@@ -3013,7 +3013,7 @@ onUnmounted(() => {
     border-radius: 0 24px 24px 0;
 }
 
-/* 姝ｅ湪璋冩暣鏃剁殑鏍峰紡 */
+/* 正在调整时的样式 */
 .resize-handle:active {
     opacity: 1;
     background-color: rgba(255, 255, 255, 0.4);
@@ -3023,7 +3023,7 @@ onUnmounted(() => {
     background-color: rgba(0, 0, 0, 0.3);
 }
 
-/* 鍏夋爣鏍峰紡 */
+/* 光标样式 */
 .island-core-content.resize-cursor-left {
     cursor: w-resize;
 }
