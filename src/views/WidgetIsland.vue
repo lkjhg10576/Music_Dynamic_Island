@@ -156,21 +156,29 @@
                                 </div>
                             </transition>
                             <transition name="fade">
-                                <div class="music-progress" v-show="isMusicExpanded && progressEnd > 0"
-                                    @click.stop>
-                                    <div class="progress-time-row">
-                                        <span class="progress-time">{{ formatTime(progressPosition) }}</span>
-                                        <span class="progress-time">{{ formatTime(progressEnd) }}</span>
+                                <div class="music-progress" v-show="isMusicExpanded" @click.stop>
+                                    <template v-if="timelineStatus === 'available'">
+                                        <div class="progress-time-row">
+                                            <span class="progress-time">{{ formatTime(progressPosition) }}</span>
+                                            <span class="progress-time">{{ formatTime(progressEnd) }}</span>
+                                        </div>
+                                        <div class="progress-bar" ref="progressBarRef"
+                                            :class="{ disabled: !musicTimeline.canSeek }"
+                                            :aria-disabled="!musicTimeline.canSeek"
+                                            @pointerdown.stop="onProgressPointerDown"
+                                            @pointermove="onProgressPointerMove"
+                                            @pointerup="onProgressPointerUp"
+                                            @pointercancel="onProgressPointerCancel"
+                                            @lostpointercapture="onProgressPointerCancel">
+                                            <div class="progress-filled" :class="{ dragging: isDraggingProgress }"
+                                                :style="{ width: progressPercent + '%' }"></div>
+                                            <div class="progress-thumb" :style="{ left: progressPercent + '%' }"></div>
+                                        </div>
+                                        <div class="progress-remaining">-{{ formatTime(progressEnd - progressPosition) }}</div>
+                                    </template>
+                                    <div v-else class="progress-placeholder">
+                                        {{ timelineStatus === 'loading' ? '正在读取播放进度…' : '当前播放器未提供播放进度' }}
                                     </div>
-                                    <div class="progress-bar" ref="progressBarRef"
-                                        @pointerdown.stop="onProgressPointerDown"
-                                        @pointermove="onProgressPointerMove"
-                                        @pointerup="onProgressPointerUp">
-                                        <div class="progress-filled" :class="{ dragging: isDraggingProgress }"
-                                            :style="{ width: progressPercent + '%' }"></div>
-                                        <div class="progress-thumb" :style="{ left: progressPercent + '%' }"></div>
-                                    </div>
-                                    <div class="progress-remaining">-{{ formatTime(progressEnd - progressPosition) }}</div>
                                 </div>
                             </transition>
                         </div>
@@ -673,15 +681,28 @@ const getPlayerName = () => {
 const musicBoxKey = ref(0);
 
 // ===== F6 音乐进度条：展开态拉取 SMTC Timeline 并支持拖动定位 =====
-const musicTimeline = ref<{ position: number; end: number }>({ position: 0, end: 0 });
+type TimelineStatus = 'idle' | 'loading' | 'available' | 'unavailable';
+type MusicTimelineResponse = { position_ms: number; end_ms: number; can_seek: boolean };
+
+const musicTimeline = ref({ position: 0, end: 0, canSeek: false });
+const timelineStatus = ref<TimelineStatus>('idle');
+const timelineClock = ref(Date.now());
+const timelineSyncedAt = ref(Date.now());
 const isDraggingProgress = ref(false);
 const dragPosition = ref(0);
 let progressTimer: number | null = null;
+let progressClockTimer: number | null = null;
+let timelineMissCount = 0;
+let isTimelineRequestInFlight = false;
 const progressBarRef = ref<HTMLElement | null>(null);
 
 const progressEnd = computed(() => musicTimeline.value.end);
-// 拖动时显示临时位置，否则显示实际播放位置
-const progressPosition = computed(() => isDraggingProgress.value ? dragPosition.value : musicTimeline.value.position);
+// 拖动时显示临时位置；播放时在两次 SMTC 同步之间按本地时钟平滑推进。
+const progressPosition = computed(() => {
+    if (isDraggingProgress.value) return dragPosition.value;
+    const elapsed = isPlaying.value ? Math.max(0, timelineClock.value - timelineSyncedAt.value) : 0;
+    return Math.min(progressEnd.value, musicTimeline.value.position + elapsed);
+});
 const progressPercent = computed(() => progressEnd.value > 0
     ? Math.min(100, Math.max(0, (progressPosition.value / progressEnd.value) * 100))
     : 0);
@@ -695,31 +716,64 @@ const formatTime = (ms: number) => {
     return `${m}:${s.toString().padStart(2, '0')}`;
 };
 
-// 拉取播放进度（仅展开态且灵动岛可见时执行，折叠/隐藏时暂停）
+const resetTimeline = (status: TimelineStatus = 'idle') => {
+    isDraggingProgress.value = false;
+    dragPosition.value = 0;
+    musicTimeline.value = { position: 0, end: 0, canSeek: false };
+    timelineStatus.value = status;
+    timelineMissCount = 0;
+    timelineSyncedAt.value = Date.now();
+    timelineClock.value = timelineSyncedAt.value;
+};
+
+// 拉取播放进度（仅展开态且灵动岛可见时执行，折叠/隐藏时暂停）。
 const fetchTimeline = async () => {
-    if (!isMusicExpanded.value || !isIslandVisible.value) return;
+    if (!isMusicExpanded.value || !isIslandVisible.value || isDraggingProgress.value || isTimelineRequestInFlight) return;
+    isTimelineRequestInFlight = true;
     try {
-        const res = await invoke<{ position_ms: number; end_ms: number } | null>('get_music_timeline');
-        if (res) {
-            musicTimeline.value = { position: res.position_ms, end: res.end_ms };
+        const res = await invoke<MusicTimelineResponse | null>('get_music_timeline');
+        if (res && res.end_ms > 0) {
+            const now = Date.now();
+            musicTimeline.value = {
+                position: Math.min(res.position_ms, res.end_ms),
+                end: res.end_ms,
+                canSeek: res.can_seek,
+            };
+            timelineSyncedAt.value = now;
+            timelineClock.value = now;
+            timelineMissCount = 0;
+            timelineStatus.value = 'available';
         } else {
-            musicTimeline.value = { position: 0, end: 0 };
+            // SMTC 偶尔会在切歌时短暂返回空 Timeline，连续失败后才判定不可用。
+            timelineMissCount++;
+            if (timelineMissCount >= 3) timelineStatus.value = 'unavailable';
         }
     } catch (e) {
-        // 静默失败，避免刷屏
+        timelineMissCount++;
+        if (timelineMissCount >= 3) timelineStatus.value = 'unavailable';
+    } finally {
+        isTimelineRequestInFlight = false;
     }
 };
 
 const startProgressTimer = () => {
     stopProgressTimer();
+    if (timelineStatus.value !== 'available') timelineStatus.value = 'loading';
     fetchTimeline();
-    progressTimer = setInterval(fetchTimeline, 500) as unknown as number;
+    progressTimer = setInterval(fetchTimeline, 1000) as unknown as number;
+    progressClockTimer = setInterval(() => {
+        timelineClock.value = Date.now();
+    }, 100) as unknown as number;
 };
 
 const stopProgressTimer = () => {
     if (progressTimer) {
         clearInterval(progressTimer);
         progressTimer = null;
+    }
+    if (progressClockTimer) {
+        clearInterval(progressClockTimer);
+        progressClockTimer = null;
     }
 };
 
@@ -732,8 +786,10 @@ const updateDragPosition = (e: PointerEvent) => {
 };
 
 const onProgressPointerDown = (e: PointerEvent) => {
-    if (progressEnd.value === 0) return;
+    if (progressEnd.value === 0 || !musicTimeline.value.canSeek) return;
+    e.preventDefault();
     isDraggingProgress.value = true;
+    dragPosition.value = progressPosition.value;
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch (_) {}
     updateDragPosition(e);
 };
@@ -743,18 +799,35 @@ const onProgressPointerMove = (e: PointerEvent) => {
     updateDragPosition(e);
 };
 
+const onProgressPointerCancel = (e?: PointerEvent) => {
+    if (!isDraggingProgress.value) return;
+    isDraggingProgress.value = false;
+    dragPosition.value = musicTimeline.value.position;
+    if (e) {
+        try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch (_) {}
+    }
+};
+
 const onProgressPointerUp = async (e: PointerEvent) => {
     if (!isDraggingProgress.value) return;
     const finalPos = dragPosition.value;
+    const previousPosition = musicTimeline.value.position;
     isDraggingProgress.value = false;
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch (_) {}
+
+    const now = Date.now();
+    musicTimeline.value = { ...musicTimeline.value, position: finalPos };
+    timelineSyncedAt.value = now;
+    timelineClock.value = now;
     try {
         await invoke('seek_music', { positionMs: finalPos });
-        // seek 成功后立即同步本地位置，再拉取一次确认
-        musicTimeline.value = { ...musicTimeline.value, position: finalPos };
-        fetchTimeline();
+        await fetchTimeline();
     } catch (err) {
+        musicTimeline.value = { ...musicTimeline.value, position: previousPosition };
+        timelineSyncedAt.value = Date.now();
+        timelineClock.value = timelineSyncedAt.value;
         console.error('拖动定位失败:', err);
+        await fetchTimeline();
     }
 };
 
@@ -765,8 +838,8 @@ watch([isMusicExpanded, isIslandVisible], () => {
     } else {
         stopProgressTimer();
         if (!isMusicExpanded.value) {
-            // 折叠时清空，避免下次展开瞬间残留旧进度
-            musicTimeline.value = { position: 0, end: 0 };
+            // 折叠时清空，避免下次展开瞬间残留旧歌曲进度。
+            resetTimeline();
         }
     }
 });
@@ -775,6 +848,12 @@ watch([isMusicExpanded, isIslandVisible], () => {
 const currentSongName = ref('未在播放歌曲');
 const currentArtistName = ref(getPlayerName());
 const currentTrackInfo = ref(`未在播放歌曲 - ${getPlayerName()}`);
+
+watch(currentTrackInfo, () => {
+    if (!isMusicExpanded.value) return;
+    resetTimeline('loading');
+    fetchTimeline();
+});
 
 // 音乐滚动相关变量
 const maskBoxRef = ref<HTMLElement | null>(null);
@@ -1697,6 +1776,11 @@ const getAppIcon = (appName: string) => {
 };
 
 onMounted(async () => {
+    // widget 可能在主面板未创建或省内存销毁后独立运行，需自行恢复目标播放器。
+    await invoke('set_target_player', {
+        player: localStorage.getItem(NSD_TARGET_PLAYER) || 'netease',
+    }).catch(() => {});
+
     window.addEventListener('blur', collapseMusic);
 
     document.addEventListener('contextmenu', (e) => {
@@ -2729,11 +2813,26 @@ onUnmounted(() => {
     background: rgba(128, 128, 128, 0.25);
     border-radius: 2px;
     cursor: pointer;
+    touch-action: none;
+    user-select: none;
     transition: height 0.15s ease;
 }
 
 .progress-bar:hover {
     height: 6px;
+}
+
+.progress-bar.disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.progress-bar.disabled:hover {
+    height: 4px;
+}
+
+.progress-bar.disabled .progress-thumb {
+    display: none;
 }
 
 .progress-filled {
@@ -2772,6 +2871,16 @@ onUnmounted(() => {
     opacity: 0.55;
     text-align: center;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.progress-placeholder {
+    min-height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10.5px;
+    opacity: 0.55;
+    letter-spacing: 0.2px;
 }
 
 /* 强制靠左对齐，干掉原本的 align-items: center。否则长文本会向两边溢出，导致开头被裁 */
