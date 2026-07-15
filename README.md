@@ -11,7 +11,7 @@
 [![Vue 3](https://img.shields.io/badge/Vue-3.x-green?logo=vue.js)](https://vuejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?logo=typescript)](https://www.typescriptlang.org)
 [![Vite](https://img.shields.io/badge/Vite-6.x-yellow?logo=vite)](https://vite.dev)
-[![ECharts](https://img.shields.io/badge/ECharts-6.x-purple?logo=apache-echarts)](https://echarts.apache.org)
+[![Canvas](https://img.shields.io/badge/Canvas-2D-purple?logo=html5)](https://developer.mozilla.org/docs/Web/API/Canvas_API)
 
 </div>
 
@@ -49,13 +49,14 @@
 - **音频频谱可视化**：实时捕获系统音频输出，通过 FFT 变换生成 5 频段律动频谱，跟随音乐节奏跳动
 - **歌名滚动**：长歌名自动水平滚动，展开后切换为双行显示
 - **智能交互**：悬停显示控件，离开后自动切换为歌曲信息，1秒自动收缩
+- **音乐进度条**：展开态显示播放进度（已播/总时长/剩余），支持拖动定位（基于 SMTC Timeline）
 
 ### 系统消息通知
 
 - **实时捕获**：接收系统 Toast 通知并在灵动岛展示
 - **动态扩展**：收到通知时灵动岛自动放大展示应用图标、标题和内容
 - **智能过滤**：自动过滤微信通知避免干扰
-- **点击唤醒**：点击通知区域直接打开对应应用（支持 QQ、微信、钉钉等）
+- **点击唤醒**：点击通知区域直接打开对应应用（基于 aumid 解析来源应用，支持 QQ、微信、钉钉等）
 - **静默消息模式**：平时自动隐藏，收到消息后才弹出
 
 ### 系统事件监控
@@ -71,6 +72,7 @@
 - **CPU/内存/GPU**：实时显示占用率
 - **高占用预警**：≥90% 时自动红色警示
 - **主题自适应**：支持暗色/亮色主题
+- **历史曲线**：控制台「实时状态」下拉切换网速 / CPU / 内存，绘制趋势折线图
 
 ### 灵动岛轮换模式
 
@@ -89,6 +91,7 @@
 - **位置锁定**：右键菜单可锁定/解锁灵动岛位置
 - **全屏游戏避让**：自动检测全屏窗口，避免抢占焦点
 - **检查更新**：静默检测新版本并提示下载，支持 10 秒超时保护
+- **省内存模式**：开启后关闭主窗口彻底销毁 WebView 释放内存（约 50–120MB），托盘点击时重建窗口
 
 ## 技术栈
 
@@ -98,7 +101,7 @@
 | 前端框架 | Vue 3 + TypeScript |
 | 构建工具 | Vite 6 |
 | 路由 | Vue Router 5 |
-| 图表 | ECharts 6 |
+| 图表 | 原生 Canvas 2D API |
 | 图标 | Lucide Vue Next |
 | 网络监控 | sysinfo (Rust) |
 | 异步运行时 | Tokio (Rust) |
@@ -114,24 +117,43 @@
 
 ```
 NetSpeed-Dynamic/
-├── src/                    # 前端源码
-│   ├── main.ts             # 应用入口
-│   ├── router/index.ts     # 路由配置
+├── src/                          # 前端源码（Vue 3 + TypeScript）
+│   ├── main.ts                   # 应用入口
+│   ├── App.vue                   # 根组件
+│   ├── style.css                 # 全局样式
+│   ├── vite-env.d.ts             # Vite 类型声明
+│   ├── router/
+│   │   └── index.ts              # 路由配置（主窗口单页）
 │   ├── views/
-│   │   ├── MainPanel.vue   # 主控制台（设置、统计、音乐平台切换）
-│   │   └── WidgetIsland.vue # 灵动岛悬浮窗（网速、音乐、消息、硬件、频谱）
-│   └── assets/             # 静态资源（图标、截图）
-├── src-tauri/              # Tauri 后端
+│   │   ├── MainPanel.vue         # 主控制台（设置、统计、音乐平台切换、实时状态）
+│   │   └── WidgetIsland.vue      # 灵动岛悬浮窗（网速、音乐、消息、硬件、频谱、进度条）
+│   ├── components/
+│   │   ├── SpeedChart.vue        # 原生 Canvas 2D 网速 / CPU / 内存趋势图
+│   │   └── StatsChart.vue        # 本地流量统计图表（Canvas 2D）
+│   ├── constants/
+│   │   └── storageKeys.ts        # localStorage 键名统一管理
+│   ├── utils/
+│   │   └── format.ts             # 单位 / 时间等格式化工具
+│   └── assets/                   # 静态资源（图标、截图、捐赠码）
+├── src-tauri/                    # Tauri 后端（Rust）
 │   ├── src/
-│   │   ├── main.rs         # Rust 入口
-│   │   ├── lib.rs          # 核心逻辑
-│   │   ├── audio_spectrum.rs # 音频频谱分析（FFT）
-│   │   ├── music_controller.rs # 音乐控制器（SMTC API）
-│   │   ├── notification.rs # 系统通知捕获
-│   │   └── system_events.rs # 系统事件监控（音量、电源）
-│   ├── Cargo.toml          # Rust 依赖
-│   └── tauri.conf.json     # Tauri 配置
-└── package.json            # 前端依赖
+│   │   ├── main.rs               # Rust 入口
+│   │   ├── lib.rs                # 核心逻辑、Tauri 命令注册、省内存模式
+│   │   ├── audio_spectrum.rs     # 音频频谱分析（FFT）
+│   │   ├── music_controller.rs   # 音乐控制器（SMTC API、进度条定位）
+│   │   ├── notification.rs       # 系统通知捕获与点击启动来源应用
+│   │   └── system_events.rs      # 系统事件监控（音量、电源）
+│   ├── capabilities/             # Tauri 权限配置
+│   ├── icons/                    # 应用图标
+│   ├── Cargo.toml                # Rust 依赖
+│   ├── build.rs                  # 构建脚本
+│   └── tauri.conf.json           # Tauri 配置
+├── public/                       # 静态公共资源
+├── index.html                    # HTML 模板
+├── vite.config.ts                # Vite 配置
+├── tsconfig.json                 # TypeScript 配置
+├── package.json                  # 前端依赖与脚本
+└── OPTIMIZATION_TODO.md          # 运行时 / 内存优化待办
 ```
 
 ## 开发环境
@@ -174,11 +196,16 @@ MIT License
 
 Copyright (c) 2026 Ryen (GEORGEWU)
 
-## 修改信息
+## 捐赠
 
-1.添加了通用的SMTC读取，可以读取任何已接入SMTC的音乐软件
-2.自动折叠时间调整，自动隐藏支持
-3.砍去了ECharts
-4.控制台关闭后，控制台对应的Webview不做保留，直接删除以节省内存
-## 使用前注意
-该项目的修改中使用了AI编写（Vibe Coding），若介意则不要使用，所有功能已经过我手动测试
+如果 NSD 对你有帮助，欢迎请作者喝杯咖啡！
+
+| 方式 | 信息 |
+|------|------|
+| 微信支付 | [微信](./src/assets/wechat-pay.png) |
+| 支付宝 | [支付宝](./src/assets/alipay.jpg) |
+| GitHub Sponsors | [前往支持](https://github.com/sponsors/GEORGEWWWU) |
+
+---
+
+> 感谢每一位支持者！
