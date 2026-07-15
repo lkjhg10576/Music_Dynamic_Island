@@ -626,12 +626,6 @@ const updateAutoCollapseDelay = async () => {
     await emit('control-auto-collapse', { enabled: autoCollapseEnabled.value, delay: autoCollapseDelay.value });
 };
 
-// 切换灵动岛设置
-const toggleDynamicSetOld = () => {
-    if (currentView.value === 'main') currentView.value = 'island';
-    else currentView.value = 'main';
-};
-
 // 控制窗口功能
 const minimizeWindow = async () => {
     await getCurrentWindow().minimize();
