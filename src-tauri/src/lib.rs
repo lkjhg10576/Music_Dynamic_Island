@@ -430,6 +430,80 @@ pub fn run() {
             system_events::start_monitor(app.handle().clone());
             start_hardware_monitor();
 
+            // 全屏应用检测线程：每 600ms 轮询，发射 fullscreen-changed 事件供前端做自动隐藏
+            let app_handle_for_fs = app.handle().clone();
+            std::thread::spawn(move || {
+                unsafe { let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED); }
+                
+                let mut was_fullscreen = false;
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(600));
+                    
+                    #[cfg(target_os = "windows")]
+                    {
+                        unsafe {
+                            let mut is_fullscreen = false;
+                            let fg_hwnd = winapi::um::winuser::GetForegroundWindow();
+                            let shell_hwnd = winapi::um::winuser::GetShellWindow();
+                            
+                            if !fg_hwnd.is_null() 
+                                && fg_hwnd != winapi::um::winuser::GetDesktopWindow() 
+                                && fg_hwnd != shell_hwnd 
+                            {
+                                let mut shell_pid = 0;
+                                if !shell_hwnd.is_null() {
+                                    winapi::um::winuser::GetWindowThreadProcessId(shell_hwnd, &mut shell_pid);
+                                }
+
+                                let mut fg_pid = 0;
+                                winapi::um::winuser::GetWindowThreadProcessId(fg_hwnd, &mut fg_pid);
+
+                                if shell_pid != 0 && fg_pid == shell_pid {
+                                    // 属于系统外壳组件，忽略
+                                } else {
+                                    let style = winapi::um::winuser::GetWindowLongPtrW(fg_hwnd, winapi::um::winuser::GWL_STYLE) as u32;
+                                    let ex_style = winapi::um::winuser::GetWindowLongPtrW(fg_hwnd, winapi::um::winuser::GWL_EXSTYLE) as u32;
+                                    
+                                    if (style & winapi::um::winuser::WS_CHILD) == 0 && (ex_style & winapi::um::winuser::WS_EX_TRANSPARENT) == 0 {
+                                        let mut class_name = [0u16; 256];
+                                        let len = winapi::um::winuser::GetClassNameW(fg_hwnd, class_name.as_mut_ptr(), class_name.len() as i32);
+                                        let class_str = String::from_utf16_lossy(&class_name[..len as usize]);
+                                        
+                                        let is_blacklisted = class_str.contains("Windows.UI.Core.CoreWindow") 
+                                            || class_str.contains("Xaml_WindowedPopupClass")
+                                            || class_str.contains("SearchApp")
+                                            || class_str.contains("NotifyIconOverflowWindow");
+
+                                        if !is_blacklisted {
+                                            let mut rect: winapi::shared::windef::RECT = std::mem::zeroed();
+                                            winapi::um::winuser::GetWindowRect(fg_hwnd, &mut rect);
+
+                                            let monitor = winapi::um::winuser::MonitorFromWindow(fg_hwnd, winapi::um::winuser::MONITOR_DEFAULTTONEAREST);
+                                            let mut mi: winapi::um::winuser::MONITORINFO = std::mem::zeroed();
+                                            mi.cbSize = std::mem::size_of::<winapi::um::winuser::MONITORINFO>() as u32;
+                                            winapi::um::winuser::GetMonitorInfoW(monitor, &mut mi);
+
+                                            if rect.left <= mi.rcMonitor.left 
+                                                && rect.top <= mi.rcMonitor.top 
+                                                && rect.right >= mi.rcMonitor.right 
+                                                && rect.bottom >= mi.rcMonitor.bottom 
+                                            {
+                                                is_fullscreen = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if is_fullscreen != was_fullscreen {
+                                let _ = app_handle_for_fs.emit("fullscreen-changed", is_fullscreen);
+                                was_fullscreen = is_fullscreen;
+                            }
+                        }
+                    }
+                }
+            });
+
             let args: Vec<String> = std::env::args().collect();
             let is_autostart = args.iter().any(|arg| arg == "--autostart");
 
