@@ -413,8 +413,13 @@ const processToastQueue = async () => {
         await new Promise(resolve => setTimeout(resolve, 2000));
 
         displaySysToast.value = false;
-        // 等待离开动画播完 (�?200ms) 再处理下一�?
+        // 等待离开动画播完 (约200ms) 再处理下一个
         await new Promise(resolve => setTimeout(resolve, 200));
+
+        // 系统 toast 结束后，重新评估自动隐藏
+        // 场景：音乐控制器开启 + 无音乐播放时，toast 弹出强制显示了灵动岛，
+        // toast 结束后应恢复自动隐藏
+        scheduleAutoHide();
     }
 
     isProcessingToast = false;
@@ -618,13 +623,27 @@ const startRotation = () => {
 };
 
 // 统一的自动隐藏定时器管理函数
+// 自动隐藏仅在以下条件全部满足时触发：
+//   1. 自动隐藏开关已开启 (isAutoHideEnabled)
+//   2. 音乐控制器模式已打开 (isMusicCtlEnabled)
+//   3. 没有音乐在播放 (!isPlaying)
+// 其余任何情况（如临时 toast、通知弹出、鼠标离开但非音乐模式等）均不隐藏
 const scheduleAutoHide = (delay?: number) => {
+    // 前置守卫：不满足条件时直接返回，不设定定时器
+    if (!isAutoHideEnabled.value || !isMusicCtlEnabled.value || isPlaying.value) {
+        return;
+    }
     if (autoHideTimer) {
         clearTimeout(autoHideTimer);
         autoHideTimer = null;
     }
     autoHideTimer = window.setTimeout(() => {
-        if (!isMouseOver.value && isIslandVisible.value) {
+        // 定时器到期时再次全量检查条件（防止定时期间状态变化导致误隐藏）
+        if (!isMouseOver.value
+            && isIslandVisible.value
+            && isAutoHideEnabled.value
+            && isMusicCtlEnabled.value
+            && !isPlaying.value) {
             isAutoHiding = true;
             isIslandVisible.value = false;
         }
@@ -745,29 +764,28 @@ const syncMusicStatus = async () => {
                 }
             }
 
-            const wasPlaying = isPlaying.value;
             isPlaying.value = playing;
-            
-            // 音乐播放器模式：有音乐就显示，没音乐就隐藏（类似通知模式�?
+
+            // 音乐播放器模式：有音乐就显示，没音乐就隐藏
             if (displayMusic.value) {
                 if (playing && !isIslandVisible.value) {
-                    // 有音乐播放且灵动岛被隐藏，自动恢复显�?
+                    // 有音乐播放且灵动岛被隐藏，自动恢复显示
                     getCurrentWindow().show();
                     isIslandVisible.value = true;
-                } else if (!playing && wasPlaying && isIslandVisible.value && !isMouseOver.value) {
+                } else if (!playing && isIslandVisible.value && !isMouseOver.value) {
                     // 音乐停止播放且鼠标不在灵动岛上，延迟隐藏
+                    // scheduleAutoHide 内部会校验音乐控制器模式 + 自动隐藏开关
                     scheduleAutoHide();
                 }
             }
         } else {
-            // 没检测到播放时，清空状�?
+            // 没检测到播放时，清空状态
             currentTrackInfo.value = `未在播放歌曲 - ${getPlayerName()}`;
-            const wasPlaying = isPlaying.value;
             isPlaying.value = false;
             coverUrl.value = ''; // 没歌时清空，显示默认的优美渐变色
 
             // 音乐播放器模式：音乐停止时隐藏灵动岛
-            if (displayMusic.value && wasPlaying && isIslandVisible.value && !isMouseOver.value) {
+            if (isIslandVisible.value && !isMouseOver.value) {
                 scheduleAutoHide();
             }
         }
@@ -1722,9 +1740,8 @@ const dismissMsgNotification = () => {
     const savedWidth = restoreIslandWidth();
     const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
     animateIslandSize(targetWidth, h);
-    if (isMsgModeEnabled.value) {
-        scheduleAutoHide();
-    }
+    // 手动关闭通知后重新评估自动隐藏
+    scheduleAutoHide();
 };
 
 // 点击灵动岛上的通知：立即返回通知弹出前状态，并打开来源应用
@@ -1825,20 +1842,8 @@ const handleMouseLeave = () => {
         }, autoCollapseDelay.value);
     }
 
-    // 2. 自动隐藏逻辑：当没有活动时，延迟隐藏灵动�?
-    if (!isAutoHideEnabled.value) {
-        return;
-    }
-
-    // 检查是否有活动状态（消息、音乐展开、系统通知�?
-    const hasActivity = isMsgActive.value || isMusicExpanded.value || isMusicExpanding.value || displaySysToast.value;
-    
-    // 如果有活动，不触发自动隐�?
-    if (hasActivity) {
-        return;
-    }
-
-    // 启动自动隐藏定时�?
+    // 2. 自动隐藏逻辑：统一交给 scheduleAutoHide 内部守卫判断
+    //    仅在「自动隐藏开关开启 + 音乐控制器模式打开 + 无音乐播放」时才隐藏
     scheduleAutoHide();
 };
 
@@ -1918,11 +1923,10 @@ onMounted(async () => {
 
             showInfo.value = false;
             musicBoxKey.value++;
-            
-            // 音乐播放器模式：开启时如果没有音乐播放，隐藏灵动岛（类似通知模式�?
-            if (!isPlaying.value && isIslandVisible.value && !isMouseOver.value) {
-                scheduleAutoHide();
-            }
+
+            // 音乐控制器开启时，如果没有音乐播放，延迟隐藏灵动岛
+            // scheduleAutoHide 内部会校验全部条件
+            scheduleAutoHide();
         }
     });
 
@@ -1979,17 +1983,9 @@ onMounted(async () => {
     await listen<{ enabled: boolean }>('control-msg-mode', async (event) => {
         isMsgModeEnabled.value = event.payload.enabled;
         if (isMsgModeEnabled.value && !isMsgActive.value) {
-            // 如果开启了消息模式，并且当前没有消息，延迟隐藏
-            if (autoHideTimer) {
-                clearTimeout(autoHideTimer);
-                autoHideTimer = null;
-            }
-            autoHideTimer = window.setTimeout(() => {
-                if (!isMouseOver.value && isIslandVisible.value) {
-                    isAutoHiding = true;
-                    isIslandVisible.value = false;
-                }
-            }, autoHideDelay.value);
+            // 开启消息模式且当前无消息时，延迟隐藏
+            // 统一交给 scheduleAutoHide 守卫判断（仅在音乐控制器开启+无音乐播放时才隐藏）
+            scheduleAutoHide();
         } else if (!isMsgModeEnabled.value) {
             // 如果关闭了消息模式，立刻恢复显示
             await getCurrentWindow().show();
@@ -2239,9 +2235,9 @@ onMounted(async () => {
                     const savedWidth = restoreIslandWidth();
                     const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
                     animateIslandSize(targetWidth, h);
-                    if (isMsgModeEnabled.value) {
-                        scheduleAutoHide();
-                    }
+                    // 消息通知结束后重新评估自动隐藏
+                    // scheduleAutoHide 内部会校验：自动隐藏开关 + 音乐控制器模式 + 无音乐播放
+                    scheduleAutoHide();
                 }, 5000);
             }
         } catch (err) {
