@@ -379,6 +379,7 @@ fn recreate_main_window(app: &tauri::AppHandle) {
         .inner_size(700.0, 550.0)
         .resizable(false)
         .maximizable(false)
+        .decorations(false)
         .center();
 
     match builder.build() {
