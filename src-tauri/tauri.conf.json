@@ -22,7 +22,8 @@
         "maximizable": false,
         "label": "main",
         "url": "/",
-        "visible": false
+        "visible": false,
+        "decorations": false
       },
       {
         "title": "NSD Widget",
