@@ -398,11 +398,21 @@ const handleCdTogglePauseResume = async () => {
 };
 
 const handleCdClose = async () => {
-    await invoke('stop_countdown');
+    if (isCountdownFinished.value) {
+        // 倒计时已结束 → 仅让后端停止，由 countdown-tick idle 事件处理UI清理
+        // 不直接操作 UI 状态，避免与自动隐藏等功能冲突
+        await invoke('stop_countdown');
+        isCountdownExpanded.value = false;
+        if (!isMsgActive.value && !displaySysToast.value && !isMusicExpanded.value && !isMusicExpanding.value) {
+            const { h } = getBaseSize();
+            const savedWidth = restoreIslandWidth();
+            const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
+            animateIslandSize(targetWidth, h);
+        }
+        return;
+    }
+    // 倒计时进行中 → 仅折叠展开态（与番茄钟行为一致），不停止倒计时
     isCountdownExpanded.value = false;
-    isCountdownVisible.value = false;
-    isCountdownFinished.value = false;
-    localStorage.setItem(NSD_COUNTDOWN_VISIBLE, 'false');
     if (!isMsgActive.value && !displaySysToast.value && !isMusicExpanded.value && !isMusicExpanding.value) {
         const { h } = getBaseSize();
         const savedWidth = restoreIslandWidth();
@@ -3464,13 +3474,9 @@ onUnmounted(() => {
     50% { opacity: 0.4; }
 }
 
-/* 倒计时右侧圆钮（橙色底） */
+/* 倒计时右侧圆钮（仅橙色图标，无背景填充，与番茄钟风格一致） */
 .cd-right-circle {
-    background: #ff9800 !important;
-}
-
-.cd-right-circle .countdown-svg {
-    color: #fff !important;
+    /* 无背景填充，图标颜色由 .countdown-svg 的 #ff9800 提供 */
 }
 
 /* 倒计时展开态控制按钮组 */
