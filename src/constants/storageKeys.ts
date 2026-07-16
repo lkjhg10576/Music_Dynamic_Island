@@ -40,6 +40,10 @@ export const NSD_POMODORO_FOCUS_SECS = 'nsd_pomodoro_focus_secs';
 export const NSD_POMODORO_BREAK_SECS = 'nsd_pomodoro_break_secs';
 export const NSD_POMODORO_CYCLES = 'nsd_pomodoro_cycles';
 
+// 倒计时
+export const NSD_COUNTDOWN_VISIBLE = 'nsd_countdown_visible';
+export const NSD_COUNTDOWN_SECS = 'nsd_countdown_secs';
+
 // 控制台
 export const NSD_THEME_MODE = 'nsd_theme_mode';
 export const NSD_TARGET_PLAYER = 'nsd_target_player';
