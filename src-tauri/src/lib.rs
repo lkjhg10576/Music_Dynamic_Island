@@ -2,6 +2,7 @@ mod audio_spectrum;
 mod music_controller;
 mod notification;
 mod pomodoro;
+mod countdown;
 mod system_events;
 
 use std::sync::Mutex;
@@ -427,6 +428,11 @@ pub fn run() {
             pomodoro::resume_pomodoro,
             pomodoro::stop_pomodoro,
             pomodoro::get_pomodoro_state,
+            countdown::start_countdown,
+            countdown::pause_countdown,
+            countdown::resume_countdown,
+            countdown::stop_countdown,
+            countdown::get_countdown_state,
         ])
         .setup(|app| {
             // B8: 注册 AppHandle 到 audio_spectrum 模块，支持 emit 频谱事件
@@ -436,6 +442,7 @@ pub fn run() {
             audio_spectrum::start_monitor();
             system_events::start_monitor(app.handle().clone());
             pomodoro::start_pomodoro_thread(app.handle().clone());
+            countdown::start_countdown_thread(app.handle().clone());
             start_hardware_monitor();
 
             // 全屏应用检测线程：每 600ms 轮询，发射 fullscreen-changed 事件供前端做自动隐藏
