@@ -1,6 +1,6 @@
 # NetSpeed Dynamic Plus（NSD Plus）
 
-> **关于本版本**：NSD Plus 由 **鲫鱼 NSD Pro** 扩展而来。NSD 即 *NetSpeed Dynamic Pro* 的缩写，是在原版基础之上持续增强的衍生版本。
+> **关于本版本**：NSD Plus 由 **NSD Pro** 扩展而来。NSD 即 *NetSpeed Dynamic Pro* 的缩写，是在原版基础之上不断增强的衍生版本。
 
 <div align="center">
 
