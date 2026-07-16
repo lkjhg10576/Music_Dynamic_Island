@@ -1,6 +1,6 @@
 # NetSpeed Dynamic Plus（NSD Plus）
 
-> **关于本版本**：NSD Plus 由 **NSD Pro** 扩展而来。NSD 即 *NetSpeed Dynamic Pro* 的缩写，是在原版基础之上持续增强的衍生版本。
+> **关于本版本**：NSD Plus 由 **鲫鱼 NSD Pro** 扩展而来。NSD 即 *NetSpeed Dynamic Pro* 的缩写，是在原版基础之上持续增强的衍生版本。
 
 <div align="center">
 
@@ -42,9 +42,9 @@
 
 ### 多平台音乐控制
 
-- **播放控制**：上一首 / 播放暂停 / 下一首/进度查看与控制（通过系统 SMTC API）
-- **多平台支持**：网易云音乐、Spotify、Apple Music、QQ音乐、酷狗音乐、Echo Music、洛雪音乐，原生SMTC
-- **歌曲信息**：实时显示歌名、歌手和专辑封面，时长
+- **播放控制**：上一首 / 播放暂停 / 下一首（通过系统 SMTC API）
+- **多平台支持**：网易云音乐、Spotify、Apple Music、QQ音乐、酷狗音乐、Echo Music、洛雪音乐
+- **歌曲信息**：实时显示歌名、歌手和专辑封面
 - **封面旋转**：播放时封面自动旋转，暂停时停止
 - **多源封面获取**：优先从系统 SMTC 提取本地高清封面，降级至网易云、Deezer、Apple Music，SVG 渐变兜底
 - **封面缓存**：智能缓存最近 50 首歌曲封面，提升响应速度
@@ -164,7 +164,9 @@ NetSpeed-Dynamic/
 │   │   ├── audio_spectrum.rs     # 音频频谱分析（FFT）
 │   │   ├── music_controller.rs   # 音乐控制器（SMTC API、进度条定位）
 │   │   ├── notification.rs       # 系统通知捕获与点击启动来源应用
-│   │   └── system_events.rs      # 系统事件监控（音量、电源）
+│   │   ├── system_events.rs      # 系统事件监控（音量、电源）
+│   │   ├── pomodoro.rs           # 番茄钟后端（原子状态 + 后台 tick 线程）
+│   │   └── countdown.rs          # 通用倒计时线程（提示音 / 事件广播）
 │   ├── capabilities/             # Tauri 权限配置
 │   ├── icons/                    # 应用图标
 │   ├── Cargo.toml                # Rust 依赖
@@ -216,19 +218,21 @@ npm run tauri build
 
 ## 开源协议
 
-MIT License
+Apache License 2.0
 
-Copyright (c) 2026 Ryen (GEORGEWU)
+Copyright (c) 2026 lkjhg10576
+
+本项目（NetSpeed Dynamic Plus / NSD Plus）基于 **NetSpeed Dynamic Pro（鲫鱼 NSD Pro）** 衍生开发：原项目由 Ryen (GEORGEWU) 以 MIT 协议开源，其 MIT 许可正文已保留在 [LICENSE.md](./LICENSE.md) 前部；本衍生版本（含全部新增与修改）采用 Apache License 2.0 重新授权，版权归 lkjhg10576 所有。完整许可证文本见 [LICENSE.md](./LICENSE.md)。
 
 ## 捐赠
 
-当前项目并不是原版的NSD，但如果你喜欢的话，请前往以下渠道捐赠原作者。没有原作者的代码，该分支也不会出现。欢迎你请原作者喝杯咖啡！
+如果 NSD 对你有帮助，欢迎请作者喝杯咖啡！
 
 | 方式 | 信息 |
 |------|------|
 | 微信支付 | [微信](./src/assets/wechat-pay.png) |
 | 支付宝 | [支付宝](./src/assets/alipay.jpg) |
-| GitHub Sponsors | [前往支持](https://github.com/sponsors/GEORGEWWWU) |
+| GitHub Sponsors | [前往支持](https://github.com/sponsors/lkjhg10576) |
 
 ---
 
