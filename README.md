@@ -222,7 +222,7 @@ Apache License 2.0
 
 Copyright (c) 2026 lkjhg10576
 
-本项目（NetSpeed Dynamic Plus / NSD Plus）基于 **NetSpeed Dynamic Pro（鲫鱼 NSD Pro）** 衍生开发：原项目由 Ryen (GEORGEWU) 以 MIT 协议开源，其 MIT 许可正文已保留在 [LICENSE.md](./LICENSE.md) 前部；本衍生版本（含全部新增与修改）采用 Apache License 2.0 重新授权，版权归 lkjhg10576 所有。完整许可证文本见 [LICENSE.md](./LICENSE.md)。
+本项目（NetSpeed Dynamic Plus / NSD Plus）基于 **NetSpeed Dynamic Pro（NSD Pro）** 衍生开发：原项目由 Ryen (GEORGEWU) 以 MIT 协议开源，其 MIT 许可正文已保留在 [LICENSE.md](./LICENSE.md) 前部；本衍生版本（含全部新增与修改）采用 Apache License 2.0 重新授权，版权归 lkjhg10576 所有。完整许可证文本见 [LICENSE.md](./LICENSE.md)。
 
 ## 捐赠
 
