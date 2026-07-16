@@ -1855,6 +1855,13 @@ const collapseMusic = () => {
     animateIslandSize(targetWidth, h);
 };
 
+// force_window_topmost：窗口 blur 事件驱动置顶（替代原 speedTimer 中每 800ms 轮询）
+const handleForceTopmost = () => {
+    if (isPinnedToTaskbar.value && isIslandVisible.value && !isMenuOpen.value && !isCustomDragging) {
+        invoke('force_window_topmost').catch(() => { });
+    }
+};
+
 // 音乐控制器点击展开方法
 const expandMusic = (e: MouseEvent) => {
     if (Math.abs(e.clientX - mouseDownX) > 5 || Math.abs(e.clientY - mouseDownY) > 5) return;
@@ -1971,12 +1978,7 @@ onMounted(async () => {
 
     window.addEventListener('blur', collapseMusic);
 
-    // force_window_topmost：窗口 blur 事件驱动置顶（替代原 speedTimer 中每 800ms 轮询）
-    const handleForceTopmost = () => {
-        if (isPinnedToTaskbar.value && isIslandVisible.value && !isMenuOpen.value && !isCustomDragging) {
-            invoke('force_window_topmost').catch(() => { });
-        }
-    };
+    // force_window_topmost：窗口 blur 事件驱动置顶（函数定义已提升到模块级，供 onUnmounted 清理）
     window.addEventListener('blur', handleForceTopmost);
 
     document.addEventListener('contextmenu', (e) => {
