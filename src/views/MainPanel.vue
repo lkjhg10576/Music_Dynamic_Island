@@ -21,7 +21,7 @@
             <div class="brand">
                 <img src="../assets/logo.png" class="logo-icon">
                 <div>
-                    <h1>NetSpeed Dynamic Pro</h1>
+                    <h1>NetSpeed Dynamic Plus</h1>
                     <p class="subtitle">NSD 桌面灵动岛组件 v{{ appVersion }}</p>
                 </div>
             </div>
