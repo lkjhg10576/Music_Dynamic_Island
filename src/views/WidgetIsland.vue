@@ -124,6 +124,44 @@
                             </div>
                         </div>
 
+                        <div v-else-if="showHardwareRing" class="hardware-ring-box" key="hardware"
+                            @click="expandHardware" style="cursor: pointer;">
+                            <svg viewBox="0 0 36 36" class="hw-ring-svg">
+                                <!-- 背景圆环 -->
+                                <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="3" />
+                                <!-- 双圆环模式 -->
+                                <template v-if="hwMode === 'dual'">
+                                    <circle cx="18" cy="18" r="14" fill="none"
+                                        :stroke="hwCpuPct >= 80 ? '#a855f7' : '#ffffff'" stroke-width="3"
+                                        :stroke-dasharray="`${(hwCpuPct / 100) * 87.96} 87.96`"
+                                        stroke-linecap="round" transform="rotate(-90 18 18)"
+                                        style="transition: stroke-dasharray 0.5s ease;" />
+                                    <circle cx="18" cy="18" r="8" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2.5" />
+                                    <circle cx="18" cy="18" r="8" fill="none"
+                                        :stroke="hwMemPct >= 80 ? '#ff4757' : '#3b82f6'" stroke-width="2.5"
+                                        :stroke-dasharray="`${(hwMemPct / 100) * 50.27} 50.27`"
+                                        stroke-linecap="round" transform="rotate(-90 18 18)"
+                                        style="transition: stroke-dasharray 0.5s ease;" />
+                                </template>
+                                <!-- 单圆环 / 轮换模式 -->
+                                <template v-else>
+                                    <circle cx="18" cy="18" r="14" fill="none"
+                                        :stroke="hwRingColor" stroke-width="3"
+                                        :stroke-dasharray="`${(hwRingPct / 100) * 87.96} 87.96`"
+                                        stroke-linecap="round" transform="rotate(-90 18 18)"
+                                        style="transition: stroke-dasharray 0.5s ease;" />
+                                </template>
+                            </svg>
+                            <span class="hw-ring-label" v-if="hwMode !== 'dual'">
+                                <span class="hw-metric-name">{{ hwActiveMetric === 'cpu' ? 'CPU' : 'RAM' }}</span>
+                                <span class="hw-metric-val" :class="{ 'high': hwRingPct >= 80 }">{{ Math.round(hwRingPct) }}%</span>
+                            </span>
+                            <span class="hw-ring-label hw-dual-label" v-else>
+                                <span class="hw-dual-item" :class="{ 'high': hwCpuPct >= 80 }">C{{ Math.round(hwCpuPct) }}</span>
+                                <span class="hw-dual-item" :class="{ 'high': hwMemPct >= 80 }">M{{ Math.round(hwMemPct) }}</span>
+                            </span>
+                        </div>
+
                         <div v-else-if="displayMusic" class="music-ctl-box" :class="{ 'expanded': isMusicExpanded }"
                             :key="'music_' + musicBoxKey" @click="expandMusic" style="cursor: pointer;">
                             <div class="music-top-row">
@@ -271,7 +309,7 @@
                 </div>
 
                 <transition name="pop">
-                    <div class="right-circle" :style="coreContentStyle" v-if="isSplitMode"
+                    <div class="right-circle" :style="coreContentStyle" v-if="isPomodoroVisible && isMusicCtlEnabled && !isPomodoroExpanded && !isMsgActive && !displaySysToast && !isMusicExpanded && !isMusicExpanding"
                         @click.stop="isPomodoroExpanded = true" style="cursor: pointer;">
                         <svg viewBox="0 0 24 24" class="pomodoro-svg" fill="none" stroke="currentColor" stroke-width="2"
                             stroke-linecap="round" stroke-linejoin="round" style="position: relative; z-index: 2;">
@@ -295,19 +333,29 @@
                     <div class="right-circle hw-right-circle" :style="coreContentStyle"
                         v-if="isHwAccessoryVisible"
                         @click.stop="expandHardware" style="cursor: pointer;">
-                        <svg viewBox="0 0 24 24" class="hw-chip-svg" :class="{ 'high': hwMaxPct >= 80 }"
-                            fill="none" stroke="currentColor" stroke-width="2"
-                            stroke-linecap="round" stroke-linejoin="round" style="position: relative; z-index: 2;">
-                            <rect x="4" y="4" width="16" height="16" rx="2" />
-                            <rect x="9" y="9" width="6" height="6" />
-                            <line x1="9" y1="1" x2="9" y2="4" />
-                            <line x1="15" y1="1" x2="15" y2="4" />
-                            <line x1="9" y1="20" x2="9" y2="23" />
-                            <line x1="15" y1="20" x2="15" y2="23" />
-                            <line x1="20" y1="9" x2="23" y2="9" />
-                            <line x1="20" y1="14" x2="23" y2="14" />
-                            <line x1="1" y1="9" x2="4" y2="9" />
-                            <line x1="1" y1="14" x2="4" y2="14" />
+                        <svg viewBox="0 0 28 28" class="hw-ring-mini-svg"
+                            fill="none" style="position: relative; z-index: 2;">
+                            <circle cx="14" cy="14" r="11" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2.5" />
+                            <template v-if="hwMode === 'dual'">
+                                <circle cx="14" cy="14" r="11" fill="none"
+                                    :stroke="hwCpuPct >= 80 ? '#a855f7' : '#ffffff'" stroke-width="2.5"
+                                    :stroke-dasharray="`${(hwCpuPct / 100) * 69.12} 69.12`"
+                                    stroke-linecap="round" transform="rotate(-90 14 14)"
+                                    style="transition: stroke-dasharray 0.5s ease;" />
+                                <circle cx="14" cy="14" r="6" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2" />
+                                <circle cx="14" cy="14" r="6" fill="none"
+                                    :stroke="hwMemPct >= 80 ? '#ff4757' : '#3b82f6'" stroke-width="2"
+                                    :stroke-dasharray="`${(hwMemPct / 100) * 37.7} 37.7`"
+                                    stroke-linecap="round" transform="rotate(-90 14 14)"
+                                    style="transition: stroke-dasharray 0.5s ease;" />
+                            </template>
+                            <template v-else>
+                                <circle cx="14" cy="14" r="11" fill="none"
+                                    :stroke="hwRingColor" stroke-width="2.5"
+                                    :stroke-dasharray="`${(hwRingPct / 100) * 69.12} 69.12`"
+                                    stroke-linecap="round" transform="rotate(-90 14 14)"
+                                    style="transition: stroke-dasharray 0.5s ease;" />
+                            </template>
                         </svg>
                     </div>
                 </transition>
@@ -340,6 +388,9 @@ import {
     NSD_POMODORO_VISIBLE,
     NSD_COUNTDOWN_VISIBLE,
     NSD_HW_ENABLED,
+    NSD_HW_MODE,
+    NSD_HW_DEFAULT_METRIC,
+    NSD_HW_ROTATION,
 } from '../constants/storageKeys';
 
 const isIslandVisible = ref(false);
@@ -400,7 +451,9 @@ const showCountdownText = computed(() => {
 
 const isSplitMode = computed(() => {
     if (isMsgActive.value || displaySysToast.value || isMusicExpanded.value || isMusicExpanding.value) return false;
-    return isPomodoroVisible.value && isMusicCtlEnabled.value && !isPomodoroExpanded.value;
+    if (isHardwareExpanded.value) return false;
+    return isPomodoroVisible.value && isMusicCtlEnabled.value && !isPomodoroExpanded.value
+        || hwEnabled.value && isMusicCtlEnabled.value && !isHardwareExpanded.value;
 });
 
 // 硬件监控附属图标可见性（镜像倒计时：音乐控制器开启 + 硬件监控开启 + 未展开）
@@ -409,9 +462,6 @@ const isHwAccessoryVisible = computed(() => {
     if (!hwEnabled.value || !isMusicCtlEnabled.value || isHardwareExpanded.value) return false;
     return true;
 });
-
-// 硬件负载峰值（用于附属图标高负载配色）
-const hwMaxPct = computed(() => Math.max(hwCpuPct.value, hwMemPct.value));
 
 // 关闭番茄钟展开（恢复岛尺寸）
 const handlePomoClose = () => {
@@ -629,24 +679,64 @@ const networkStatus = ref<'good' | 'warning' | 'error'>('good');
 
 // 硬件监控（灵动岛附属图标，由 LiveActive 的开关驱动；数据来自后端 monitor-stats 推送）
 const hwEnabled = ref(localStorage.getItem(NSD_HW_ENABLED) === 'true');
+const hwMode = ref(localStorage.getItem(NSD_HW_MODE) || 'single');
+const hwDefaultMetric = ref(localStorage.getItem(NSD_HW_DEFAULT_METRIC) || 'cpu');
 const hwCpuPct = ref(0);
 const hwMemPct = ref(0);
 const isHardwareExpanded = ref(false);
 
+// 轮换模式：当前显示的指标（CPU / 内存）
+const hwRotateMetric = ref<'cpu' | 'mem'>('cpu');
+let hwRotationTimer: number | null = null;
+
+// 当前激活的指标
+const hwActiveMetric = computed(() => {
+    if (hwMode.value === 'rotation') return hwRotateMetric.value;
+    return hwDefaultMetric.value;
+});
+
+// 单圆环/轮换模式的进度百分比
+const hwRingPct = computed(() => {
+    return hwActiveMetric.value === 'cpu' ? hwCpuPct.value : hwMemPct.value;
+});
+
+// 圆环颜色
+const hwRingColor = computed(() => {
+    if (hwActiveMetric.value === 'cpu') {
+        return hwCpuPct.value >= 80 ? '#a855f7' : '#ffffff';
+    }
+    return hwMemPct.value >= 80 ? '#ff4757' : '#3b82f6';
+});
+
+// 硬件监控主要显示（类似 showPomodoroText 模式）
+const showHardwareRing = computed(() => {
+    if (isMsgActive.value || displaySysToast.value || isMusicExpanded.value || isMusicExpanding.value) return false;
+    if (!hwEnabled.value) return false;
+    if (!isMusicCtlEnabled.value) return true;
+    if (isHardwareExpanded.value) return true;
+    if (isExpandedSize.value) return true;
+    return false;
+});
+
 const expandHardware = () => {
     if (isHardwareExpanded.value) return;
+    suppressContentWatch = true;
     isHardwareExpanded.value = true;
     const { h } = getBaseSize();
-    animateIslandSize(200, h);
+    // 展开时增加宽度以容纳 CPU/RAM 详情
+    animateIslandSize(currentWidth.value + 80, h);
+    setTimeout(() => { suppressContentWatch = false; }, 600);
 };
 
 const collapseHardware = () => {
     if (!isHardwareExpanded.value) return;
+    suppressContentWatch = true;
     isHardwareExpanded.value = false;
     const { h } = getBaseSize();
     const savedWidth = restoreIslandWidth();
     const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
     animateIslandSize(targetWidth, h);
+    setTimeout(() => { suppressContentWatch = false; }, 600);
 };
 
 // 音乐控制功能开�?
@@ -690,19 +780,22 @@ const currentRotIndex = ref(0); // 0=网速 1=音乐
 let rotationTimer: number | null = null;
 
 // 使用计算属性智能判断当前该显示�?
-const displaySpeed = computed(() => !isMsgActive.value && !displaySysToast.value && !showPomodoroText.value && !showCountdownText.value && (isRotationEnabled.value ? currentRotIndex.value === 0 : !isMusicCtlEnabled.value));
-const displayMusic = computed(() => !isMsgActive.value && !displaySysToast.value && !showPomodoroText.value && !showCountdownText.value && (isRotationEnabled.value ? currentRotIndex.value === 1 : isMusicCtlEnabled.value));
+const displaySpeed = computed(() => !isMsgActive.value && !displaySysToast.value && !showPomodoroText.value && !showCountdownText.value && !showHardwareRing.value && (isRotationEnabled.value ? currentRotIndex.value === 0 : !isMusicCtlEnabled.value));
+const displayMusic = computed(() => !isMsgActive.value && !displaySysToast.value && !showPomodoroText.value && !showCountdownText.value && !showHardwareRing.value && (isRotationEnabled.value ? currentRotIndex.value === 1 : isMusicCtlEnabled.value));
 
 // 辅助函数：获取当前状态应该拥有的默认大小
 const getBaseSize = () => {
-    if (isPomodoroVisible.value || isCountdownVisible.value) return { w: 250, h: 38 };
+    if (isPomodoroVisible.value || isCountdownVisible.value || hwEnabled.value) return { w: 250, h: 38 };
     if (displaySpeed.value) return { w: 150, h: 34 };
     return { w: 260, h: 42 };
 };
 
-// 监听内容切换，触发丝滑动画�?
-watch([displaySpeed, displayMusic, showPomodoroText, showCountdownText], () => {
-    // 只有在没有被临时弹窗（消息、音乐展开）霸占时，才执行基础大小切换
+let suppressContentWatch = false;
+
+// 监听内容切换，触发丝滑动画
+watch([displaySpeed, displayMusic, showPomodoroText, showCountdownText, showHardwareRing], () => {
+    if (suppressContentWatch) return;
+    // 只有在没有被临时弹窗
     if (!isMsgActive.value && !displaySysToast.value && !isMusicExpanded.value && !isMusicExpanding.value) {
         const { h } = getBaseSize();
         const savedWidth = restoreIslandWidth();
@@ -770,6 +863,21 @@ const stopRotation = () => {
     if (rotationTimer) {
         clearInterval(rotationTimer);
         rotationTimer = null;
+    }
+};
+
+// 硬件监控轮换定时器：每 5 秒切换 CPU / 内存
+const startHwRotation = () => {
+    stopHwRotation();
+    hwRotationTimer = window.setInterval(() => {
+        hwRotateMetric.value = hwRotateMetric.value === 'cpu' ? 'mem' : 'cpu';
+    }, 5000);
+};
+
+const stopHwRotation = () => {
+    if (hwRotationTimer) {
+        clearInterval(hwRotationTimer);
+        hwRotationTimer = null;
     }
 };
 
@@ -2312,6 +2420,15 @@ onMounted(async () => {
     await listen<{ enabled: boolean }>('control-hardware-mon', (event) => {
         hwEnabled.value = event.payload.enabled;
         localStorage.setItem(NSD_HW_ENABLED, String(event.payload.enabled));
+        // 同步模式和默认指标
+        hwMode.value = localStorage.getItem(NSD_HW_MODE) || 'single';
+        hwDefaultMetric.value = localStorage.getItem(NSD_HW_DEFAULT_METRIC) || 'cpu';
+        // 控制轮换定时器
+        if (hwEnabled.value && hwMode.value === 'rotation') {
+            startHwRotation();
+        } else {
+            stopHwRotation();
+        }
     });
 
     // 监听后端推送的 monitor-stats 事件（硬件 + 网速统一）
@@ -2348,6 +2465,11 @@ onMounted(async () => {
 
     // 在挂载时通知后端是否 emit（仅当硬件监控开启时推送）
     invoke('set_hardware_emit', { enabled: hwEnabled.value }).catch(() => {});
+
+    // 硬件监控轮换模式启动定时器
+    if (hwEnabled.value && hwMode.value === 'rotation') {
+        startHwRotation();
+    }
 
     // 启动网速轮询定时器（硬件已迁移至推送，不再在此轮询）
     speedTimer = setInterval(async () => {
@@ -2485,6 +2607,7 @@ onUnmounted(() => {
     clearInterval(speedTimer);
     clearInterval(pingTimer);
     stopRotation();
+    stopHwRotation();
     clearInterval(musicTimer);
     clearInterval(notifyTimer);
     stopProgressTimer();
@@ -2703,19 +2826,72 @@ onUnmounted(() => {
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
 }
 
-/* 硬件监控附属图标（拆分模式右侧圆钮，无背景填充，图标由 .hw-chip-svg 提供颜色） */
+/* 硬件监控附属图标（拆分模式右侧圆钮，显示小型圆环） */
 .hw-right-circle {
     cursor: pointer;
 }
 
-.hw-chip-svg {
-    width: 22px;
-    height: 22px;
-    color: #3b82f6;
-    transition: color 0.3s ease;
+.hw-ring-mini-svg {
+    width: 24px;
+    height: 24px;
 }
 
-.hw-chip-svg.high {
+/* 硬件监控主环形显示 */
+.hardware-ring-box {
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    width: 100%;
+    height: 100%;
+    padding-left: 6px;
+    gap: 10px;
+}
+
+.hw-ring-svg {
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+}
+
+.hw-ring-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+}
+
+.hw-metric-name {
+    font-size: 9px;
+    font-weight: 700;
+    opacity: 0.5;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.hw-metric-val {
+    font-size: 13px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+
+.hw-metric-val.high {
+    color: #ff4757;
+}
+
+.hw-dual-label {
+    gap: 8px;
+}
+
+.hw-dual-item {
+    font-size: 12px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+
+.hw-dual-item.high {
     color: #ff4757;
 }
 

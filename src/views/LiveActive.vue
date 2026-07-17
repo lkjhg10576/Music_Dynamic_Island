@@ -274,11 +274,11 @@
                                         <div class="hw-section-label">默认指标</div>
                                         <div class="hw-metric-row">
                                             <label class="hw-radio-label">
-                                                <input type="radio" value="cpu" v-model="hwDefaultMetric" @change="saveHwConfig">
+                                                <input type="radio" value="cpu" v-model="hwDefaultMetric" @change="saveHwConfig; syncHwToWidget()">
                                                 <span class="radio-text">CPU</span>
                                             </label>
                                             <label class="hw-radio-label">
-                                                <input type="radio" value="mem" v-model="hwDefaultMetric" @change="saveHwConfig">
+                                                <input type="radio" value="mem" v-model="hwDefaultMetric" @change="saveHwConfig; syncHwToWidget()">
                                                 <span class="radio-text">内存</span>
                                             </label>
                                         </div>
@@ -406,16 +406,22 @@ async function toggleHwEnabled() {
         // command 可能不存在，忽略
     }
     // 跨窗口通知灵动岛：同步硬件监控附属图标的显示状态
-    try {
-        await emit('control-hardware-mon', { enabled: hwEnabled.value });
-    } catch (_e) {
-        // 忽略
-    }
+    syncHwToWidget();
 }
 
 function setHwMode(mode: string) {
     hwMode.value = mode;
     saveHwConfig();
+    // 通知灵动岛更新模式和指标
+    syncHwToWidget();
+}
+
+function syncHwToWidget() {
+    try {
+        emit('control-hardware-mon', { enabled: hwEnabled.value });
+    } catch (_e) {
+        // 忽略
+    }
 }
 
 function saveCdConfig() {
