@@ -333,7 +333,7 @@
                     <div class="set-item" :class="{ 'disabled-set-item': enableRotation }">
                         <div class="set-item-meta">
                             <span class="set-item-title">系统硬件监控 <p class="set-item-pro-tag">PRO</p></span>
-                            <span class="set-item-desc">{{ enableRotation ? '轮换开启中，已禁用' : '显示 CPU / 内存实时占用率'
+                            <span class="set-item-desc">{{ enableRotation ? '轮换开启中，已禁用' : '显示 CPU / 内存实时占用率（后端推送）'
                                 }}</span>
                         </div>
                         <label class="switch">
@@ -341,6 +341,39 @@
                                 :disabled="enableRotation">
                             <span class="slider"></span>
                         </label>
+                    </div>
+
+                    <!-- 硬件模式选择（仅当硬件监控开启时显示） -->
+                    <div class="set-item" v-if="enableHardwareMon && !enableRotation"
+                         style="flex-direction: column; align-items: flex-start; gap: 8px; padding-top: 0;">
+                        <div class="set-item-meta">
+                            <span class="set-item-title" style="font-size: 12px;">显示模式</span>
+                        </div>
+                        <div class="hw-mode-select-row">
+                            <label class="hw-mode-label">
+                                <input type="radio" value="single" v-model="hwMode" @change="saveHwConfig">
+                                <span>单圆环</span>
+                            </label>
+                            <label class="hw-mode-label">
+                                <input type="radio" value="dual" v-model="hwMode" @change="saveHwConfig">
+                                <span>双圆环</span>
+                            </label>
+                            <label class="hw-mode-label">
+                                <input type="radio" value="rotation" v-model="hwMode" @change="saveHwConfig">
+                                <span>轮换</span>
+                            </label>
+                        </div>
+                        <div v-if="hwMode === 'single'" class="hw-default-row">
+                            <span class="hw-default-label">默认指标：</span>
+                            <label class="hw-mode-label mini">
+                                <input type="radio" value="cpu" v-model="hwDefaultMetric" @change="saveHwConfig">
+                                <span>CPU</span>
+                            </label>
+                            <label class="hw-mode-label mini">
+                                <input type="radio" value="mem" v-model="hwDefaultMetric" @change="saveHwConfig">
+                                <span>内存</span>
+                            </label>
+                        </div>
                     </div>
 
                     <div class="set-item" :class="{ 'disabled-set-item': enableRotation }">
@@ -558,6 +591,17 @@ const enableHardwareMon = ref(localStorage.getItem(NSD_HARDWARE_MON) === 'true')
 const msgModeEnabled = ref(localStorage.getItem(NSD_MSG_MODE) === 'true');
 const enableRotation = ref(localStorage.getItem(NSD_ROTATION_MODE) === 'true');
 let wasMusicEnabledBeforeHardware = false;
+
+// 硬件监控配置（与 LiveActive 双向同步）
+const hwMode = ref(localStorage.getItem(NSD_HW_MODE) || 'single');
+const hwDefaultMetric = ref(localStorage.getItem(NSD_HW_DEFAULT_METRIC) || 'cpu');
+
+function saveHwConfig() {
+    localStorage.setItem(NSD_HW_MODE, hwMode.value);
+    localStorage.setItem(NSD_HW_DEFAULT_METRIC, hwDefaultMetric.value);
+    localStorage.setItem(NSD_HW_ROTATION, String(hwMode.value === 'rotation'));
+    localStorage.setItem(NSD_HW_DUAL_RING, String(hwMode.value === 'dual'));
+}
 
 // 省内存模式：关闭控制台时彻底销毁主窗口 WebView，释放 50-120MB 内存（B1 方案）
 const destroyOnClose = ref(localStorage.getItem(NSD_DESTROY_ON_CLOSE) === 'true');
@@ -880,22 +924,15 @@ const formatMem = (bytes: number) => {
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 };
 
-// 获取并更新网络流量统计
+// 获取并更新网络流量统计（仅网速，硬件已迁移至推送）
 const fetchSpeedStats = async () => {
     try {
-        // 1. 网络流量统计始终执行（保持 trafficData 累计与上传/下载速度展示）
         const [currentRx, currentTx] = await invoke<[number, number]>('get_network_stats');
         if (lastRx !== 0) {
             const rxDiff = currentRx - lastRx;
             const txDiff = currentTx - lastTx;
             downloadSpeed.value = formatSpeed(rxDiff);
             uploadSpeed.value = formatSpeed(txDiff);
-
-            // 网速模式：折线图填充下载速度（MB/s 浮点，不做截断以捕捉微小波动）
-            if (chartMetric.value === 'speed') {
-                const speedMB = rxDiff / (1024 * 1024);
-                pushChartData(speedMB);
-            }
 
             if (rxDiff > 0 || txDiff > 0) {
                 const todayStr = getLocalYYYYMMDD(new Date());
@@ -914,23 +951,10 @@ const fetchSpeedStats = async () => {
         }
         lastRx = currentRx;
         lastTx = currentTx;
-
-        // 2. CPU / 内存模式：拉取硬件数据并填充对应折线图
-        if (chartMetric.value === 'cpu' || chartMetric.value === 'ram') {
-            const [cpu, memUsed, memTotal] = await invoke<[number, number, number]>('get_hardware_stats');
-            cpuUsageVal.value = Math.round(cpu);
-            memUsedVal.value = memUsed;
-            memTotalVal.value = memTotal;
-            memUsageVal.value = memTotal > 0 ? Math.round((memUsed / memTotal) * 100) : 0;
-
-            if (chartMetric.value === 'cpu') {
-                pushChartData(cpuUsageVal.value);
-            } else {
-                pushChartData(memUsageVal.value);
-            }
-        }
     } catch (error) {
         console.error('控制台流量获取失败:', error);
+    }
+};
     }
 };
 
@@ -1147,6 +1171,58 @@ onMounted(async () => {
     applyTheme();
     systemThemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
     systemThemeMedia.addEventListener('change', handleSystemThemeUpdate);
+
+    // 监听后端推送的 monitor-stats 事件（硬件 + 网速统一）
+    await listen<any>('monitor-stats', (event) => {
+        const p = event.payload;
+        // 网速数据
+        if (typeof p.download_speed === 'number') {
+            downloadSpeed.value = formatSpeed(p.download_speed);
+        }
+        if (typeof p.upload_speed === 'number') {
+            uploadSpeed.value = formatSpeed(p.upload_speed);
+        }
+        // 流量统计累计
+        if (typeof p.download_bytes === 'number' && typeof p.upload_bytes === 'number') {
+            const todayStr = getLocalYYYYMMDD(new Date());
+            if (!trafficData.value[todayStr]) {
+                trafficData.value[todayStr] = { up: 0, down: 0 };
+            }
+            // 用本次累计值 - 上次累计值 = 差值
+            if (lastRx > 0) {
+                const rxDiff = Math.max(0, p.download_bytes - lastRx);
+                const txDiff = Math.max(0, p.upload_bytes - lastTx);
+                trafficData.value[todayStr].down += rxDiff;
+                trafficData.value[todayStr].up += txDiff;
+                saveThrottleCounter++;
+                if (saveThrottleCounter >= 5) {
+                    localStorage.setItem(NSD_TRAFFIC_STATS, JSON.stringify(trafficData.value));
+                    saveThrottleCounter = 0;
+                }
+            }
+            lastRx = p.download_bytes;
+            lastTx = p.upload_bytes;
+        }
+        // 网速模式：折线图填充下载速度
+        if (chartMetric.value === 'speed' && typeof p.download_speed === 'number') {
+            const speedMB = p.download_speed / (1024 * 1024);
+            pushChartData(speedMB);
+        }
+        // CPU / 内存数据
+        if (typeof p.cpu_pct === 'number') {
+            cpuUsageVal.value = Math.round(p.cpu_pct);
+        }
+        if (typeof p.mem_pct === 'number') {
+            memUsageVal.value = Math.round(p.mem_pct);
+        }
+        // CPU / 内存模式：折线图填充
+        if (chartMetric.value === 'cpu' && typeof p.cpu_pct === 'number') {
+            pushChartData(cpuUsageVal.value);
+        }
+        if (chartMetric.value === 'ram' && typeof p.mem_pct === 'number') {
+            pushChartData(memUsageVal.value);
+        }
+    });
 
     fetchSpeedStats();
     speedTimer = setInterval(fetchSpeedStats, 1000) as unknown as number;
@@ -2471,4 +2547,43 @@ input:disabled+.slider {
     background-color: #ff4757 !important;
     color: #ffffff !important;
 }
+
+/* 硬件监控模式选择 */
+.hw-mode-select-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.hw-mode-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--item-title-color);
+    user-select: none;
+}
+
+.hw-mode-label.mini {
+    font-size: 11px;
+}
+
+.hw-mode-label input[type="radio"] {
+    accent-color: #3b82f6;
+    margin: 0;
+}
+
+.hw-default-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.hw-default-label {
+    font-size: 11px;
+    color: var(--item-desc-color);
+}
+
 </style>

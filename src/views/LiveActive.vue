@@ -55,7 +55,7 @@
                                 <button class="pomo-btn" @click="handlePomoStop">停止</button>
                             </template>
                         </div>
-                        <label v-else-if="item.id !== 'countdown'" class="custom-switch" @click.stop>
+                        <label v-else-if="item.id !== 'countdown' && item.id !== 'hardware'" class="custom-switch" @click.stop>
                             <input type="checkbox" v-model="item.enabled" :disabled="item.disable">
                             <span class="slider"></span>
                         </label>
@@ -230,6 +230,87 @@
                                 </div>
                             </template>
 
+                            <template v-else-if="item.id === 'hardware'">
+                                <div class="hw-config-panel">
+                                    <!-- 硬件监控总开关 -->
+                                    <div class="hw-toggle-row">
+                                        <div class="hw-toggle-label">
+                                            <span class="hw-toggle-title">启用硬件监控</span>
+                                            <span class="hw-toggle-desc">后端实时推送 CPU / 内存数据</span>
+                                        </div>
+                                        <label class="custom-switch mini">
+                                            <input type="checkbox" v-model="hwEnabled" @change="toggleHwEnabled">
+                                            <span class="slider"></span>
+                                        </label>
+                                    </div>
+
+                                    <!-- 显示模式选择 -->
+                                    <div class="hw-mode-section" v-if="hwEnabled">
+                                        <div class="hw-section-label">显示模式</div>
+                                        <div class="hw-mode-grid">
+                                            <button class="hw-mode-btn" :class="{ active: hwMode === 'single' }"
+                                                @click="setHwMode('single')">
+                                                <span class="mode-icon">◎</span>
+                                                <span class="mode-name">单圆环</span>
+                                                <span class="mode-desc">固定显示选中指标</span>
+                                            </button>
+                                            <button class="hw-mode-btn" :class="{ active: hwMode === 'dual' }"
+                                                @click="setHwMode('dual')">
+                                                <span class="mode-icon">◉</span>
+                                                <span class="mode-name">双圆环</span>
+                                                <span class="mode-desc">CPU 外圈 + 内存内圈</span>
+                                            </button>
+                                            <button class="hw-mode-btn" :class="{ active: hwMode === 'rotation' }"
+                                                @click="setHwMode('rotation')">
+                                                <span class="mode-icon">↻</span>
+                                                <span class="mode-name">轮换</span>
+                                                <span class="mode-desc">每 5 秒切换 CPU / 内存</span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <!-- 默认指标选择（仅单圆环模式显示） -->
+                                    <div class="hw-metric-section" v-if="hwEnabled && hwMode === 'single'">
+                                        <div class="hw-section-label">默认指标</div>
+                                        <div class="hw-metric-row">
+                                            <label class="hw-radio-label">
+                                                <input type="radio" value="cpu" v-model="hwDefaultMetric" @change="saveHwConfig">
+                                                <span class="radio-text">CPU</span>
+                                            </label>
+                                            <label class="hw-radio-label">
+                                                <input type="radio" value="mem" v-model="hwDefaultMetric" @change="saveHwConfig">
+                                                <span class="radio-text">内存</span>
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <!-- 实时预览 -->
+                                    <div class="hw-live-preview" v-if="hwEnabled">
+                                        <div class="hw-section-label">实时预览</div>
+                                        <div class="hw-ring-preview">
+                                            <svg viewBox="0 0 60 60" class="hw-preview-svg">
+                                                <circle cx="30" cy="30" r="24" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="5" />
+                                                <circle cx="30" cy="30" r="24" fill="none" :stroke="hwCpuPct >= 80 ? '#a855f7' : '#ffffff'" stroke-width="5"
+                                                    :stroke-dasharray="`${(hwCpuPct / 100) * 150.8} 150.8`"
+                                                    stroke-linecap="round" transform="rotate(-90 30 30)"
+                                                    style="transition: stroke-dasharray 0.5s ease;" />
+                                            </svg>
+                                            <span class="hw-preview-label">CPU {{ Math.round(hwCpuPct) }}%</span>
+                                        </div>
+                                        <div class="hw-ring-preview">
+                                            <svg viewBox="0 0 60 60" class="hw-preview-svg">
+                                                <circle cx="30" cy="30" r="24" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="5" />
+                                                <circle cx="30" cy="30" r="24" fill="none" :stroke="hwMemPct >= 80 ? '#ff4757' : '#3b82f6'" stroke-width="5"
+                                                    :stroke-dasharray="`${(hwMemPct / 100) * 150.8} 150.8`"
+                                                    stroke-linecap="round" transform="rotate(-90 30 30)"
+                                                    style="transition: stroke-dasharray 0.5s ease;" />
+                                            </svg>
+                                            <span class="hw-preview-label">RAM {{ Math.round(hwMemPct) }}%</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+
                             <template v-else>
                                 <div class="pro-coming-soon">
                                     <div class="loader-line"></div>
@@ -255,6 +336,11 @@ import {
     NSD_POMODORO_BREAK_SECS,
     NSD_POMODORO_CYCLES,
     NSD_COUNTDOWN_SECS,
+    NSD_HW_ENABLED,
+    NSD_HW_MODE,
+    NSD_HW_DEFAULT_METRIC,
+    NSD_HW_ROTATION,
+    NSD_HW_DUAL_RING,
 } from '../constants/storageKeys';
 
 // ===== 三步设置状态 =====
@@ -296,6 +382,35 @@ const cdFormattedRemaining = computed(() => {
     const s = (t % 60).toString().padStart(2, '0');
     return `${m}:${s}`;
 });
+
+// ===== 硬件监控配置 =====
+const hwEnabled = ref(localStorage.getItem(NSD_HW_ENABLED) === 'true');
+const hwMode = ref(localStorage.getItem(NSD_HW_MODE) || 'single');
+const hwDefaultMetric = ref(localStorage.getItem(NSD_HW_DEFAULT_METRIC) || 'cpu');
+const hwCpuPct = ref(0);
+const hwMemPct = ref(0);
+
+function saveHwConfig() {
+    localStorage.setItem(NSD_HW_ENABLED, String(hwEnabled.value));
+    localStorage.setItem(NSD_HW_MODE, hwMode.value);
+    localStorage.setItem(NSD_HW_DEFAULT_METRIC, hwDefaultMetric.value);
+    localStorage.setItem(NSD_HW_ROTATION, String(hwMode.value === 'rotation'));
+    localStorage.setItem(NSD_HW_DUAL_RING, String(hwMode.value === 'dual'));
+}
+
+async function toggleHwEnabled() {
+    saveHwConfig();
+    try {
+        await invoke('set_hardware_emit', { enabled: hwEnabled.value });
+    } catch (_e) {
+        // command 可能不存在，忽略
+    }
+}
+
+function setHwMode(mode: string) {
+    hwMode.value = mode;
+    saveHwConfig();
+}
 
 function saveCdConfig() {
     localStorage.setItem(NSD_COUNTDOWN_SECS, (cdMinutes.value * 60 + cdSeconds.value).toString());
@@ -400,6 +515,15 @@ const activities = ref([
         title: '快捷倒计时',
         desc: '自定义时长倒计时',
         accent: '#ff9800',
+        enabled: false,
+        disable: false
+    },
+    {
+        id: 'hardware',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" /><line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" /><line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" /><line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" /></svg>',
+        title: '硬件监控',
+        desc: '实时监测处理器与内存',
+        accent: '#3b82f6',
         enabled: false,
         disable: false
     },
@@ -553,6 +677,18 @@ onMounted(async () => {
             cdTotalSecs.value = state.total_secs;
             cdFinished.value = state.phase === 'finished';
         }
+    } catch (_e) {}
+
+    // 监听后端硬件监控推送事件
+    await listen<any>('monitor-stats', (event) => {
+        const p = event.payload;
+        if (typeof p.cpu_pct === 'number') hwCpuPct.value = p.cpu_pct;
+        if (typeof p.mem_pct === 'number') hwMemPct.value = p.mem_pct;
+    });
+
+    // 初始化时同步硬件 emit 开关
+    try {
+        await invoke('set_hardware_emit', { enabled: hwEnabled.value });
     } catch (_e) {}
 
     nextTick(() => { checkScroll(); });
@@ -1507,4 +1643,152 @@ onUnmounted(() => {
 .cd-reset-btn:hover {
     background: var(--control-border);
 }
+
+/* ===== 硬件监控卡片样式 ===== */
+.hw-config-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 4px 0;
+}
+
+.hw-toggle-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.hw-toggle-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.hw-toggle-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--item-title-color);
+}
+
+.hw-toggle-desc {
+    font-size: 11px;
+    color: var(--item-desc-color);
+}
+
+.hw-section-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--item-desc-color);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.hw-mode-section,
+.hw-metric-section {
+    display: flex;
+    flex-direction: column;
+}
+
+.hw-mode-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+
+.hw-mode-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 6px;
+    border-radius: 10px;
+    border: 1px solid var(--control-border);
+    background: var(--card-bg);
+    color: var(--item-title-color);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    outline: none;
+}
+
+.hw-mode-btn:hover {
+    border-color: var(--accent-color, #3b82f6);
+}
+
+.hw-mode-btn.active {
+    border-color: var(--accent-color, #3b82f6);
+    background: rgba(59, 130, 246, 0.08);
+}
+
+.mode-icon {
+    font-size: 18px;
+    line-height: 1;
+}
+
+.mode-name {
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.mode-desc {
+    font-size: 10px;
+    color: var(--item-desc-color);
+    text-align: center;
+    line-height: 1.3;
+}
+
+.hw-metric-row {
+    display: flex;
+    gap: 16px;
+}
+
+.hw-radio-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--item-title-color);
+}
+
+.hw-radio-label input[type="radio"] {
+    accent-color: var(--accent-color, #3b82f6);
+}
+
+.hw-live-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.hw-live-preview .hw-section-label {
+    margin-bottom: 4px;
+}
+
+.hw-live-preview {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.hw-ring-preview {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.hw-preview-svg {
+    width: 56px;
+    height: 56px;
+}
+
+.hw-preview-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--item-desc-color);
+}
+
 </style>
