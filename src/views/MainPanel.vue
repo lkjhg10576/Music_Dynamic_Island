@@ -540,7 +540,8 @@ import {
     NSD_AUTO_HIDE_ENABLED, NSD_AUTO_HIDE_DELAY,
     NSD_AUTO_COLLAPSE_ENABLED, NSD_AUTO_COLLAPSE_DELAY,
     NSD_THEME_MODE, NSD_TARGET_PLAYER, NSD_TRAFFIC_STATS,
-    NSD_CHART_METRIC, NSD_AUTO_HIDE_FS
+    NSD_CHART_METRIC, NSD_AUTO_HIDE_FS,
+    NSD_HW_MODE, NSD_HW_DEFAULT_METRIC, NSD_HW_ROTATION, NSD_HW_DUAL_RING
 } from '../constants/storageKeys';
 
 const isWidgetVisible = ref(false);
@@ -953,8 +954,6 @@ const fetchSpeedStats = async () => {
         lastTx = currentTx;
     } catch (error) {
         console.error('控制台流量获取失败:', error);
-    }
-};
     }
 };
 

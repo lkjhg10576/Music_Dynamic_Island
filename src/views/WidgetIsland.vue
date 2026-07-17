@@ -357,7 +357,7 @@ import {
     NSD_TARGET_PLAYER, NSD_AUTO_HIDE_FS,
     NSD_POMODORO_VISIBLE,
     NSD_COUNTDOWN_VISIBLE,
-    NSD_HW_ENABLED, NSD_HW_MODE, NSD_HW_DEFAULT_METRIC, NSD_HW_ROTATION, NSD_HW_DUAL_RING,
+    NSD_HW_ENABLED, NSD_HW_MODE, NSD_HW_DEFAULT_METRIC,
 } from '../constants/storageKeys';
 
 const isIslandVisible = ref(false);
@@ -477,7 +477,6 @@ const isAutoCollapseEnabled = ref(localStorage.getItem(NSD_AUTO_COLLAPSE_ENABLED
 
 // 记录当前是否显示上行网速（用于轮换�?
 const isShowingUpload = ref(false);
-const isShowingCPU = ref(true);
 let speedCycleTimer: number | null = null;
 
 // 控制 DOM 真正的高宽变量与消息数据
@@ -2859,16 +2858,6 @@ onUnmounted(() => {
 :global(.dark-theme) .hw-close-btn:hover {
     background: rgba(255, 255, 255, 0.35);
 }
-    position: absolute;
-    /* 改为绝对定位，实现无缝平�?*/
-    left: 0;
-    top: 0;
-    display: flex;
-    align-items: center;
-    width: 100%;
-    height: 100%;
-}
-
 .music-ctl-box {
     justify-content: flex-start;
 }
