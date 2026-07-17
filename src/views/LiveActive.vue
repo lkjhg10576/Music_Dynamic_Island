@@ -274,11 +274,11 @@
                                         <div class="hw-section-label">默认指标</div>
                                         <div class="hw-metric-row">
                                             <label class="hw-radio-label">
-                                                <input type="radio" value="cpu" v-model="hwDefaultMetric" @change="saveHwConfig; syncHwToWidget()">
+                                                <input type="radio" value="cpu" v-model="hwDefaultMetric" @change="saveHwConfig(); syncHwToWidget()">
                                                 <span class="radio-text">CPU</span>
                                             </label>
                                             <label class="hw-radio-label">
-                                                <input type="radio" value="mem" v-model="hwDefaultMetric" @change="saveHwConfig; syncHwToWidget()">
+                                                <input type="radio" value="mem" v-model="hwDefaultMetric" @change="saveHwConfig(); syncHwToWidget()">
                                                 <span class="radio-text">内存</span>
                                             </label>
                                         </div>
@@ -418,7 +418,12 @@ function setHwMode(mode: string) {
 
 function syncHwToWidget() {
     try {
-        emit('control-hardware-mon', { enabled: hwEnabled.value });
+        // 直接把完整配置随事件携带，避免灵动岛窗口再回头读 localStorage 的时序竞态
+        emit('control-hardware-mon', {
+            enabled: hwEnabled.value,
+            mode: hwMode.value,
+            defaultMetric: hwDefaultMetric.value,
+        });
     } catch (_e) {
         // 忽略
     }

@@ -889,6 +889,16 @@ const stopHwRotation = () => {
     }
 };
 
+// 兜底：无论 hwMode / hwEnabled 以何种方式变化（跨窗口事件、启动读取等），
+// 都确保轮换定时器与当前模式严格同步，避免轮换模式不工作
+watch([hwMode, hwEnabled], () => {
+    if (hwEnabled.value && hwMode.value === 'rotation') {
+        startHwRotation();
+    } else {
+        stopHwRotation();
+    }
+});
+
 // 计算并吸附到左下角的方法
 const snapToBottomLeft = async () => {
     try {
@@ -2390,12 +2400,21 @@ onMounted(async () => {
     }
 
     // 监听来自 LiveActive 的硬件监控开关（跨窗口事件，统一由 NSD_HW_ENABLED 驱动）
-    await listen<{ enabled: boolean }>('control-hardware-mon', (event) => {
-        hwEnabled.value = event.payload.enabled;
-        localStorage.setItem(NSD_HW_ENABLED, String(event.payload.enabled));
-        // 同步模式和默认指标
-        hwMode.value = localStorage.getItem(NSD_HW_MODE) || 'single';
-        hwDefaultMetric.value = localStorage.getItem(NSD_HW_DEFAULT_METRIC) || 'cpu';
+    await listen<any>('control-hardware-mon', (event) => {
+        const p = event.payload || {};
+        // 优先使用事件直接携带的完整配置，缺失时回退到 localStorage，保证健壮性
+        if (typeof p.enabled === 'boolean') {
+            hwEnabled.value = p.enabled;
+            localStorage.setItem(NSD_HW_ENABLED, String(p.enabled));
+        }
+        if (typeof p.mode === 'string') {
+            hwMode.value = p.mode;
+            localStorage.setItem(NSD_HW_MODE, p.mode);
+        }
+        if (typeof p.defaultMetric === 'string') {
+            hwDefaultMetric.value = p.defaultMetric;
+            localStorage.setItem(NSD_HW_DEFAULT_METRIC, p.defaultMetric);
+        }
         // 控制轮换定时器
         if (hwEnabled.value && hwMode.value === 'rotation') {
             startHwRotation();
