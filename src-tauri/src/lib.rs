@@ -439,13 +439,22 @@ fn set_destroy_on_close(enabled: bool) {
 /// 为主窗口绑定关闭事件处理：
 /// - 省内存模式关闭（默认）：prevent_close + hide（原行为）
 /// - 省内存模式开启：prevent_close + destroy（彻底销毁 WebView 释放内存）
+///
+/// 注意：destroy() 不能在 CloseRequested 回调的同步上下文中调用，
+/// Windows 上会阻塞/死锁事件循环导致窗口完全失去响应（点 X 无反应）。
+/// 故将 destroy 推迟到独立线程执行，让事件回调先干净返回。
 fn bind_main_window_close_event(window: &tauri::WebviewWindow) {
     let win_clone = window.clone();
     window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             if DESTROY_ON_CLOSE.load(Ordering::Relaxed) {
                 api.prevent_close();
-                let _ = win_clone.destroy();
+                let destroy_win = win_clone.clone();
+                std::thread::spawn(move || {
+                    // 让 CloseRequested 事件派发先完成，再销毁 WebView
+                    std::thread::sleep(Duration::from_millis(50));
+                    let _ = destroy_win.destroy();
+                });
             } else {
                 api.prevent_close();
                 let _ = win_clone.hide();
