@@ -437,7 +437,7 @@ fn bind_main_window_close_event(window: &tauri::WebviewWindow) {
 /// 省内存模式下窗口已被销毁时，从托盘重建主窗口
 fn recreate_main_window(app: &tauri::AppHandle) {
     let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("/".into()))
-        .title("NSD 控制台")
+        .title("MDI 控制台")
         .inner_size(700.0, 550.0)
         .resizable(false)
         .maximizable(false)
