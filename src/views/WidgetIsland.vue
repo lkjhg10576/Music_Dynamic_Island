@@ -390,7 +390,6 @@ import {
     NSD_HW_ENABLED,
     NSD_HW_MODE,
     NSD_HW_DEFAULT_METRIC,
-    NSD_HW_ROTATION,
 } from '../constants/storageKeys';
 
 const isIslandVisible = ref(false);
