@@ -332,52 +332,6 @@
 
                     <div class="set-item" :class="{ 'disabled-set-item': enableRotation }">
                         <div class="set-item-meta">
-                            <span class="set-item-title">系统硬件监控 <p class="set-item-pro-tag">PRO</p></span>
-                            <span class="set-item-desc">{{ enableRotation ? '轮换开启中，已禁用' : '显示 CPU / 内存实时占用率（后端推送）'
-                                }}</span>
-                        </div>
-                        <label class="switch">
-                            <input type="checkbox" v-model="enableHardwareMon" @change="toggleHardwareMon"
-                                :disabled="enableRotation">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-
-                    <!-- 硬件模式选择（仅当硬件监控开启时显示） -->
-                    <div class="set-item" v-if="enableHardwareMon && !enableRotation"
-                         style="flex-direction: column; align-items: flex-start; gap: 8px; padding-top: 0;">
-                        <div class="set-item-meta">
-                            <span class="set-item-title" style="font-size: 12px;">显示模式</span>
-                        </div>
-                        <div class="hw-mode-select-row">
-                            <label class="hw-mode-label">
-                                <input type="radio" value="single" v-model="hwMode" @change="saveHwConfig">
-                                <span>单圆环</span>
-                            </label>
-                            <label class="hw-mode-label">
-                                <input type="radio" value="dual" v-model="hwMode" @change="saveHwConfig">
-                                <span>双圆环</span>
-                            </label>
-                            <label class="hw-mode-label">
-                                <input type="radio" value="rotation" v-model="hwMode" @change="saveHwConfig">
-                                <span>轮换</span>
-                            </label>
-                        </div>
-                        <div v-if="hwMode === 'single'" class="hw-default-row">
-                            <span class="hw-default-label">默认指标：</span>
-                            <label class="hw-mode-label mini">
-                                <input type="radio" value="cpu" v-model="hwDefaultMetric" @change="saveHwConfig">
-                                <span>CPU</span>
-                            </label>
-                            <label class="hw-mode-label mini">
-                                <input type="radio" value="mem" v-model="hwDefaultMetric" @change="saveHwConfig">
-                                <span>内存</span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="set-item" :class="{ 'disabled-set-item': enableRotation }">
-                        <div class="set-item-meta">
                             <span class="set-item-title">静默消息模式</span>
                             <span class="set-item-desc">{{ enableRotation ? '轮换开启中，已禁用' : '平时自动隐藏，收到消息后才弹出' }}</span>
                         </div>
@@ -457,7 +411,7 @@
                     <div class="set-item">
                         <div class="set-item-meta">
                             <span class="set-item-title">灵动岛轮换</span>
-                            <span class="set-item-desc">在网速岛、音乐岛、硬件监控间轮换</span>
+                            <span class="set-item-desc">在网速岛、音乐岛间轮换</span>
                         </div>
                         <label class="switch">
                             <input type="checkbox" v-model="enableRotation" @change="toggleRotation">
@@ -534,14 +488,13 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { formatSpeed } from '../utils/format';
 import {
     NSD_ISLAND_OPACITY, NSD_ISLAND_THEME,
-    NSD_MUSIC_CTRL, NSD_MSG_NOTIFY, NSD_HARDWARE_MON,
+    NSD_MUSIC_CTRL, NSD_MSG_NOTIFY,
     NSD_MSG_MODE, NSD_ROTATION_MODE, NSD_PIN_TASKBAR,
     NSD_POSITION_LOCKED, NSD_DESTROY_ON_CLOSE,
     NSD_AUTO_HIDE_ENABLED, NSD_AUTO_HIDE_DELAY,
     NSD_AUTO_COLLAPSE_ENABLED, NSD_AUTO_COLLAPSE_DELAY,
     NSD_THEME_MODE, NSD_TARGET_PLAYER, NSD_TRAFFIC_STATS,
-    NSD_CHART_METRIC, NSD_AUTO_HIDE_FS,
-    NSD_HW_MODE, NSD_HW_DEFAULT_METRIC, NSD_HW_ROTATION, NSD_HW_DUAL_RING
+    NSD_CHART_METRIC, NSD_AUTO_HIDE_FS
 } from '../constants/storageKeys';
 
 const isWidgetVisible = ref(false);
@@ -588,21 +541,8 @@ const setTargetPlayer = async (player: string) => {
 const islandTheme = ref(localStorage.getItem(NSD_ISLAND_THEME) || 'black');
 const enableMusicCtrl = ref(localStorage.getItem(NSD_MUSIC_CTRL) === 'true');
 const enableMsgNotify = ref(localStorage.getItem(NSD_MSG_NOTIFY) === 'true');
-const enableHardwareMon = ref(localStorage.getItem(NSD_HARDWARE_MON) === 'true');
 const msgModeEnabled = ref(localStorage.getItem(NSD_MSG_MODE) === 'true');
 const enableRotation = ref(localStorage.getItem(NSD_ROTATION_MODE) === 'true');
-let wasMusicEnabledBeforeHardware = false;
-
-// 硬件监控配置（与 LiveActive 双向同步）
-const hwMode = ref(localStorage.getItem(NSD_HW_MODE) || 'single');
-const hwDefaultMetric = ref(localStorage.getItem(NSD_HW_DEFAULT_METRIC) || 'cpu');
-
-function saveHwConfig() {
-    localStorage.setItem(NSD_HW_MODE, hwMode.value);
-    localStorage.setItem(NSD_HW_DEFAULT_METRIC, hwDefaultMetric.value);
-    localStorage.setItem(NSD_HW_ROTATION, String(hwMode.value === 'rotation'));
-    localStorage.setItem(NSD_HW_DUAL_RING, String(hwMode.value === 'dual'));
-}
 
 // 省内存模式：关闭控制台时彻底销毁主窗口 WebView，释放 50-120MB 内存（B1 方案）
 const destroyOnClose = ref(localStorage.getItem(NSD_DESTROY_ON_CLOSE) === 'true');
@@ -1110,25 +1050,6 @@ const handleSystemThemeUpdate = () => {
     }
 };
 
-const toggleHardwareMon = async () => {
-    localStorage.setItem(NSD_HARDWARE_MON, String(enableHardwareMon.value));
-    await emit('control-hardware-mon', { enabled: enableHardwareMon.value });
-
-    if (enableHardwareMon.value) {
-        // 如果开启硬件监控，记录音乐状态，并把音乐关掉
-        wasMusicEnabledBeforeHardware = enableMusicCtrl.value;
-        if (enableMusicCtrl.value) {
-            enableMusicCtrl.value = false;
-        }
-    } else {
-        // 如果关闭硬件监控，且原来音乐是开着的，就恢复音乐
-        if (wasMusicEnabledBeforeHardware) {
-            enableMusicCtrl.value = true;
-            wasMusicEnabledBeforeHardware = false; // 用完重置
-        }
-    }
-};
-
 watch(opacity, async (newVal) => {
     localStorage.setItem(NSD_ISLAND_OPACITY, newVal.toString());
     await emit('control-island-opacity', { opacity: newVal });
@@ -1145,13 +1066,6 @@ watch(enableMusicCtrl, async (newVal) => {
     localStorage.setItem(NSD_MUSIC_CTRL, newVal.toString());
     await emit('control-music-ctl', { enabled: newVal });
     console.log('音乐控制器状态切换为:', newVal);
-
-    // 👇新增互斥防呆逻辑：如果用户手动开启音乐，强行把硬件关掉
-    if (newVal && enableHardwareMon.value) {
-        enableHardwareMon.value = false;
-        localStorage.setItem(NSD_HARDWARE_MON, 'false');
-        await emit('control-hardware-mon', { enabled: false });
-    }
 });
 
 onMounted(async () => {

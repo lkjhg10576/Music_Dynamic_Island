@@ -329,7 +329,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue';
-import { listen } from '@tauri-apps/api/event';
+import { listen, emit } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import {
     NSD_POMODORO_FOCUS_SECS,
@@ -404,6 +404,12 @@ async function toggleHwEnabled() {
         await invoke('set_hardware_emit', { enabled: hwEnabled.value });
     } catch (_e) {
         // command 可能不存在，忽略
+    }
+    // 跨窗口通知灵动岛：同步硬件监控附属图标的显示状态
+    try {
+        await emit('control-hardware-mon', { enabled: hwEnabled.value });
+    } catch (_e) {
+        // 忽略
     }
 }
 
