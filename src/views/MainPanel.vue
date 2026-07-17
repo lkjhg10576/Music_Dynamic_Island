@@ -21,8 +21,8 @@
             <div class="brand">
                 <img src="../assets/logo.png" class="logo-icon">
                 <div>
-                    <h1>NetSpeed Dynamic Plus</h1>
-                    <p class="subtitle">NSD 桌面灵动岛组件 v{{ appVersion }}</p>
+                    <h1>Music Dynamic Island</h1>
+                    <p class="subtitle">MDI桌面灵动岛组件 v{{ appVersion }}</p>
                 </div>
             </div>
 
@@ -439,9 +439,9 @@
 
         <footer class="panel-footer">
             <div class="ft_left">
-                <span>&copy; 2026 <button class="openmywebsite" @click="openMywebsite">Ryen.</button> All rights
+                <span>&copy; 2026 lkjhg10576 All rights
                     reserved.</span>
-                <span>NSDPRO v{{ appVersion }}</span>
+                <span>MDI v{{ appVersion }}</span>
             </div>
             <div class="ft_right">
                 <span class="action-link" @click="openNSDweb">官方网站</span>
@@ -776,7 +776,7 @@ const toggleAutoStart = async () => {
 
 const dialog = ref({
     visible: false,
-    title: 'NetSpeed Dynamic',
+    title: 'Music Dynamic Island',
     message: '',
     isConfirm: false,
     callback: null as (() => void) | null
