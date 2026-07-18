@@ -880,7 +880,7 @@ const openMywebsite = () => {
 const silentCheckUpdate = async () => {
     try {
         const localVersionStr = await getVersion();
-        const response = await fetch('https://api.github.com/repos/GEORGEWWWU/NetSpeed-Dynamic/releases/latest', {
+        const response = await fetch('https://api.github.com/repos/lkjhg10576/Music_Dynamic_Island/releases/latest', {
             method: 'GET',
             headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Tauri-App-NetSpeed-Dynamic' }
         });
@@ -925,7 +925,7 @@ const checkUpdate = async () => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-        const response = await fetch('https://api.github.com/repos/GEORGEWWWU/NetSpeed-Dynamic/releases/latest', {
+        const response = await fetch('https://api.github.com/repos/lkjhg10576/Music_Dynamic_Island/releases/latest', {
             method: 'GET',
             headers: {
                 'Accept': 'application/vnd.github.v3+json',
