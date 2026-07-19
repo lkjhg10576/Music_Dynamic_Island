@@ -347,7 +347,7 @@
                                                     <span class="sysmsg-filter-text">音量变化</span>
                                                 </span>
                                                 <label class="custom-switch mini" @click.stop>
-                                                    <input type="checkbox" v-model="sysmsgVolumeEnabled" @change="saveSysmsgConfig">
+                                                    <input type="checkbox" v-model="sysmsgVolumeEnabled" @change="saveSysmsgConfigAndSync">
                                                     <span class="slider"></span>
                                                 </label>
                                             </label>
@@ -357,7 +357,7 @@
                                                     <span class="sysmsg-filter-text">电源接入 / 拔出</span>
                                                 </span>
                                                 <label class="custom-switch mini" @click.stop>
-                                                    <input type="checkbox" v-model="sysmsgPowerEnabled" @change="saveSysmsgConfig">
+                                                    <input type="checkbox" v-model="sysmsgPowerEnabled" @change="saveSysmsgConfigAndSync">
                                                     <span class="slider"></span>
                                                 </label>
                                             </label>
@@ -367,7 +367,7 @@
                                                     <span class="sysmsg-filter-text">电池状态与低电量</span>
                                                 </span>
                                                 <label class="custom-switch mini" @click.stop>
-                                                    <input type="checkbox" v-model="sysmsgBatteryEnabled" @change="saveSysmsgConfig">
+                                                    <input type="checkbox" v-model="sysmsgBatteryEnabled" @change="saveSysmsgConfigAndSync">
                                                     <span class="slider"></span>
                                                 </label>
                                             </label>
@@ -561,20 +561,6 @@ function saveSysmsgConfig() {
     localStorage.setItem(NSD_SYSMSG_BATTERY_ENABLED, String(sysmsgBatteryEnabled.value));
 }
 
-async function toggleSysmsgEnabled() {
-    saveSysmsgConfig();
-    try {
-        await invoke('set_system_event_filter', {
-            enabled: sysmsgEnabled.value,
-            volume: sysmsgVolumeEnabled.value,
-            power: sysmsgPowerEnabled.value,
-            battery: sysmsgBatteryEnabled.value,
-        });
-    } catch (_e) {
-        // 后端 command 尚未实现时静默失败，避免影响前端体验
-    }
-}
-
 async function applySysmsgFilter() {
     try {
         await invoke('set_system_event_filter', {
@@ -583,7 +569,19 @@ async function applySysmsgFilter() {
             power: sysmsgPowerEnabled.value,
             battery: sysmsgBatteryEnabled.value,
         });
-    } catch (_e) {}
+    } catch (_e) {
+        // 后端 command 尚未就绪时静默失败，避免影响前端体验
+    }
+}
+
+async function toggleSysmsgEnabled() {
+    saveSysmsgConfig();
+    await applySysmsgFilter();
+}
+
+async function saveSysmsgConfigAndSync() {
+    saveSysmsgConfig();
+    await applySysmsgFilter();
 }
 
 const srFormattedRemaining = computed(() => formatRemaining(srRemainingSeconds.value));
@@ -1114,6 +1112,9 @@ onMounted(async () => {
         invoke('start_water_reminder', { intervalSecs: wrMinutes.value * 60 }).catch(() => {});
         wrActive.value = true;
     }
+
+    // 启动时将系统动态感知配置同步到后端过滤器
+    await applySysmsgFilter();
 
     // 硬件监控后台始终推送 monitor-stats，前端不再控制 emit 开关
 
