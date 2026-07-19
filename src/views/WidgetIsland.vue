@@ -542,6 +542,8 @@ const showRtChip = computed(() => {
 function clickRtChip(targetId?: string) {
     const list = rtActivities.value;
     if (!list.length) return;
+    // 先折叠所有已展开的实时活动，避免多活动并行时状态残留导致关闭按钮/切换异常
+    collapseAllExpandedActivities();
     let idx: number;
     if (targetId) {
         idx = list.findIndex(a => a.id === targetId);
@@ -941,6 +943,20 @@ const collapseHardware = () => {
     setTimeout(() => { suppressContentWatch = false; }, 600);
     // 维持自动隐藏行为
     scheduleAutoHide();
+};
+
+// 统一折叠所有已展开的实时活动，避免多活动并行时状态残留导致关闭按钮/切换异常
+const collapseAllExpandedActivities = () => {
+    if (isPomodoroExpanded.value) {
+        isPomodoroExpanded.value = false;
+    }
+    if (isCountdownExpanded.value) {
+        isCountdownExpanded.value = false;
+    }
+    if (isHardwareExpanded.value) {
+        collapseHardware();
+    }
+    // health 由 isHealthAlerting 事件驱动，不在此处手动置位
 };
 
 // 音乐控制功能开�?
