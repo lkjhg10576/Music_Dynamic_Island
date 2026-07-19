@@ -323,6 +323,59 @@
                                 </div>
                             </template>
 
+                            <template v-else-if="item.id === 'sysmsg'">
+                                <div class="sysmsg-config-panel" @click.stop>
+                                    <div class="sysmsg-main-row">
+                                        <div class="sysmsg-meta">
+                                            <span class="sysmsg-title">系统动态感知</span>
+                                            <span class="sysmsg-desc">实时捕捉系统软硬件生态变化</span>
+                                        </div>
+                                        <label class="custom-switch mini">
+                                            <input type="checkbox" v-model="sysmsgEnabled" @change="toggleSysmsgEnabled">
+                                            <span class="slider"></span>
+                                        </label>
+                                    </div>
+
+                                    <div class="sysmsg-divider"></div>
+
+                                    <div class="sysmsg-section" v-if="sysmsgEnabled">
+                                        <div class="sysmsg-section-label">监听事件</div>
+                                        <div class="sysmsg-filter-list">
+                                            <label class="sysmsg-filter-item">
+                                                <span class="sysmsg-filter-label">
+                                                    <span class="sysmsg-filter-icon">🔊</span>
+                                                    <span class="sysmsg-filter-text">音量变化</span>
+                                                </span>
+                                                <label class="custom-switch mini" @click.stop>
+                                                    <input type="checkbox" v-model="sysmsgVolumeEnabled" @change="saveSysmsgConfig">
+                                                    <span class="slider"></span>
+                                                </label>
+                                            </label>
+                                            <label class="sysmsg-filter-item">
+                                                <span class="sysmsg-filter-label">
+                                                    <span class="sysmsg-filter-icon">🔌</span>
+                                                    <span class="sysmsg-filter-text">电源接入 / 拔出</span>
+                                                </span>
+                                                <label class="custom-switch mini" @click.stop>
+                                                    <input type="checkbox" v-model="sysmsgPowerEnabled" @change="saveSysmsgConfig">
+                                                    <span class="slider"></span>
+                                                </label>
+                                            </label>
+                                            <label class="sysmsg-filter-item">
+                                                <span class="sysmsg-filter-label">
+                                                    <span class="sysmsg-filter-icon">🔋</span>
+                                                    <span class="sysmsg-filter-text">电池状态与低电量</span>
+                                                </span>
+                                                <label class="custom-switch mini" @click.stop>
+                                                    <input type="checkbox" v-model="sysmsgBatteryEnabled" @change="saveSysmsgConfig">
+                                                    <span class="slider"></span>
+                                                </label>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+
                             <template v-else-if="item.id === 'health'">
                                 <div class="health-config-panel">
                                     <!-- 久坐提醒 -->
@@ -428,6 +481,10 @@ import {
     NSD_WATER_REMINDER_ENABLED,
     NSD_WATER_REMINDER_SECS,
     NSD_ACTIVITY_PRIORITY,
+    NSD_SYSMSG_ENABLED,
+    NSD_SYSMSG_VOLUME_ENABLED,
+    NSD_SYSMSG_POWER_ENABLED,
+    NSD_SYSMSG_BATTERY_ENABLED,
 } from '../constants/storageKeys';
 
 // ===== 三步设置状态 =====
@@ -490,6 +547,44 @@ const wrActive = ref(false);
 const wrAlerting = ref(false);
 const wrRemainingSeconds = ref(0);
 const wrCanSkip = ref(true);
+
+// ===== 系统动态感知配置 =====
+const sysmsgEnabled = ref(localStorage.getItem(NSD_SYSMSG_ENABLED) === 'true');
+const sysmsgVolumeEnabled = ref(localStorage.getItem(NSD_SYSMSG_VOLUME_ENABLED) !== 'false');
+const sysmsgPowerEnabled = ref(localStorage.getItem(NSD_SYSMSG_POWER_ENABLED) !== 'false');
+const sysmsgBatteryEnabled = ref(localStorage.getItem(NSD_SYSMSG_BATTERY_ENABLED) !== 'false');
+
+function saveSysmsgConfig() {
+    localStorage.setItem(NSD_SYSMSG_ENABLED, String(sysmsgEnabled.value));
+    localStorage.setItem(NSD_SYSMSG_VOLUME_ENABLED, String(sysmsgVolumeEnabled.value));
+    localStorage.setItem(NSD_SYSMSG_POWER_ENABLED, String(sysmsgPowerEnabled.value));
+    localStorage.setItem(NSD_SYSMSG_BATTERY_ENABLED, String(sysmsgBatteryEnabled.value));
+}
+
+async function toggleSysmsgEnabled() {
+    saveSysmsgConfig();
+    try {
+        await invoke('set_system_event_filter', {
+            enabled: sysmsgEnabled.value,
+            volume: sysmsgVolumeEnabled.value,
+            power: sysmsgPowerEnabled.value,
+            battery: sysmsgBatteryEnabled.value,
+        });
+    } catch (_e) {
+        // 后端 command 尚未实现时静默失败，避免影响前端体验
+    }
+}
+
+async function applySysmsgFilter() {
+    try {
+        await invoke('set_system_event_filter', {
+            enabled: sysmsgEnabled.value,
+            volume: sysmsgVolumeEnabled.value,
+            power: sysmsgPowerEnabled.value,
+            battery: sysmsgBatteryEnabled.value,
+        });
+    } catch (_e) {}
+}
 
 const srFormattedRemaining = computed(() => formatRemaining(srRemainingSeconds.value));
 const wrFormattedRemaining = computed(() => formatRemaining(wrRemainingSeconds.value));
@@ -745,8 +840,8 @@ const activities = ref([
         desc: '实时捕捉软硬件生态变化',
         accent: '#ff4757',
         enabled: false,
-        disable: true,
-        priority: 99,
+        disable: false,
+        priority: 5,
     },
     {
         id: 'printer',
@@ -800,8 +895,10 @@ function buildActivityConfig(): Record<string, { enabled: boolean; priority: num
         countdown: cdRunning.value,
         hardware: hwEnabled.value,
         health: srEnabled.value || wrEnabled.value,
+        sysmsg: sysmsgEnabled.value,
     };
-    for (const id of RT_IDS) {
+    const allIds = ['pomodoro', 'countdown', 'hardware', 'health', 'sysmsg'] as const;
+    for (const id of allIds) {
         const item = activities.value.find(a => a.id === id);
         if (item) {
             map[id] = { enabled: enabledMap[id], priority: item.priority };
@@ -2330,6 +2427,89 @@ onUnmounted(() => {
 .health-skip-btn.is-disabled {
     opacity: 0.35;
     cursor: not-allowed;
+}
+
+/* ===== 系统动态感知样式 ===== */
+.sysmsg-config-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 6px 0;
+}
+
+.sysmsg-main-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.sysmsg-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.sysmsg-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--item-title-color);
+}
+
+.sysmsg-desc {
+    font-size: 10px;
+    color: var(--item-desc-color, rgba(255, 255, 255, 0.5));
+}
+
+.sysmsg-divider {
+    height: 1px;
+    background: var(--control-border, rgba(255, 255, 255, 0.08));
+    margin: 0;
+}
+
+.sysmsg-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 4px;
+}
+
+.sysmsg-section-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--subtitle-color);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+
+.sysmsg-filter-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sysmsg-filter-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.sysmsg-filter-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sysmsg-filter-icon {
+    font-size: 16px;
+    line-height: 1;
+}
+
+.sysmsg-filter-text {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--item-title-color);
 }
 
 </style>
