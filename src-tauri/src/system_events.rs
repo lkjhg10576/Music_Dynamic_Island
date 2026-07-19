@@ -1,6 +1,9 @@
 use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use serde::Serialize;
+use serde::Deserialize;
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Win32::Media::Audio::{eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator};
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
@@ -11,6 +14,22 @@ use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 struct BatteryPayload {
     state: String,
     percent: u8,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct SystemEventFilter {
+    pub enabled: bool,
+    pub volume: bool,
+    pub power: bool,
+    pub battery: bool,
+}
+
+static SYS_EVENT_FILTER: AtomicBool = AtomicBool::new(true);
+
+#[tauri::command]
+pub fn set_system_event_filter(filter: SystemEventFilter) {
+    let enabled = filter.enabled && (filter.volume || filter.power || filter.battery);
+    SYS_EVENT_FILTER.store(enabled, Ordering::Relaxed);
 }
 
 pub fn start_monitor(app: AppHandle) {
@@ -41,7 +60,9 @@ pub fn start_monitor(app: AppHandle) {
             if let Some(current_volume) = get_system_volume() {
                 if (current_volume - last_volume).abs() > 0.01 && last_volume != -1.0 {
                     let vol_percent = (current_volume * 100.0).round() as i32;
-                    let _ = app.emit("system-event", format!("当前系统音量 {}%", vol_percent));
+                    if SYS_EVENT_FILTER.load(Ordering::Relaxed) {
+                        let _ = app.emit("system-event", format!("当前系统音量 {}%", vol_percent));
+                    }
                     changed = true;
                 }
                 last_volume = current_volume;
@@ -52,15 +73,17 @@ pub fn start_monitor(app: AppHandle) {
                 
                 // 【情况 A】电源插入/拔出状态发生了改变
                 if current_power != last_power_state && last_power_state != 255 {
-                    if current_power == 1 {
-                        // 插入电源：发送专属电池事件（触发灵动岛绿色充电 SVG）
-                        let _ = app.emit("battery-event", BatteryPayload {
-                            state: "charging".to_string(),
-                            percent: current_percent,
-                        });
-                    } else if current_power == 0 {
-                        // 拔出电源：发送普通系统文本（触发原本的普通黑白系统通知）
-                        let _ = app.emit("system-event", "正在使用电池供电");
+                    if SYS_EVENT_FILTER.load(Ordering::Relaxed) {
+                        if current_power == 1 {
+                            // 插入电源：发送专属电池事件（触发灵动岛绿色充电 SVG）
+                            let _ = app.emit("battery-event", BatteryPayload {
+                                state: "charging".to_string(),
+                                percent: current_percent,
+                            });
+                        } else if current_power == 0 {
+                            // 拔出电源：发送普通系统文本（触发原本的普通黑白系统通知）
+                            let _ = app.emit("system-event", "正在使用电池供电");
+                        }
                     }
                     changed = true;
                 }
@@ -69,10 +92,12 @@ pub fn start_monitor(app: AppHandle) {
                 if current_power == 0 && current_percent < last_battery_percent {
                     // 低电量防抖机制：仅在跌破这几个关键节点时，触发红色警告
                     if current_percent <= 20 && [20, 15, 10, 5].contains(&current_percent) {
-                        let _ = app.emit("battery-event", BatteryPayload {
-                            state: "discharging".to_string(),
-                            percent: current_percent,
-                        });
+                        if SYS_EVENT_FILTER.load(Ordering::Relaxed) {
+                            let _ = app.emit("battery-event", BatteryPayload {
+                                state: "discharging".to_string(),
+                                percent: current_percent,
+                            });
+                        }
                         changed = true;
                     }
                 }
