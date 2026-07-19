@@ -333,7 +333,34 @@
                         @click.stop="clickRtChip()"
                         :style="{ ...coreContentStyle, color: rtActivities[currentRtIndex]?.accent || '#ffffff', cursor: 'pointer' }"
                         :title="rtActivities[currentRtIndex] ? ('点击展开：' + rtActivities[currentRtIndex].id) : ''">
-                        <span class="rt-chip-icon" v-html="rtActivities[currentRtIndex]?.icon || ''"></span>
+                        <!-- 硬件监控：显示动态小圆环 -->
+                        <template v-if="rtActivities[currentRtIndex]?.id === 'hardware'">
+                            <svg viewBox="0 0 36 36" class="rt-chip-hw-ring">
+                                <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="3" />
+                                <template v-if="hwMode === 'dual'">
+                                    <circle cx="18" cy="18" r="14" fill="none"
+                                        :stroke="hwCpuPct >= 80 ? '#a855f7' : '#ffffff'" stroke-width="3"
+                                        :stroke-dasharray="`${(hwCpuPct / 100) * 87.96} 87.96`"
+                                        stroke-linecap="round" transform="rotate(-90 18 18)"
+                                        style="transition: stroke-dasharray 0.5s ease;" />
+                                    <circle cx="18" cy="18" r="8" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="2.5" />
+                                    <circle cx="18" cy="18" r="8" fill="none"
+                                        :stroke="hwMemPct >= 80 ? '#ff4757' : '#3b82f6'" stroke-width="2.5"
+                                        :stroke-dasharray="`${(hwMemPct / 100) * 50.27} 50.27`"
+                                        stroke-linecap="round" transform="rotate(-90 18 18)"
+                                        style="transition: stroke-dasharray 0.5s ease;" />
+                                </template>
+                                <template v-else>
+                                    <circle cx="18" cy="18" r="14" fill="none"
+                                        :stroke="hwRingColor" stroke-width="3"
+                                        :stroke-dasharray="`${(hwRingPct / 100) * 87.96} 87.96`"
+                                        stroke-linecap="round" transform="rotate(-90 18 18)"
+                                        style="transition: stroke-dasharray 0.5s ease;" />
+                                </template>
+                            </svg>
+                        </template>
+                        <!-- 其他实时活动：保留原有静态图标 -->
+                        <span v-else class="rt-chip-icon" v-html="rtActivities[currentRtIndex]?.icon || ''"></span>
                     </div>
                 </transition>
             </div>
@@ -538,12 +565,12 @@ function clickRtChip(targetId?: string) {
         expandHardware();
     } else if (target.id === 'pomodoro') {
         isPomodoroExpanded.value = true;
-        const { h } = getBaseSize();
-        animateIslandSize(currentWidth.value + 80, h);
+        const { w, h } = getBaseSize();
+        animateIslandSize(w + 80, h);
     } else if (target.id === 'countdown') {
         isCountdownExpanded.value = true;
-        const { h } = getBaseSize();
-        animateIslandSize(currentWidth.value + 80, h);
+        const { w, h } = getBaseSize();
+        animateIslandSize(w + 80, h);
     }
     // 'health' 无需手动展开（alerting 时由 health-reminder-tick 自动驱动 isHealthAlerting）
 }
@@ -895,9 +922,9 @@ const expandHardware = () => {
     isHardwareExpanded.value = true;
     // 标记 hardware 为当前展开活动（previousContext 与 currentRtIndex 推进由 clickRtChip 统一处理）
     expandedRtId.value = 'hardware';
-    const { h } = getBaseSize();
+    const { w, h } = getBaseSize();
     // 展开时增加宽度以容纳 CPU/RAM 详情
-    animateIslandSize(currentWidth.value + 80, h);
+    animateIslandSize(w + 80, h);
     setTimeout(() => { suppressContentWatch = false; }, 600);
 };
 
@@ -3947,6 +3974,12 @@ onUnmounted(() => {
     width: 18px;
     height: 18px;
     /* stroke 使用 currentColor，自动继承 .rt-chip 的 color */
+}
+
+.rt-chip-hw-ring {
+    width: 24px;
+    height: 24px;
+    display: block;
 }
 
 /* 音乐展开态下小图标右移避让（避免与频谱/进度条重叠） */
