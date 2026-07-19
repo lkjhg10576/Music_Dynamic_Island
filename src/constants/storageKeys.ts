@@ -9,6 +9,10 @@ export const NSD_ISLAND_THEME = 'nsd_island_theme';
 export const NSD_ISLAND_WIDTH = 'nsd_island_width';
 export const NSD_ISLAND_POSITION = 'nsd_island_position';
 
+// 音乐频谱颜色
+export const NSD_SPECTRUM_COLOR_MODE = 'nsd_spectrum_color_mode'; // 'album' | 'theme' | 'custom'
+export const NSD_SPECTRUM_CUSTOM_COLOR = 'nsd_spectrum_custom_color'; // hex, 默认 '#b6e0ee'
+
 // 功能开关
 export const NSD_MUSIC_CTRL = 'nsd_music_ctrl';
 export const NSD_GLOW_BORDER = 'nsd_glow_border';
@@ -64,3 +68,9 @@ export const NSD_WATER_REMINDER_SECS = 'nsd_water_reminder_secs';
 
 // 实时活动优先级映射（多活动并行时的显示顺序）。值示例: {"pomodoro":1,"countdown":2,"hardware":3,"health":4}
 export const NSD_ACTIVITY_PRIORITY = 'nsd_activity_priority';
+
+// 系统动态感知配置
+export const NSD_SYSMSG_ENABLED = 'nsd_sysmsg_enabled';
+export const NSD_SYSMSG_VOLUME_ENABLED = 'nsd_sysmsg_volume_enabled';
+export const NSD_SYSMSG_POWER_ENABLED = 'nsd_sysmsg_power_enabled';
+export const NSD_SYSMSG_BATTERY_ENABLED = 'nsd_sysmsg_battery_enabled';
