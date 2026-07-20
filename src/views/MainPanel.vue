@@ -542,7 +542,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { formatSpeed } from '../utils/format';
 import {
-    NSD_ISLAND_OPACITY, NSD_ISLAND_THEME,
+    NSD_ISLAND_OPACITY, NSD_ISLAND_THEME, NSD_ISLAND_ENABLED,
     NSD_MUSIC_CTRL, NSD_MSG_NOTIFY,
     NSD_MSG_MODE, NSD_ROTATION_MODE, NSD_PIN_TASKBAR,
     NSD_POSITION_LOCKED, NSD_DESTROY_ON_CLOSE,
@@ -954,6 +954,7 @@ let lastRx = 0;
 let lastTx = 0;
 let systemThemeMedia: MediaQueryList;
 let unlistenMonitorStats: (() => void) | null = null;
+let unlistenIslandStatus: (() => void) | null = null;
 
 const speedChartRef = ref<InstanceType<typeof SpeedChart> | null>(null);
 const chartDataQueue = ref<number[]>(Array(15).fill(0));
@@ -1333,33 +1334,43 @@ onMounted(async () => {
         positionLocked.value = event.payload.locked;
     });
 
-    await listen<{ visible: boolean }>('island-status-sync', (event) => {
-        isWidgetVisible.value = event.payload.visible;
+    unlistenIslandStatus = await listen<{ visible: boolean }>('island-status-sync', (event) => {
+        // Vue 已 paint / leave 完成的权威回执。关闭请求中若收到 true，忽略旧 show 残留。
+        if (!event.payload.visible) {
+            isWidgetVisible.value = false;
+            return;
+        }
+        if (localStorage.getItem(NSD_ISLAND_ENABLED) !== 'false') {
+            isWidgetVisible.value = true;
+        }
     });
 
-    // 1) 优先问 WidgetIsland 自己的渲染态（Vue 层）。
-    // 2) 若 widget 已不存在/未就绪，request 会空转；再走后端 is_widget_alive + OS visible 兜底。
-    // 控制台与 widget 并行启动，短重试覆盖监听器注册顺序竞争。
-    for (let i = 0; i < 6 && !isWidgetVisible.value; i++) {
-        await emit('request-island-visibility');
-        await new Promise(r => setTimeout(r, 200));
-    }
-    if (!isWidgetVisible.value) {
-        try {
-            const alive = await invoke<boolean>('is_widget_alive');
-            if (alive) {
-                const visible = await invoke<boolean>('is_widget_visible');
-                // OS 可见只作为“至少窗口在了”的弱信号；仍等待 Vue sync 校准。
-                // 不在这里强制 true，避免把“透明容器空窗”误标为已开启。
-                if (visible) {
-                    await emit('request-island-visibility');
-                }
-            } else {
-                // 启动时 widget 缺失：不自动创建显示，保持已关闭，等用户点开关走 set_island_visible 重建。
-                console.warn('[NSD] widget window missing at startup');
+    // 启动策略：读用户持久意图。缺省 true=兼容旧版“默认开岛”。
+    const preferEnabled = localStorage.getItem(NSD_ISLAND_ENABLED) !== 'false';
+    if (preferEnabled) {
+        // 先让 Widget 自己完成 paint；再兜底走后端权威入口，避免 widget 未挂 listener。
+        for (let i = 0; i < 4 && !isWidgetVisible.value; i++) {
+            await emit('request-island-visibility');
+            await new Promise(r => setTimeout(r, 200));
+        }
+        if (!isWidgetVisible.value) {
+            try {
+                await invoke<boolean>('set_island_visible', { show: true });
+            } catch (e) {
+                console.warn('[NSD] startup set_island_visible failed:', e);
+                await emit('control-island-visibility', { show: true }).catch(() => {});
             }
-        } catch (e) {
-            console.warn('[NSD] island visibility probe failed:', e);
+            // 等 Vue 回执；绝不因 OS visible 强制 true（透明空窗会被误判）
+            for (let i = 0; i < 8 && !isWidgetVisible.value; i++) {
+                await new Promise(r => setTimeout(r, 150));
+            }
+        }
+    } else {
+        isWidgetVisible.value = false;
+        try {
+            await invoke<boolean>('set_island_visible', { show: false });
+        } catch {
+            await emit('control-island-visibility', { show: false }).catch(() => {});
         }
     }
 });
@@ -1367,48 +1378,50 @@ onMounted(async () => {
 onUnmounted(() => {
     systemThemeMedia?.removeEventListener('change', handleSystemThemeUpdate);
     if (unlistenMonitorStats) unlistenMonitorStats();
+    if (unlistenIslandStatus) unlistenIslandStatus();
     localStorage.setItem(NSD_TRAFFIC_STATS, JSON.stringify(trafficData.value));
 });
 
 const toggleWidget = async () => {
     const nextState = !isWidgetVisible.value;
+    localStorage.setItem(NSD_ISLAND_ENABLED, String(nextState));
 
-    // 关闭可以立即反映；开启先乐观更新，避免旧逻辑“只发事件不回执 → 永远已关闭”。
-    // 最终以 island-status-sync / set_island_visible 结果为准。
-    isWidgetVisible.value = nextState;
+    // 关闭立即反映；开启仅在后端命令成功后乐观为 true，
+    // 最终以 island-status-sync（Vue paint 完成）为准。绝不因 OS visible 强制 true。
+    if (!nextState) {
+        isWidgetVisible.value = false;
+    }
 
     try {
-        // 后端权威入口：确保 widget 存活 + 强制 show/hide + 广播 Vue 事件
         await invoke<boolean>('set_island_visible', { show: nextState });
+        if (nextState) {
+            // 命令成功 → 先标记意图已接受；若随后 sync false 会回落
+            isWidgetVisible.value = true;
+        }
     } catch (e) {
         console.error('[NSD] set_island_visible failed, fallback emit:', e);
-        // 兜底：旧路径纯事件（兼容后端命令尚未可用的场景）
         try {
             await emit('control-island-visibility', { show: nextState });
+            if (nextState) isWidgetVisible.value = true;
         } catch (emitErr) {
             console.error('[NSD] control-island-visibility emit failed:', emitErr);
+            // 失败回滚意图
+            localStorage.setItem(NSD_ISLAND_ENABLED, String(!nextState));
             isWidgetVisible.value = !nextState;
             return;
         }
     }
 
-    // 开启后短暂等待 Vue 回执；若仍未确认，用 OS visible 做最后兜底，防止 UI 假死。
+    // 开启后给 Vue 最多 ~1.5s 完成 paint 并回执；超时不强制 true，只打日志，避免空窗假开启。
     if (nextState) {
         const started = Date.now();
-        while (Date.now() - started < 1200) {
+        while (Date.now() - started < 1500) {
             await new Promise(r => setTimeout(r, 150));
+            // sync 可能把状态改成 true；若用户又关闭则本地已 false，直接结束
+            if (localStorage.getItem(NSD_ISLAND_ENABLED) === 'false') return;
             if (isWidgetVisible.value) return;
-            try {
-                const visible = await invoke<boolean>('is_widget_visible');
-                if (visible) {
-                    isWidgetVisible.value = true;
-                    return;
-                }
-            } catch { /* ignore */ }
         }
-        // 超时仍无确认：保持乐观开启状态，避免开关“点了没反应”。
-        // 若窗口其实没起来，用户再关再开会走 ensure_widget_window 重建。
-        isWidgetVisible.value = true;
+        console.warn('[NSD] island opened but Vue paint confirm timed out');
     }
 };
 </script>

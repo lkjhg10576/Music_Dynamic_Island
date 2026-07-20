@@ -24,6 +24,10 @@ static ANIMATION_ID: AtomicU32 = AtomicU32::new(0);
 // B1 省内存模式：关闭主窗口时彻底销毁 WebView（默认 false，保持原 hide 行为）
 static DESTROY_ON_CLOSE: AtomicBool = AtomicBool::new(false);
 
+// 灵动岛用户期望可见态（控制台开关权威源）。
+// 延迟 show/hide / 重建重试线程必须读取它，禁止硬编码 true/false 盖掉用户最新操作。
+static ISLAND_DESIRED_VISIBLE: AtomicBool = AtomicBool::new(false);
+
 // B1 硬件统计缓存：后台线程每 1s 刷新，command 零阻塞读取
 static HW_CPU_X100: AtomicU32 = AtomicU32::new(0);
 static HW_MEM_USED: AtomicU64 = AtomicU64::new(0);
@@ -474,6 +478,30 @@ fn apply_widget_dwm_attrs(widget_window: &tauri::WebviewWindow) {
     }
 }
 
+/// 强制把灵动岛 OS 窗口置前显示：
+/// ShowWindow(SW_SHOWNOACTIVATE) + TOPMOST。
+/// 不修改 layered/alpha，不触碰 window-vibrancy。
+#[cfg(target_os = "windows")]
+fn force_widget_os_show(widget_window: &tauri::WebviewWindow) {
+    if let Ok(hwnd) = widget_window.hwnd() {
+        unsafe {
+            // SW_SHOWNOACTIVATE = 4：显示但不抢焦点
+            winapi::um::winuser::ShowWindow(hwnd.0 as _, 4);
+            // HWND_TOPMOST = -1; SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_SHOWWINDOW = 0x0010|0x0002|0x0001|0x0040 = 0x0053
+            // 这里用 0x0013（NOMOVE|NOSIZE|NOACTIVATE）与现有 force_window_topmost 一致（flags 19）
+            winapi::um::winuser::SetWindowPos(
+                hwnd.0 as _,
+                -1isize as _,
+                0,
+                0,
+                0,
+                0,
+                19,
+            );
+        }
+    }
+}
+
 /// 确保灵动岛 WebView 窗口存在；缺失时按 tauri.conf 参数重建。
 /// 注意：不对 widget 调用任何 window-vibrancy API。
 fn ensure_widget_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
@@ -512,39 +540,67 @@ fn ensure_widget_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, 
 /// “开关点了没反应、一直已关闭”的假死状态；本命令提供兜底。
 #[tauri::command]
 fn set_island_visible(app: tauri::AppHandle, show: bool) -> Result<bool, String> {
+    // 权威目标态：所有延迟重试 / 延迟 hide 都以它为准
+    ISLAND_DESIRED_VISIBLE.store(show, Ordering::SeqCst);
+
     // 记录创建前是否缺失，用于重建后延迟重发事件（新 WebView 需加载完 JS 才有 listener）
     let was_missing = app.get_webview_window("widget").is_none();
     let win = ensure_widget_window(&app)?;
 
     // 立即广播：已存在的 widget 可马上响应
-    let _ = app.emit("control-island-visibility", serde_json::json!({ "show": show }));
+    let _ = app.emit(
+        "control-island-visibility",
+        serde_json::json!({ "show": show }),
+    );
 
     if show {
         win.show().map_err(|e| format!("显示灵动岛失败: {e}"))?;
         let _ = win.set_always_on_top(true);
+        #[cfg(target_os = "windows")]
+        {
+            apply_widget_dwm_attrs(&win);
+            force_widget_os_show(&win);
+        }
 
-        // 重建场景：前端 listener 可能尚未注册，延迟多次重发，覆盖冷启动窗口
-        if was_missing {
-            let app_retry = app.clone();
-            std::thread::spawn(move || {
-                for delay_ms in [120u64, 320, 700] {
-                    std::thread::sleep(Duration::from_millis(delay_ms));
-                    let _ = app_retry.emit(
-                        "control-island-visibility",
-                        serde_json::json!({ "show": true }),
-                    );
-                    if let Some(w) = app_retry.get_webview_window("widget") {
-                        let _ = w.show();
-                        let _ = w.set_always_on_top(true);
+        // 重建或冷启动：前端 listener 可能尚未注册，延迟多次重发。
+        // 无论是否 was_missing，都做短重试，覆盖 listener 注册时序。
+        // 重试前必须复查 DESIRED，防止用户中途关闭仍被强制打开。
+        let app_retry = app.clone();
+        let need_long_retry = was_missing;
+        std::thread::spawn(move || {
+            let delays: &[u64] = if need_long_retry {
+                &[120, 300, 600, 1200, 2000]
+            } else {
+                &[80, 220, 500]
+            };
+            for delay_ms in delays {
+                std::thread::sleep(Duration::from_millis(*delay_ms));
+                if !ISLAND_DESIRED_VISIBLE.load(Ordering::SeqCst) {
+                    break;
+                }
+                let _ = app_retry.emit(
+                    "control-island-visibility",
+                    serde_json::json!({ "show": true }),
+                );
+                if let Some(w) = app_retry.get_webview_window("widget") {
+                    let _ = w.show();
+                    let _ = w.set_always_on_top(true);
+                    #[cfg(target_os = "windows")]
+                    {
+                        force_widget_os_show(&w);
                     }
                 }
-            });
-        }
+            }
+        });
     } else {
-        // Vue 离场动画约 300ms；若 WebView 已挂，延迟强制 hide 兜底
+        // Vue 离场动画约 300ms；若 WebView 已挂，延迟强制 hide 兜底。
+        // sleep 后若用户又打开，绝不能再 hide。
         let win_hide = win.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(350));
+            if ISLAND_DESIRED_VISIBLE.load(Ordering::SeqCst) {
+                return;
+            }
             let _ = win_hide.hide();
         });
     }

@@ -8,6 +8,8 @@ export const NSD_ISLAND_OPACITY = 'nsd_island_opacity';
 export const NSD_ISLAND_THEME = 'nsd_island_theme';
 export const NSD_ISLAND_WIDTH = 'nsd_island_width';
 export const NSD_ISLAND_POSITION = 'nsd_island_position';
+// 控制台开关的持久意图：true=用户希望开启；缺省视为 true（兼容旧行为）
+export const NSD_ISLAND_ENABLED = 'nsd_island_enabled';
 
 // 音乐频谱颜色
 export const NSD_SPECTRUM_COLOR_MODE = 'nsd_spectrum_color_mode'; // 'album' | 'theme' | 'custom'
