@@ -437,6 +437,110 @@ fn set_destroy_on_close(enabled: bool) {
     DESTROY_ON_CLOSE.store(enabled, Ordering::Relaxed);
 }
 
+/// 读取 Windows 构建号，映射为材质能力档：
+/// `win11` (>=22000) / `win10` (>=10240) / `legacy`（其余或读取失败）
+#[tauri::command]
+fn get_os_tier() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::Registry::{
+            RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE, KEY_READ, REG_SZ,
+            HKEY,
+        };
+
+        unsafe {
+            let subkey: Vec<u16> = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+            let value_name: Vec<u16> = "CurrentBuild"
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+
+            let mut hkey: HKEY = std::ptr::null_mut();
+            if RegOpenKeyExW(HKEY_LOCAL_MACHINE, subkey.as_ptr(), 0, KEY_READ, &mut hkey) != 0 {
+                return "legacy".into();
+            }
+
+            let mut buf = [0u16; 64];
+            let mut len = (buf.len() * 2) as u32;
+            let mut typ: u32 = 0;
+            let res = RegQueryValueExW(
+                hkey,
+                value_name.as_ptr(),
+                std::ptr::null(),
+                &mut typ,
+                buf.as_mut_ptr() as *mut u8,
+                &mut len,
+            );
+            RegCloseKey(hkey);
+
+            if res != 0 || typ != REG_SZ {
+                return "legacy".into();
+            }
+
+            let count = (len / 2) as usize;
+            let raw = String::from_utf16_lossy(&buf[..count]);
+            let build = raw.trim_end_matches('\0').trim().parse::<u32>().unwrap_or(0);
+            if build >= 22000 {
+                "win11".into()
+            } else if build >= 10240 {
+                "win10".into()
+            } else {
+                "legacy".into()
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        "legacy".into()
+    }
+}
+
+/// 对指定 label 窗口应用材质。
+/// 先分别清理 mica/acrylic/blur，再按档 apply，避免材质叠加。
+/// `dark` 仅用于 mica 深/浅主题跟随。
+#[tauri::command]
+fn set_material(
+    app: tauri::AppHandle,
+    label: String,
+    material: String,
+    dark: bool,
+) -> Result<(), String> {
+    let win = app
+        .get_webview_window(&label)
+        .ok_or_else(|| format!("window not found: {label}"))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        // 清场：window-vibrancy 0.6 无统一 clear_material，需分别调用
+        let _ = window_vibrancy::clear_mica(&win);
+        let _ = window_vibrancy::clear_acrylic(&win);
+        let _ = window_vibrancy::clear_blur(&win);
+
+        match material.as_str() {
+            "acrylic" => window_vibrancy::apply_acrylic(&win, None).map_err(|e| e.to_string()),
+            "mica" => window_vibrancy::apply_mica(&win, Some(dark)).map_err(|e| e.to_string()),
+            "blur" => window_vibrancy::apply_blur(&win, None).map_err(|e| e.to_string()),
+            "none" => Ok(()),
+            _ => Err(format!("unknown material: {material}")),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // 非 Windows 仅允许 none，保持跨平台编译可用
+        match material.as_str() {
+            "none" => Ok(()),
+            _ => Err(format!(
+                "material '{material}' is only supported on Windows"
+            )),
+        }
+    }
+}
+
 /// 为主窗口绑定关闭事件处理（兜底）：
 /// 任何真实 CloseRequested 一律 prevent_close + hide，避免误关整个 App。
 /// 注意：destroy() 在 CloseRequested 事件回调里（包括丢到线程）在 Tauri 2 / Windows
@@ -477,6 +581,7 @@ fn recreate_main_window(app: &tauri::AppHandle) {
         .resizable(false)
         .maximizable(false)
         .decorations(false)
+        .transparent(true)
         .center();
 
     match builder.build() {
@@ -501,6 +606,8 @@ pub fn run() {
             is_widget_visible,
             set_destroy_on_close,
             close_main_window,
+            get_os_tier,
+            set_material,
             set_hardware_emit,
             get_network_latency,
             notification::fetch_latest_notification,
