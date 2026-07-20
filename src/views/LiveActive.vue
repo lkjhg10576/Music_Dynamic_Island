@@ -55,7 +55,7 @@
                                 <button class="pomo-btn" @click="handlePomoStop">停止</button>
                             </template>
                         </div>
-                        <label v-else-if="item.id !== 'countdown' && item.id !== 'hardware' && item.id !== 'health'" class="custom-switch" @click.stop>
+                        <label v-else-if="item.id !== 'countdown' && item.id !== 'hardware' && item.id !== 'health' && item.id !== 'sysmsg'" class="custom-switch" @click.stop>
                             <input type="checkbox" v-model="item.enabled" :disabled="item.disable">
                             <span class="slider"></span>
                         </label>
@@ -394,25 +394,30 @@
                             </template>
 
                             <template v-else-if="item.id === 'sysmsg'">
-                                <div class="sysmsg-config-panel">
-                                    <div class="sysmsg-hint">开启后，系统事件将以通知形式在灵动岛呈现。可单独开关以下类别：</div>
-                                    <div class="sysmsg-filter-grid">
-                                        <label class="sysmsg-filter-item">
-                                            <input type="checkbox" v-model="sysmsgVolume" @change="applySysmsgConfig">
-                                            <span>音量变化</span>
-                                        </label>
-                                        <label class="sysmsg-filter-item">
-                                            <input type="checkbox" v-model="sysmsgPower" @change="applySysmsgConfig">
-                                            <span>电源插拔</span>
-                                        </label>
-                                        <label class="sysmsg-filter-item">
-                                            <input type="checkbox" v-model="sysmsgBattery" @change="applySysmsgConfig">
-                                            <span>电量提醒</span>
-                                        </label>
-                                        <label class="sysmsg-filter-item">
-                                            <input type="checkbox" v-model="sysmsgUnlock" @change="applySysmsgConfig">
-                                            <span>解锁提示</span>
-                                        </label>
+                                <div class="sysmsg-config-panel" @click.stop>
+                                    <div class="sysmsg-feature-list">
+                                        <div
+                                            v-for="(feat, idx) in sysmsgFeatures"
+                                            :key="feat.key"
+                                            class="sysmsg-feature-item"
+                                            :class="{ 'is-on': isSysmsgFeatureOn(feat.key), 'is-last': idx === sysmsgFeatures.length - 1 }"
+                                        >
+                                            <div class="sysmsg-feature-left">
+                                                <div class="sysmsg-feature-icon" v-html="feat.icon" aria-hidden="true"></div>
+                                                <div class="sysmsg-feature-text">
+                                                    <span class="sysmsg-feature-title">{{ feat.title }}</span>
+                                                    <span class="sysmsg-feature-desc">{{ feat.desc }}</span>
+                                                </div>
+                                            </div>
+                                            <label class="custom-switch mini" @click.stop>
+                                                <input
+                                                    type="checkbox"
+                                                    :checked="isSysmsgFeatureOn(feat.key)"
+                                                    @change="onSysmsgFeatureToggle(feat.key, ($event.target as HTMLInputElement).checked)"
+                                                >
+                                                <span class="slider"></span>
+                                            </label>
+                                        </div>
                                     </div>
                                 </div>
                             </template>
@@ -521,11 +526,71 @@ const wrRemainingSeconds = ref(0);
 const wrCanSkip = ref(true);
 
 // ===== 系统动态感知（sysmsg）分类开关 =====
-// 默认开启（首次使用即有通知）；关闭某类即不再推送该事件
-const sysmsgVolume = ref(localStorage.getItem(NSD_SYSMSG_VOLUME_ENABLED) !== 'false');
-const sysmsgPower = ref(localStorage.getItem(NSD_SYSMSG_POWER_ENABLED) !== 'false');
-const sysmsgBattery = ref(localStorage.getItem(NSD_SYSMSG_BATTERY_ENABLED) !== 'false');
-const sysmsgUnlock = ref(localStorage.getItem(NSD_SYSMSG_UNLOCK_ENABLED) !== 'false');
+// 卡片总开关已移除：各分类独立控制。未写过分类键时跟随旧总开关，避免「移除总开关后默认全开」误弹通知
+function loadSysmsgCategory(key: string): boolean {
+    const cat = localStorage.getItem(key);
+    if (cat === 'true') return true;
+    if (cat === 'false') return false;
+    return localStorage.getItem(NSD_SYSMSG_ENABLED) === 'true';
+}
+const sysmsgVolume = ref(loadSysmsgCategory(NSD_SYSMSG_VOLUME_ENABLED));
+const sysmsgPower = ref(loadSysmsgCategory(NSD_SYSMSG_POWER_ENABLED));
+const sysmsgBattery = ref(loadSysmsgCategory(NSD_SYSMSG_BATTERY_ENABLED));
+const sysmsgUnlock = ref(loadSysmsgCategory(NSD_SYSMSG_UNLOCK_ENABLED));
+
+type SysmsgFeatureKey = 'volume' | 'power' | 'battery' | 'unlock';
+
+// 设置面板功能列表：图标 / 名称 / 描述（开关状态由独立 ref 持有）
+const sysmsgFeatures: Array<{
+    key: SysmsgFeatureKey;
+    title: string;
+    desc: string;
+    icon: string;
+}> = [
+    {
+        key: 'volume',
+        title: '音量变化',
+        desc: '调节系统音量时在灵动岛弹出提示',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>',
+    },
+    {
+        key: 'power',
+        title: '电源插拔',
+        desc: '接入或拔出电源时即时通知',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"></path><path d="M18.4 6.6a9 9 0 1 1-12.77.04"></path></svg>',
+    },
+    {
+        key: 'battery',
+        title: '电量提醒',
+        desc: '低电量等电池状态变化时提醒',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="16" height="10" rx="2" ry="2"></rect><line x1="22" y1="11" x2="22" y2="13"></line><line x1="6" y1="11" x2="6" y2="13"></line><line x1="10" y1="11" x2="10" y2="13"></line></svg>',
+    },
+    {
+        key: 'unlock',
+        title: '解锁提示',
+        desc: '解锁桌面时显示欢迎类轻提示',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>',
+    },
+];
+
+function isSysmsgFeatureOn(key: SysmsgFeatureKey): boolean {
+    switch (key) {
+        case 'volume': return sysmsgVolume.value;
+        case 'power': return sysmsgPower.value;
+        case 'battery': return sysmsgBattery.value;
+        case 'unlock': return sysmsgUnlock.value;
+    }
+}
+
+function onSysmsgFeatureToggle(key: SysmsgFeatureKey, on: boolean) {
+    switch (key) {
+        case 'volume': sysmsgVolume.value = on; break;
+        case 'power': sysmsgPower.value = on; break;
+        case 'battery': sysmsgBattery.value = on; break;
+        case 'unlock': sysmsgUnlock.value = on; break;
+    }
+    applySysmsgConfig();
+}
 
 const srFormattedRemaining = computed(() => formatRemaining(srRemainingSeconds.value));
 const wrFormattedRemaining = computed(() => formatRemaining(wrRemainingSeconds.value));
@@ -630,10 +695,12 @@ function syncHwToWidget() {
     }
 }
 
-// ===== 系统动态感知（sysmsg）：把分类开关 + 总开关下发到后端并通知灵动岛 =====
+// ===== 系统动态感知（sysmsg）：各分类独立开关，总闸 = 任一分类开启 =====
 async function applySysmsgConfig() {
+    const enabled = sysmsgVolume.value || sysmsgPower.value || sysmsgBattery.value || sysmsgUnlock.value;
+    // 同步卡片状态（不再展示卡片总开关，仅作内部一致性）
     const item = activities.value.find(a => a.id === 'sysmsg');
-    const enabled = item ? item.enabled : false;
+    if (item) item.enabled = enabled;
     // 持久化
     localStorage.setItem(NSD_SYSMSG_ENABLED, String(enabled));
     localStorage.setItem(NSD_SYSMSG_VOLUME_ENABLED, String(sysmsgVolume.value));
@@ -659,11 +726,6 @@ async function applySysmsgConfig() {
         // 忽略
     }
 }
-
-// 卡片总开关（item.enabled）变化时同步下发
-watch(() => activities.value.find(a => a.id === 'sysmsg')?.enabled, (v) => {
-    if (v !== undefined) applySysmsgConfig();
-});
 
 function saveCdConfig() {
     localStorage.setItem(NSD_COUNTDOWN_SECS, (cdMinutes.value * 60 + cdSeconds.value).toString());
@@ -815,7 +877,8 @@ const activities = ref([
         title: '系统动态感知',
         desc: '实时捕捉软硬件生态变化',
         accent: '#ff4757',
-        enabled: localStorage.getItem(NSD_SYSMSG_ENABLED) === 'true',
+        // 总闸改为任一分类开启即为启用（卡片右上角不再显示总开关）
+        enabled: sysmsgVolume.value || sysmsgPower.value || sysmsgBattery.value || sysmsgUnlock.value,
         disable: false,
         priority: 99,
     },
@@ -2404,6 +2467,134 @@ onUnmounted(() => {
 .health-skip-btn.is-disabled {
     opacity: 0.35;
     cursor: not-allowed;
+}
+
+/* ===== 系统动态感知设置 ===== */
+.sysmsg-config-panel {
+    display: flex;
+    flex-direction: column;
+    padding: 2px 0 4px;
+    width: 100%;
+    min-width: 0;
+}
+
+.sysmsg-feature-list {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+}
+
+.sysmsg-feature-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 4px;
+    border-bottom: 1px solid var(--control-border, rgba(0, 0, 0, 0.08));
+    transition: background-color 0.25s ease, opacity 0.25s ease;
+    min-width: 0;
+}
+
+.sysmsg-feature-item.is-last {
+    border-bottom: none;
+}
+
+.sysmsg-feature-item:hover {
+    background: rgba(0, 0, 0, 0.02);
+    border-radius: 8px;
+}
+
+:global(.dark-theme) .sysmsg-feature-item {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+:global(.dark-theme) .sysmsg-feature-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.sysmsg-feature-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    flex: 1;
+}
+
+.sysmsg-feature-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    background: rgba(255, 71, 87, 0.08);
+    color: var(--accent-color, #ff4757);
+    transition: background-color 0.3s ease, color 0.3s ease, transform 0.25s ease;
+}
+
+.sysmsg-feature-item.is-on .sysmsg-feature-icon {
+    background: rgba(255, 71, 87, 0.14);
+    transform: scale(1.02);
+}
+
+.sysmsg-feature-icon :deep(svg) {
+    width: 18px;
+    height: 18px;
+}
+
+.sysmsg-feature-text {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.sysmsg-feature-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--item-title-color, #0f172a);
+    line-height: 1.25;
+}
+
+.sysmsg-feature-desc {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--item-desc-color, #94a3b8);
+    line-height: 1.35;
+    word-break: break-word;
+}
+
+.sysmsg-feature-item .custom-switch {
+    flex-shrink: 0;
+}
+
+/* 窄屏：文案可多行，开关固定右对齐 */
+@media (max-width: 420px) {
+    .sysmsg-feature-item {
+        padding: 10px 2px;
+        gap: 10px;
+    }
+
+    .sysmsg-feature-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+    }
+
+    .sysmsg-feature-icon :deep(svg) {
+        width: 16px;
+        height: 16px;
+    }
+
+    .sysmsg-feature-title {
+        font-size: 12px;
+    }
+
+    .sysmsg-feature-desc {
+        font-size: 10px;
+    }
 }
 
 </style>
