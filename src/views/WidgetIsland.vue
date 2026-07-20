@@ -376,7 +376,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick, type CSSProperties } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWindow, currentMonitor, PhysicalPosition, LogicalPosition, PhysicalSize } from '@tauri-apps/api/window'; import { Menu, MenuItem } from '@tauri-apps/api/menu';
+import { getCurrentWindow, currentMonitor, availableMonitors, PhysicalPosition, LogicalPosition, PhysicalSize } from '@tauri-apps/api/window'; import { Menu, MenuItem } from '@tauri-apps/api/menu';
 import { listen, emit } from '@tauri-apps/api/event';
 import { formatSpeed } from '../utils/format';
 import {
@@ -401,6 +401,42 @@ import {
 
 const isIslandVisible = ref(false);
 const isMenuOpen = ref(false);
+let visibilityOperationToken = 0;
+let desiredIslandVisible = false;
+
+/** OS 窗口显示并且 Vue 完成一帧渲染后，再向控制台确认灵动岛真正可见。 */
+const showIslandWindow = async (withEnterDelay = false) => {
+    desiredIslandVisible = true;
+    const token = ++visibilityOperationToken;
+    await getCurrentWindow().show();
+    if (token !== visibilityOperationToken) return;
+    await getCurrentWindow().setAlwaysOnTop(true);
+    if (token !== visibilityOperationToken) return;
+    if (withEnterDelay) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 40));
+    }
+    if (token !== visibilityOperationToken) return;
+
+    isIslandVisible.value = true;
+    await nextTick();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    if (token === visibilityOperationToken && desiredIslandVisible && isIslandVisible.value) {
+        await emit('island-status-sync', { visible: true });
+    }
+};
+
+/** 使尚未完成的显示操作失效，再触发 Vue 离场动画。 */
+const hideIslandWindow = () => {
+    const wasVisible = isIslandVisible.value;
+    desiredIslandVisible = false;
+    visibilityOperationToken++;
+    isIslandVisible.value = false;
+    // 若 DOM 尚未显示（show 仍在 await），不会触发 Vue leave，需直接隐藏透明 OS 窗口。
+    // 已显示时则保留原有离场动画，由 onLeave 在结束后隐藏。
+    if (!wasVisible) {
+        void getCurrentWindow().hide().catch(() => {});
+    }
+};
 
 // 番茄钟相关变量（由后端 pomodoro-tick 事件驱动）
 const isPomodoroVisible = ref(false);
@@ -884,8 +920,7 @@ const processToastQueue = async () => {
 
         // 自动恢复显示：当有系统通知时，如果灵动岛被隐藏，则自动恢复显示
         if (!isIslandVisible.value) {
-            getCurrentWindow().show();
-            isIslandVisible.value = true;
+            void showIslandWindow();
         }
 
         // 可续期停留：连续音量变化会推后 toastDeadlineAt。
@@ -1596,7 +1631,7 @@ const scheduleAutoHide = (delay?: number) => {
             && isMusicCtlEnabled.value
             && !isPlaying.value) {
             isAutoHiding = true;
-            isIslandVisible.value = false;
+            hideIslandWindow();
         }
     }, delay ?? autoHideDelay.value);
 };
@@ -1746,8 +1781,7 @@ const syncMusicStatus = async () => {
             if (displayMusic.value) {
                 if (playing && !isIslandVisible.value) {
                     // 有音乐播放且灵动岛被隐藏，自动恢复显示
-                    getCurrentWindow().show();
-                    isIslandVisible.value = true;
+                    void showIslandWindow();
                 } else if (!playing && isIslandVisible.value && !isMouseOver.value) {
                     // 音乐停止播放且鼠标不在灵动岛上，延迟隐藏
                     // scheduleAutoHide 内部会校验音乐控制器模式 + 自动隐藏开关
@@ -2140,6 +2174,9 @@ const onEnter = (el: Element, done: () => void) => {
 
 const onLeave = (el: Element, done: () => void) => {
     const HTMLElement = el as HTMLElement;
+    const leaveToken = visibilityOperationToken;
+    const leaveWasAutoHiding = isAutoHiding;
+    const leaveWasFullscreen = isHidingForFullscreen;
     HTMLElement.style.transformOrigin = 'center top';
     let start = performance.now();
 
@@ -2160,14 +2197,17 @@ const onLeave = (el: Element, done: () => void) => {
             requestAnimationFrame(animate);
         } else {
             done();
-            // 等待 DOM 动画播放完成后再隐藏窗口
-            getCurrentWindow().hide().catch(console.error);
-            // 只有用户主动关闭时才同步状态到控制台，自动隐藏/全屏隐藏不改变开关
-            if (!isAutoHiding && !isHidingForFullscreen) {
-                emit('island-status-sync', { visible: false });
+            // 仅当前离场操作仍有效时隐藏 OS 窗口；若期间重新开启，旧动画不得覆盖新状态。
+            if (leaveToken === visibilityOperationToken && !desiredIslandVisible && !isIslandVisible.value) {
+                getCurrentWindow().hide().catch(console.error);
+                // 只有用户主动关闭时才同步状态到控制台，自动隐藏/全屏隐藏不改变开关
+                if (!leaveWasAutoHiding && !leaveWasFullscreen) {
+                    emit('island-status-sync', { visible: false });
+                }
+                // 只有拥有当前 token 的离场操作可以清理全局隐藏原因，避免旧动画污染新操作。
+                isAutoHiding = false;
+                isHidingForFullscreen = false;
             }
-            isAutoHiding = false;
-            isHidingForFullscreen = false;
         }
     };
     requestAnimationFrame(animate);
@@ -2445,18 +2485,54 @@ const saveIslandPosition = async () => {
     }
 };
 
+/**
+ * 校验保存坐标是否仍落在任意显示器内。
+ * 至少保留 48×24 物理像素可见，避免拔掉副屏、分辨率或缩放变化后灵动岛落在屏幕外。
+ */
+const isSavedPositionVisible = async (x: number, y: number): Promise<boolean> => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+
+    const appWindow = getCurrentWindow();
+    const [monitors, actualSize] = await Promise.all([
+        availableMonitors(),
+        appWindow.innerSize(),
+    ]);
+    const width = Math.max(1, actualSize.width);
+    const height = Math.max(1, actualSize.height);
+
+    return monitors.some((monitor) => {
+        const left = monitor.position.x;
+        const top = monitor.position.y;
+        const right = left + monitor.size.width;
+        const bottom = top + monitor.size.height;
+        const visibleWidth = Math.min(x + width, right) - Math.max(x, left);
+        const visibleHeight = Math.min(y + height, bottom) - Math.max(y, top);
+        const minVisibleWidth = Math.min(48 * monitor.scaleFactor, width);
+        const minVisibleHeight = Math.min(24 * monitor.scaleFactor, height);
+        return visibleWidth >= minVisibleWidth && visibleHeight >= minVisibleHeight;
+    });
+};
+
 const restoreIslandPosition = async (): Promise<boolean> => {
+    const saved = localStorage.getItem(NSD_ISLAND_POSITION);
+    if (!saved) return false;
+
     try {
-        const saved = localStorage.getItem(NSD_ISLAND_POSITION);
-        if (saved) {
-            const { x, y } = JSON.parse(saved);
-            await getCurrentWindow().setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
-            return true;
+        const parsed: unknown = JSON.parse(saved);
+        if (!parsed || typeof parsed !== 'object') throw new Error('saved position is not an object');
+
+        const { x, y } = parsed as { x?: unknown; y?: unknown };
+        if (typeof x !== 'number' || typeof y !== 'number' || !(await isSavedPositionVisible(x, y))) {
+            throw new Error('saved position is outside available monitors');
         }
+
+        await getCurrentWindow().setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
+        return true;
     } catch (e) {
-        console.error('恢复位置失败:', e);
+        console.warn('保存的灵动岛位置无效，已回退默认位置:', e);
+        localStorage.removeItem(NSD_ISLAND_POSITION);
+        return false;
     }
-    return false;
 };
 
 const handleRightClick = async (event: MouseEvent) => {
@@ -2557,7 +2633,7 @@ const handleRightClick = async (event: MouseEvent) => {
         text: '关闭',
         id: 'close',
         action: () => {
-            isIslandVisible.value = false;
+            hideIslandWindow();
         }
     });
 
@@ -2846,6 +2922,19 @@ const getAppIcon = (appName: string) => {
 };
 
 onMounted(async () => {
+    // 必须最先注册：控制台和 widget 并行启动，显隐操作不能晚于其他初始化。
+    await listen<{ show: boolean }>('control-island-visibility', async (event) => {
+        if (event.payload.show) {
+            // 先显示透明 OS 窗口，等待 40ms 后打开 Vue DOM；完成一帧渲染才同步“已开启”。
+            await showIslandWindow(true);
+        } else {
+            hideIslandWindow();
+        }
+    });
+    await listen('request-island-visibility', async () => {
+        await emit('island-status-sync', { visible: isIslandVisible.value });
+    });
+
     // widget 可能在主面板未创建或省内存销毁后独立运行，需自行恢复目标播放器
     await invoke('set_target_player', {
         player: localStorage.getItem(NSD_TARGET_PLAYER) || 'netease',
@@ -2961,12 +3050,8 @@ onMounted(async () => {
             // 统一交给 scheduleAutoHide 守卫判断（仅在音乐控制器开启+无音乐播放时才隐藏）
             scheduleAutoHide();
         } else if (!isMsgModeEnabled.value) {
-            // 如果关闭了消息模式，立刻恢复显示
-            await getCurrentWindow().show();
-            isIslandVisible.value = true;
-
-            // 通知控制台恢复开关状态，让主面板的开关同步变绿（开启）
-            await emit('island-status-sync', { visible: true });
+            // 如果关闭了消息模式，立刻恢复显示，并在首帧渲染后同步控制台。
+            await showIslandWindow();
         }
     });
 
@@ -3002,15 +3087,11 @@ onMounted(async () => {
             if (isIslandVisible.value) {
                 wasVisibleBeforeFullscreen = true;
                 isHidingForFullscreen = true;
-                isIslandVisible.value = false;
+                hideIslandWindow();
             }
         } else {
             if (wasVisibleBeforeFullscreen) {
-                await getCurrentWindow().show();
-                setTimeout(() => {
-                    isIslandVisible.value = true;
-                    emit('island-status-sync', { visible: true });
-                }, 40);
+                await showIslandWindow(true);
                 wasVisibleBeforeFullscreen = false;
             }
         }
@@ -3193,8 +3274,7 @@ onMounted(async () => {
     // 先显示透明�?Tauri 窗口，再触发 Vue 的灵动岛入场弹簧动画
     // 如果没开消息模式，才在启动时直接显示灵动�?
     if (!isMsgModeEnabled.value) {
-        await getCurrentWindow().show();
-        isIslandVisible.value = true;
+        await showIslandWindow();
     }
 
     // 监听来自 LiveActive 的硬件监控开关（跨窗口事件，统一由 NSD_HW_ENABLED 驱动）
@@ -3312,12 +3392,7 @@ onMounted(async () => {
                     isMsgActive.value = true;
                     // 自动恢复显示：当有消息活动时，如果灵动岛被隐藏，则自动恢复显�?
                     if (!isIslandVisible.value) {
-                        getCurrentWindow().show();
-                        isIslandVisible.value = true;
-                    }
-                    if (isMsgModeEnabled.value && !isIslandVisible.value) {
-                        getCurrentWindow().show();
-                        isIslandVisible.value = true;
+                        void showIslandWindow();
                     }
                     if (!isPinnedToTaskbar.value) {
                         animateIslandSize(360, 65);
@@ -3343,22 +3418,6 @@ onMounted(async () => {
 
     // 调大Ping间隔：从5.5秒调大到10秒
     pingTimer = setInterval(checkNetworkLatency, 10000) as unknown as number;
-
-    // 监听控制台发来的显隐调度指令
-    await listen<{ show: boolean }>('control-island-visibility', async (event) => {
-        if (event.payload.show) {
-            // 1. 先让透明�?OS 窗口容器显示，此时内�?DOM �?v-show="false"，视觉上仍是隐形�?
-            await getCurrentWindow().show();
-            await getCurrentWindow().setAlwaysOnTop(true);
-            // 2. 给予 40ms 的浏览器渲染帧缓冲，再撕开 Vue �?v-show 状态，强制触发 enter 动画
-            setTimeout(() => {
-                isIslandVisible.value = true;
-            }, 40);
-        } else {
-            // 控制台关闭指�?-> 触发常规离开动画
-            isIslandVisible.value = false;
-        }
-    });
 
     // 实时监听来自 Rust 底层发来的清透像素流，无缝同步给 Vue 的响应式 DOM 宽高
     await listen<number[]>("island-resize", (event) => {

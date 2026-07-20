@@ -503,9 +503,9 @@ fn get_os_tier() -> String {
 /// 先分别清理 mica/acrylic/blur，再按档 apply，避免材质叠加。
 /// `dark` 仅用于 mica 深/浅主题跟随。
 ///
-/// 注意：透明无边框的 `widget`（灵动岛）禁止应用原生材质。
-/// window-vibrancy 会破坏 WebView2 的透明窗口合成，导致整个灵动岛不可见。
-/// 对 widget 只做清场并返回成功，确保旧配置升级后也能恢复显示。
+/// 注意：透明无边框的 `widget`（灵动岛）禁止接触任何原生材质 API。
+/// window-vibrancy 的 apply_* 和 clear_* 都会改写 Windows 合成属性，可能导致
+/// WebView2 透明窗口不可见，因此 widget 必须在任何原生调用之前直接返回。
 #[tauri::command]
 fn set_material(
     app: tauri::AppHandle,
@@ -519,26 +519,29 @@ fn set_material(
         _ => return Err(format!("unknown material: {material}")),
     }
 
-    // 仅允许 main / widget
-    if label != "main" && label != "widget" {
+    // 灵动岛是透明无边框 WebView2 窗口，任何 window-vibrancy 调用（包括 clear_*）
+    // 都可能改写其 DWM/Composition 属性并破坏透明合成。必须在获取窗口和调用
+    // 原生材质 API 之前直接返回；灵动岛外观只由 Vue/CSS rgba 控制。
+    if label == "widget" {
+        return Ok(());
+    }
+
+    // 原生材质仅允许应用于控制台，避免将来新增窗口时误伤透明窗口。
+    if label != "main" {
         return Err(format!("unknown window label: {label}"));
     }
 
     let win = app
-        .get_webview_window(&label)
-        .ok_or_else(|| format!("window not found: {label}"))?;
+        .get_webview_window("main")
+        .ok_or_else(|| "window not found: main".to_string())?;
 
     #[cfg(target_os = "windows")]
     {
-        // 清场：window-vibrancy 0.6 无统一 clear_material，需分别调用
+        // 清场：window-vibrancy 0.6 无统一 clear_material，需分别调用。
+        // 此处的 win 已被严格限定为 main，绝不会触碰 widget。
         let _ = window_vibrancy::clear_mica(&win);
         let _ = window_vibrancy::clear_acrylic(&win);
         let _ = window_vibrancy::clear_blur(&win);
-
-        // 灵动岛是透明无边框窗口，原生材质会破坏 WebView2 透明合成
-        if label == "widget" {
-            return Ok(());
-        }
 
         match material.as_str() {
             "acrylic" => window_vibrancy::apply_acrylic(&win, None).map_err(|e| e.to_string()),

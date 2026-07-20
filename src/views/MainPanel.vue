@@ -604,12 +604,9 @@ const resolveConsoleMaterial = (): Material => {
     return def;
 };
 
-/** 将旧版灵动岛材质配置迁移为 none，避免启动后再次破坏透明窗口 */
+/** 删除废弃的灵动岛材质配置；透明灵动岛只使用 CSS rgba，不接触原生材质 */
 const migrateIslandMaterialAway = () => {
-    const saved = localStorage.getItem('nsd_island_material');
-    if (saved && saved !== 'none') {
-        localStorage.setItem('nsd_island_material', 'none');
-    }
+    localStorage.removeItem('nsd_island_material');
 };
 
 /** 实际生效的深色状态（system 跟随 matchMedia / root class） */
@@ -1236,19 +1233,9 @@ onMounted(async () => {
         console.error('[NSD] get_os_tier failed, fallback legacy:', e);
         osTier.value = 'legacy';
     }
-    // 迁移旧版灵动岛材质配置，并确保 widget 不应用原生材质
+    // 删除旧版灵动岛材质配置。不要对 widget 调用 apply_* 或 clear_*：
+    // 两者都会改写透明 WebView2 窗口的 Windows 合成属性，导致灵动岛不可见。
     migrateIslandMaterialAway();
-    try {
-        // 清场：若此前对 widget 应用过 mica/acrylic/blur，启动时清除
-        await invoke('set_material', {
-            label: 'widget',
-            material: 'none',
-            dark: isEffectiveDark(),
-        });
-    } catch (e) {
-        // widget 窗口可能尚未创建，忽略
-        console.warn('[NSD] clear widget material skipped:', e);
-    }
     consoleMaterial.value = resolveConsoleMaterial();
     materialsReady.value = true;
     await applyConsoleMaterial();
@@ -1351,17 +1338,13 @@ onMounted(async () => {
         isWidgetVisible.value = event.payload.visible;
     });
 
-    for (let i = 0; i < 6; i++) {
-        try {
-            const visible = await invoke<boolean>('is_widget_visible');
-            if (visible) {
-                isWidgetVisible.value = true;
-                return;
-            }
-        } catch { /* 忽略 */ }
+    // 不再用 OS 窗口 visible 直接判断：透明容器可见不代表 Vue 灵动岛已渲染。
+    // WidgetIsland 会在 show + nextTick + requestAnimationFrame 后发送 island-status-sync。
+    // 控制台和 widget 并行启动，短暂重试查询可覆盖双方监听器注册顺序的竞争。
+    for (let i = 0; i < 6 && !isWidgetVisible.value; i++) {
+        await emit('request-island-visibility');
         await new Promise(r => setTimeout(r, 200));
     }
-    isWidgetVisible.value = false;
 });
 
 onUnmounted(() => {
@@ -1373,7 +1356,12 @@ onUnmounted(() => {
 const toggleWidget = async () => {
     const nextState = !isWidgetVisible.value;
     await emit('control-island-visibility', { show: nextState });
-    isWidgetVisible.value = nextState;
+
+    // 关闭可以立即反映；开启必须等灵动岛完成 OS show + Vue 首帧渲染后，
+    // 由 island-status-sync 确认，避免“控制台已开启但实际仍不可见”的假状态。
+    if (!nextState) {
+        isWidgetVisible.value = false;
+    }
 };
 </script>
 
