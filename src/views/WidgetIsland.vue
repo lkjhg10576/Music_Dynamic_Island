@@ -748,15 +748,124 @@ const msgBody = ref('');
 const msgAumid = ref('');
 
 // 系统操作通知专用变量
+type SysToastType = 'app' | 'sys' | 'volume' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock';
+interface SysToastItem {
+    text: string;
+    type: SysToastType;
+}
+
 const displaySysToast = ref(false);
 const sysToastText = ref('');
-const sysToastType = ref<'app' | 'sys' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock'>('app');
-const toastQueue = ref<{ text: string, type: 'app' | 'sys' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' }[]>([]);
+const sysToastType = ref<SysToastType>('app');
+const toastQueue = ref<SysToastItem[]>([]);
 let isProcessingToast = false;
+
+// 音量 toast 可续期显示：以“距最后一次音量变化的静默时间”决定何时关闭
+const TOAST_DWELL_MS = 2000;
+const TOAST_LEAVE_MS = 200;
+let toastDeadlineAt = 0;
+let toastWaitToken = 0;
+let toastWaitTimer: ReturnType<typeof setTimeout> | null = null;
+// 记录最近一次已应用的 toast 岛宽，避免连续音量更新反复触发同尺寸动画
+let lastToastIslandWidth: number | null = null;
+
+const clearToastWaitTimer = () => {
+    if (toastWaitTimer !== null) {
+        clearTimeout(toastWaitTimer);
+        toastWaitTimer = null;
+    }
+};
+
+/** 可取消的等待：token 变化或组件卸载后旧等待立即失效 */
+const waitUntilToastDeadline = (token: number): Promise<void> => {
+    return new Promise((resolve) => {
+        const tick = () => {
+            if (token !== toastWaitToken) {
+                resolve();
+                return;
+            }
+            const remaining = toastDeadlineAt - Date.now();
+            if (remaining <= 0) {
+                toastWaitTimer = null;
+                resolve();
+                return;
+            }
+            toastWaitTimer = setTimeout(tick, remaining);
+        };
+        clearToastWaitTimer();
+        tick();
+    });
+};
+
+const sleepMs = (ms: number, token: number): Promise<void> => {
+    return new Promise((resolve) => {
+        if (token !== toastWaitToken) {
+            resolve();
+            return;
+        }
+        toastWaitTimer = setTimeout(() => {
+            toastWaitTimer = null;
+            resolve();
+        }, ms);
+    });
+};
+
+/** 用 canvas 测量 toast 文本像素宽度 */
+const measureToastTextWidth = (text: string): number => {
+    try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            ctx.font = '600 12.5px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+            return Math.ceil(ctx.measureText(text).width);
+        }
+    } catch (_e) { /* ignore */ }
+    // 回退：中文约 12.5px，英文约 7.5px
+    let w = 0;
+    for (const ch of text) {
+        w += /[\u4e00-\u9fff]/.test(ch) ? 12.5 : 7.5;
+    }
+    return Math.ceil(w);
+};
+
+/**
+ * 计算系统 toast 目标岛宽。
+ * 布局：left padding 14 + 图标有效占位(30-8=22) + 文本 + 右 padding 14
+ * 若频谱可见，右侧还需预留 ~34px canvas + 少量间隙。
+ */
+const calcSysToastWidth = (text: string, type: SysToastType): number => {
+    const textW = measureToastTextWidth(text);
+    // 图标 translateX(-8px) 后有效占位约 22，文本 translateX(-2px)
+    const iconOccupy = 22;
+    const horizontalPadding = 28; // left 14 + right 14
+    const textGap = 4;
+    // 频谱 canvas 34px + 右侧状态点/间隙；无频谱时仍留状态点与少量余量
+    const rightIndicator = showSpectrumIndicator.value ? 42 : 14;
+    const raw = horizontalPadding + iconOccupy + textGap + textW + rightIndicator;
+
+    // 音量文本短，给较窄下限；电源/电池长文本给更宽上限
+    // 例：「已接入电源，当前电量 100%」约 13 字 ≈ 162px + 图标/边距/频谱 ≈ 280+
+    const minW = type === 'volume' ? 210 : (type === 'battery-charge' || type === 'battery-low' ? 300 : 240);
+    const maxW = 420;
+    return Math.max(minW, Math.min(maxW, raw));
+};
+
+const applySysToastIslandSize = (text: string, type: SysToastType) => {
+    const targetWidth = calcSysToastWidth(text, type);
+    if (lastToastIslandWidth !== null && Math.abs(lastToastIslandWidth - targetWidth) < 2) {
+        return; // 尺寸几乎不变，跳过动画
+    }
+    lastToastIslandWidth = targetWidth;
+    animateIslandSize(targetWidth, 42);
+};
+
+const isVolumeToastText = (text: string): boolean => {
+    const lowered = text.toLowerCase();
+    return lowered.includes('音量') || lowered.includes('volume');
+};
 
 // 队列处理函数
 const processToastQueue = async () => {
-    // 如果正在处理，或者队列为空，则直接返�?
     if (isProcessingToast || toastQueue.value.length === 0) return;
 
     // 优先级判断：如果当前正在显示消息通知(最高优先级)，则挂起等待
@@ -766,23 +875,45 @@ const processToastQueue = async () => {
     const nextToast = toastQueue.value.shift();
 
     if (nextToast) {
+        const token = ++toastWaitToken;
         sysToastText.value = nextToast.text;
         sysToastType.value = nextToast.type;
         displaySysToast.value = true;
-        
+        toastDeadlineAt = Date.now() + TOAST_DWELL_MS;
+        applySysToastIslandSize(nextToast.text, nextToast.type);
+
         // 自动恢复显示：当有系统通知时，如果灵动岛被隐藏，则自动恢复显示
         if (!isIslandVisible.value) {
             getCurrentWindow().show();
             isIslandVisible.value = true;
         }
 
-        // 停留显示
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // 可续期停留：连续音量变化会推后 toastDeadlineAt。
+        // waitUntilToastDeadline 的 timer 回调会重读 deadline；此处 while 再兜住
+        // “await 返回瞬间又被续期”的竞态。
+        while (token === toastWaitToken) {
+            await waitUntilToastDeadline(token);
+            if (token !== toastWaitToken) break;
+            if (Date.now() >= toastDeadlineAt) break;
+        }
+
+        // token 失效说明有新一轮处理接管，或组件已卸载
+        if (token !== toastWaitToken) {
+            isProcessingToast = false;
+            return;
+        }
 
         displaySysToast.value = false;
+        lastToastIslandWidth = null;
         // 等待离开动画播完 (约200ms) 再处理下一个
-        await new Promise(resolve => setTimeout(resolve, 200));
+        await sleepMs(TOAST_LEAVE_MS, token);
 
+        if (token !== toastWaitToken) {
+            isProcessingToast = false;
+            return;
+        }
+
+        // 离开动画期间若队列中已有更新后的 volume，下面 processToastQueue 会接上
         // 系统 toast 结束后，重新评估自动隐藏
         // 场景：音乐控制器开启 + 无音乐播放时，toast 弹出强制显示了灵动岛，
         // toast 结束后应恢复自动隐藏
@@ -793,14 +924,14 @@ const processToastQueue = async () => {
     processToastQueue(); // 递归检查是否还有下一个通知
 };
 
-// 监听系统通知显示状态，解决网速模式下尺寸过小导致文字溢出/遮挡指示灯的问题
+// 监听系统通知显示状态：动态宽度 + 结束后恢复用户岛宽
 watch(displaySysToast, (newVal) => {
     if (newVal) {
-        // 当有系统操作通知出现时，强制展开到默认标准尺�?
-        animateIslandSize(260, 42);
+        applySysToastIslandSize(sysToastText.value, sysToastType.value);
     } else {
+        lastToastIslandWidth = null;
         // 通知消失时，恢复到当前状态该有的尺寸
-        // （前提是没有被应用消息或音乐面板霸占�?
+        // （前提是没有被应用消息或音乐面板霸占）
         if (!isMsgActive.value && !isMusicExpanded.value && !isMusicExpanding.value) {
             const { h } = getBaseSize();
             const savedWidth = restoreIslandWidth();
@@ -810,17 +941,62 @@ watch(displaySysToast, (newVal) => {
     }
 });
 
+// 连续音量更新时：文本变化后重新评估宽度（仅在宽度确实变化时动画）
+watch(sysToastText, (text) => {
+    if (!displaySysToast.value) return;
+    applySysToastIslandSize(text, sysToastType.value);
+});
+
 // 暴露给外部调用的触发函数
-const showToast = (text: string, type: 'app' | 'sys' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' = 'app') => {
+const showToast = (text: string, type: SysToastType = 'app') => {
+    // 音量：合并到当前显示或队列中的唯一 volume 项，并续期显示截止时间
+    if (type === 'volume') {
+        // 1) 正在显示音量：只更新数字 + 续期，不重播进/离场
+        if (displaySysToast.value && sysToastType.value === 'volume') {
+            sysToastText.value = text;
+            toastDeadlineAt = Date.now() + TOAST_DWELL_MS;
+            return;
+        }
+        // 2) 已在队列中：原地更新为最新音量，避免堆积
+        const queuedIdx = toastQueue.value.findIndex((item) => item.type === 'volume');
+        if (queuedIdx >= 0) {
+            toastQueue.value[queuedIdx] = { text, type: 'volume' };
+            processToastQueue();
+            return;
+        }
+        // 3) 其余情况（含 leave 动画窗口）正常入队；leave 结束后会立即接上
+        toastQueue.value.push({ text, type: 'volume' });
+        processToastQueue();
+        return;
+    }
+
     toastQueue.value.push({ text, type });
     processToastQueue();
 };
 
-// 监听消息通知状态，一旦消息通知消失，立刻唤醒可能被挂起的操作通知队列
+// 监听消息通知状态：
+// - 消息出现时：若正在显示 volume toast，先中断并塞回队列头部，避免消息结束后音量提示丢失
+// - 消息消失时：立刻唤醒可能被挂起的操作通知队列
 watch(isMsgActive, (newVal) => {
-    if (!newVal) {
-        processToastQueue();
+    if (newVal) {
+        if (displaySysToast.value && sysToastType.value === 'volume') {
+            const volumeText = sysToastText.value;
+            toastWaitToken++;
+            clearToastWaitTimer();
+            displaySysToast.value = false;
+            lastToastIslandWidth = null;
+            // 合并：若队列里已有 volume，更新为最新；否则插到队首
+            const queuedIdx = toastQueue.value.findIndex((item) => item.type === 'volume');
+            if (queuedIdx >= 0) {
+                toastQueue.value[queuedIdx] = { text: volumeText, type: 'volume' };
+            } else {
+                toastQueue.value.unshift({ text: volumeText, type: 'volume' });
+            }
+            isProcessingToast = false;
+        }
+        return;
     }
+    processToastQueue();
 });
 
 // 记录音乐岛是否处于展开状�?
@@ -2715,9 +2891,11 @@ onMounted(async () => {
         const lowered = text.toLowerCase();
         const allowVolume = sysmsgVolumeEnabled.value;
         const allowPower = sysmsgPowerEnabled.value;
-        if ((lowered.includes('音量') || lowered.includes('volume')) && !allowVolume) return;
-        if ((lowered.includes('电源') || lowered.includes('供电')) && !allowPower) return;
-        showToast(text, 'sys');
+        const isVolume = isVolumeToastText(text);
+        if (isVolume && !allowVolume) return;
+        if ((lowered.includes('电源') || lowered.includes('供电') || lowered.includes('power')) && !allowPower) return;
+        // 音量走可合并 toast 路径，连续调节只更新数字并续期显示
+        showToast(text, isVolume ? 'volume' : 'sys');
     });
 
     await listen<{ state: 'charging' | 'discharging', percent: number }>('battery-event', (event) => {
@@ -3242,6 +3420,11 @@ onUnmounted(() => {
     clearInterval(musicTimer);
     clearInterval(notifyTimer);
     stopProgressTimer();
+    // 使进行中的 toast 等待立即失效，避免卸载后继续改状态
+    toastWaitToken++;
+    clearToastWaitTimer();
+    toastQueue.value = [];
+    isProcessingToast = false;
     // 组件卸载时关闭频谱捕获与 rAF，避免后端/前端空跑
     stopSpectrumRaf();
     invoke('set_spectrum_active', { active: false }).catch(() => {});
@@ -4225,6 +4408,13 @@ onUnmounted(() => {
     white-space: nowrap;
     opacity: 0.95;
     transform: translateX(-2px) translateY(-1px);
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    /* 兜底：异常超长文本省略，正常电源/电池文案靠动态岛宽完整显示 */
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 /* 宽度调整手柄样式 */
