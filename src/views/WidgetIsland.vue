@@ -461,14 +461,13 @@ const showIslandWindow = async (withEnterDelay = false) => {
     const token = ++visibilityOperationToken;
     cancelVisibilityAnimation();
     try {
-        // 先关装饰再 show：否则标题栏先闪、客户区高度为零
+        // 顺序关键：
+        // 1) 先关系统装饰（标题栏会吃掉 36px 客户区）
+        // 2) 先 paint Vue DOM，再 OS show —— 避免空客户区/空标题条
+        // 3) show 后再 harden 一次（部分 Win 首次 show 会回写 decorations）
         await ensureWidgetFrame();
         if (token !== visibilityOperationToken) return;
-        await getCurrentWindow().show();
-        if (token !== visibilityOperationToken) return;
-        // 部分 Windows 版本 show 后会回写 decorations，再断言一次
-        await ensureWidgetFrame();
-        if (token !== visibilityOperationToken) return;
+
         if (withEnterDelay) {
             await new Promise<void>((resolve) => setTimeout(resolve, 40));
         }
@@ -476,7 +475,6 @@ const showIslandWindow = async (withEnterDelay = false) => {
 
         isIslandVisible.value = true;
         await nextTick();
-        // 防止旧 leave 抢写 style：显示瞬间强制恢复
         resetIslandVisualStyle();
         await new Promise<void>((resolve) => {
             visibilityAnimFrameId = requestAnimationFrame(() => {
@@ -484,6 +482,13 @@ const showIslandWindow = async (withEnterDelay = false) => {
                 resolve();
             });
         });
+        if (token !== visibilityOperationToken || !desiredIslandVisible) return;
+
+        await getCurrentWindow().show();
+        if (token !== visibilityOperationToken) return;
+        await ensureWidgetFrame();
+        if (token !== visibilityOperationToken) return;
+
         if (token === visibilityOperationToken && desiredIslandVisible && isIslandVisible.value) {
             resetIslandVisualStyle();
             // 控制台开关跟随真实 paint 态（含 auto-hide 收起后的重显）

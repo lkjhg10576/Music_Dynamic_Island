@@ -444,6 +444,7 @@ fn is_widget_alive(app: tauri::AppHandle) -> bool {
 
 /// 硬化灵动岛 OS 窗口：无边框 + 无阴影 + Windows DWM 去标题/边框。
 /// 必须在 show 前调用；窗口已存在时也要反复断言，防止标题栏回弹成“MDI Widget 空窗”。
+/// 注意：禁止在此写死尺寸——会打断音乐展开/用户调宽的运行时尺寸。
 fn harden_widget_window(widget_window: &tauri::WebviewWindow) {
     // Tauri API 层：明确关闭系统装饰与阴影（比只写 conf 更稳）
     let _ = widget_window.set_decorations(false);
@@ -570,6 +571,10 @@ fn ensure_widget_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, 
         .map_err(|e| format!("重建灵动岛窗口失败: {e}"))?;
 
     harden_widget_window(&win);
+    // 新建窗：去标题栏后强制一次默认内尺寸，避免客户区被压扁成空条
+    // 已有窗口勿在 harden 里 set_size，否则会打断音乐展开/用户调宽
+    use tauri::LogicalSize;
+    let _ = win.set_size(tauri::Size::Logical(LogicalSize::new(210.0, 36.0)));
 
     Ok(win)
 }
