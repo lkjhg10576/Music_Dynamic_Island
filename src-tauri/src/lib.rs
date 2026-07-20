@@ -24,12 +24,6 @@ static ANIMATION_ID: AtomicU32 = AtomicU32::new(0);
 // B1 省内存模式：关闭主窗口时彻底销毁 WebView（默认 false，保持原 hide 行为）
 static DESTROY_ON_CLOSE: AtomicBool = AtomicBool::new(false);
 
-// 灵动岛用户期望可见态（控制台开关权威源）。
-// 延迟 show/hide / 重建重试线程必须读取它，禁止硬编码 true/false 盖掉用户最新操作。
-// 默认 true：应用默认“开岛”。控制台/右键显式关闭会经 set_island_visible(false) 写回 false，
-// 该值也驱动“启动安全网”决定是否兜底显示，故初始即按默认意图置 true。
-static ISLAND_DESIRED_VISIBLE: AtomicBool = AtomicBool::new(true);
-
 // B1 硬件统计缓存：后台线程每 1s 刷新，command 零阻塞读取
 static HW_CPU_X100: AtomicU32 = AtomicU32::new(0);
 static HW_MEM_USED: AtomicU64 = AtomicU64::new(0);
@@ -438,226 +432,6 @@ fn is_widget_visible(app: tauri::AppHandle) -> bool {
     }
 }
 
-/// 灵动岛（widget）是否存在于 AppHandle 中（不代表 Vue 内容已渲染）。
-#[tauri::command]
-fn is_widget_alive(app: tauri::AppHandle) -> bool {
-    app.get_webview_window("widget").is_some()
-}
-
-/// 硬化灵动岛 OS 窗口：无边框 + 无阴影 + Windows DWM 去标题/边框。
-/// 必须在 show 前调用；窗口已存在时也要反复断言，防止标题栏回弹成“MDI Widget 空窗”。
-/// 注意：禁止在此写死尺寸——会打断音乐展开/用户调宽的运行时尺寸。
-fn harden_widget_window(widget_window: &tauri::WebviewWindow) {
-    // Tauri API 层：明确关闭系统装饰与阴影（比只写 conf 更稳）
-    let _ = widget_window.set_decorations(false);
-    let _ = widget_window.set_shadow(false);
-    let _ = widget_window.set_always_on_top(true);
-
-    #[cfg(target_os = "windows")]
-    {
-        apply_widget_dwm_attrs(widget_window);
-    }
-}
-
-/// 为透明无边框灵动岛套用 Windows DWM 属性（去标题/圆角/边框），绝不动 window-vibrancy。
-///
-/// 关键：仅清 WS_CAPTION 且不带 SWP_FRAMECHANGED 时，Win10/11 仍可能继续绘制系统标题栏；
-/// 灵动岛外高只有 36px，标题栏会吃掉全部客户区 → 用户只看到 “MDI Widget” 空标题条。
-#[cfg(target_os = "windows")]
-fn apply_widget_dwm_attrs(widget_window: &tauri::WebviewWindow) {
-    use windows_sys::Win32::Foundation::HWND;
-    use windows_sys::Win32::Graphics::Dwm::{
-        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
-    };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
-    };
-
-    // Win32 常量用字面值，避免不同 windows-sys 版本导出名不一致导致编不过
-    // style: CAPTION(0x00C00000)=BORDER|DLGFRAME, SYSMENU, THICKFRAME, MIN/MAXIMIZEBOX
-    const CAPTION_STYLE_BITS: isize =
-        0x00C00000 | 0x00080000 | 0x00040000 | 0x00020000 | 0x00010000;
-    // exstyle: CLIENTEDGE | WINDOWEDGE | DLGMODALFRAME | STATICEDGE
-    const EDGE_EXSTYLE_BITS: isize = 0x00000200 | 0x00000100 | 0x00000001 | 0x00020000;
-    // SWP_NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|FRAMECHANGED
-    const SWP_FLAGS: u32 = 0x0002 | 0x0001 | 0x0004 | 0x0010 | 0x0020;
-
-    if let Ok(hwnd) = widget_window.hwnd() {
-        let hwnd_raw = hwnd.0 as HWND;
-        unsafe {
-            let current_style = GetWindowLongPtrW(hwnd_raw, GWL_STYLE);
-            SetWindowLongPtrW(hwnd_raw, GWL_STYLE, current_style & !CAPTION_STYLE_BITS);
-
-            let current_ex = GetWindowLongPtrW(hwnd_raw, GWL_EXSTYLE);
-            SetWindowLongPtrW(hwnd_raw, GWL_EXSTYLE, current_ex & !EDGE_EXSTYLE_BITS);
-
-            // 必须 SWP_FRAMECHANGED，否则 style 改了非客户区不会立刻重算
-            // 切勿设置 DWMNCRP_DISABLED：会破坏 WebView2 透明合成
-            let _ = SetWindowPos(
-                hwnd_raw,
-                std::ptr::null_mut(),
-                0,
-                0,
-                0,
-                0,
-                SWP_FLAGS,
-            );
-
-            let border_color: u32 = 0xFFFFFFFE; // DWMWA_COLOR_NONE
-            let _ = DwmSetWindowAttribute(
-                hwnd_raw,
-                DWMWA_BORDER_COLOR as u32,
-                &border_color as *const _ as *const _,
-                4,
-            );
-
-            let corner_preference = DWMWCP_DONOTROUND;
-            let _ = DwmSetWindowAttribute(
-                hwnd_raw,
-                DWMWA_WINDOW_CORNER_PREFERENCE as u32,
-                &corner_preference as *const _ as *const _,
-                4,
-            );
-        }
-    }
-}
-
-/// 强制把灵动岛 OS 窗口置前显示：
-/// ShowWindow(SW_SHOWNOACTIVATE) + TOPMOST + SHOWWINDOW。
-/// 不修改 layered/alpha，不触碰 window-vibrancy。
-#[cfg(target_os = "windows")]
-fn force_widget_os_show(widget_window: &tauri::WebviewWindow) {
-    if let Ok(hwnd) = widget_window.hwnd() {
-        unsafe {
-            // SW_SHOWNOACTIVATE = 4：显示但不抢焦点
-            winapi::um::winuser::ShowWindow(hwnd.0 as _, 4);
-            // HWND_TOPMOST = -1
-            // flags = SWP_NOMOVE(0x2)|SWP_NOSIZE(0x1)|SWP_NOACTIVATE(0x10)|SWP_SHOWWINDOW(0x40) = 0x53
-            // 必须带 SWP_SHOWWINDOW，否则仅改 Z 序时窗口可能仍是 hidden 状态
-            winapi::um::winuser::SetWindowPos(
-                hwnd.0 as _,
-                -1isize as _,
-                0,
-                0,
-                0,
-                0,
-                0x0053,
-            );
-        }
-    }
-}
-
-/// 确保灵动岛 WebView 窗口存在；缺失时按 tauri.conf 参数重建。
-/// 注意：不对 widget 调用任何 window-vibrancy API。
-fn ensure_widget_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
-    if let Some(win) = app.get_webview_window("widget") {
-        // 已存在也要重新硬化：运行中可能被系统/上一次 show 回弹成有标题栏空窗
-        harden_widget_window(&win);
-        return Ok(win);
-    }
-
-    let builder = WebviewWindowBuilder::new(app, "widget", WebviewUrl::App("/widget".into()))
-        .title("MDI Widget")
-        .inner_size(210.0, 36.0)
-        .resizable(false)
-        .maximizable(false)
-        .decorations(false)
-        .transparent(true)
-        .always_on_top(true)
-        .visible(false)
-        .skip_taskbar(true)
-        .shadow(false);
-
-    let win = builder
-        .build()
-        .map_err(|e| format!("重建灵动岛窗口失败: {e}"))?;
-
-    harden_widget_window(&win);
-    // 新建窗：去标题栏后强制一次默认内尺寸，避免客户区被压扁成空条
-    // 已有窗口勿在 harden 里 set_size，否则会打断音乐展开/用户调宽
-    use tauri::LogicalSize;
-    let _ = win.set_size(tauri::Size::Logical(LogicalSize::new(210.0, 36.0)));
-
-    Ok(win)
-}
-
-/// 控制台开关的后端权威入口：确保 widget 存活，并强制 show/hide。
-/// 同时发出 `control-island-visibility`，驱动 WidgetIsland 的 Vue DOM 状态。
-///
-/// 仅依赖前端跨 WebView 事件时，若 widget 未就绪/已崩溃，会出现
-/// “开关点了没反应、一直已关闭”的假死状态；本命令提供兜底。
-#[tauri::command]
-fn set_island_visible(app: tauri::AppHandle, show: bool) -> Result<bool, String> {
-    // 权威目标态：所有延迟重试 / 延迟 hide 都以它为准
-    ISLAND_DESIRED_VISIBLE.store(show, Ordering::SeqCst);
-
-    // 记录创建前是否缺失，用于重建后延迟重发事件（新 WebView 需加载完 JS 才有 listener）
-    let was_missing = app.get_webview_window("widget").is_none();
-    let win = ensure_widget_window(&app)?;
-
-    // 立即广播：已存在的 widget 可马上响应
-    let _ = app.emit(
-        "control-island-visibility",
-        serde_json::json!({ "show": show }),
-    );
-
-    if show {
-        // 先硬化无边框，再 show，避免 36px 高度被系统标题栏占满
-        harden_widget_window(&win);
-        win.show().map_err(|e| format!("显示灵动岛失败: {e}"))?;
-        // show 后再 hardening 一次：部分 Win 版本会在首次 show 时回写 decorations
-        harden_widget_window(&win);
-        #[cfg(target_os = "windows")]
-        {
-            force_widget_os_show(&win);
-        }
-
-        // 重建或冷启动：前端 listener 可能尚未注册，延迟多次重发。
-        // 无论是否 was_missing，都做短重试，覆盖 listener 注册时序。
-        // 重试前必须复查 DESIRED，防止用户中途关闭仍被强制打开。
-        let app_retry = app.clone();
-        let need_long_retry = was_missing;
-        std::thread::spawn(move || {
-            let delays: &[u64] = if need_long_retry {
-                &[120, 300, 600, 1200, 2000]
-            } else {
-                &[80, 220, 500]
-            };
-            for delay_ms in delays {
-                std::thread::sleep(Duration::from_millis(*delay_ms));
-                if !ISLAND_DESIRED_VISIBLE.load(Ordering::SeqCst) {
-                    break;
-                }
-                let _ = app_retry.emit(
-                    "control-island-visibility",
-                    serde_json::json!({ "show": true }),
-                );
-                if let Some(w) = app_retry.get_webview_window("widget") {
-                    harden_widget_window(&w);
-                    let _ = w.show();
-                    #[cfg(target_os = "windows")]
-                    {
-                        force_widget_os_show(&w);
-                    }
-                }
-            }
-        });
-    } else {
-        // Vue 离场动画约 300ms；若 WebView 已挂，延迟强制 hide 兜底。
-        // sleep 后若用户又打开，绝不能再 hide。
-        let win_hide = win.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(350));
-            if ISLAND_DESIRED_VISIBLE.load(Ordering::SeqCst) {
-                return;
-            }
-            let _ = win_hide.hide();
-        });
-    }
-
-    Ok(show)
-}
-
 #[tauri::command]
 fn set_destroy_on_close(enabled: bool) {
     DESTROY_ON_CLOSE.store(enabled, Ordering::Relaxed);
@@ -725,8 +499,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_network_stats,
             is_widget_visible,
-            is_widget_alive,
-            set_island_visible,
             set_destroy_on_close,
             close_main_window,
             set_hardware_emit,
@@ -906,37 +678,30 @@ pub fn run() {
                 bind_main_window_close_event(&main_window);
             }
 
-            // 启动时确保灵动岛 WebView 存在（仅创建/硬化无边框，不 show）
-            match ensure_widget_window(app.handle()) {
-                Ok(widget_window) => {
-                    harden_widget_window(&widget_window);
-                }
-                Err(e) => {
-                    eprintln!("[NSD] 启动时创建灵动岛失败: {e}");
-                }
-            }
+            if let Some(widget_window) = app.get_webview_window("widget") {
+                #[cfg(target_os = "windows")]
+                {
+                    use windows_sys::Win32::Graphics::Dwm::{
+                        DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWA_BORDER_COLOR, DWMWCP_DONOTROUND,
+                    };
+                    use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowLongPtrW, GWL_STYLE, WS_CAPTION};
+                    use windows_sys::Win32::Foundation::HWND;
 
-            // 启动安全网（权威兜底显示）：
-            // 前端两个 WebView 的 onMounted 各自尝试 show，存在时序/异常导致窗口仍隐藏的可能。
-            // 后端在此延迟校验：若 OS 窗口仍隐藏且用户未显式关闭（ISLAND_DESIRED_VISIBLE 仍为 true），
-            // 则强制 show + 置顶，确保灵动岛在启动流程中一定可见。
-            // 层级（HWND_TOPMOST）与尺寸（210x36）由 harden_widget_window / force_widget_os_show 保证，
-            // 不会被其他窗口遮挡，也不会是零尺寸。
-            let app_for_startup = app.handle().clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(700));
-                if let Some(w) = app_for_startup.get_webview_window("widget") {
-                    let os_visible = w.is_visible().unwrap_or(false);
-                    if !os_visible && ISLAND_DESIRED_VISIBLE.load(Ordering::SeqCst) {
-                        harden_widget_window(&w);
-                        let _ = w.show();
-                        #[cfg(target_os = "windows")]
-                        {
-                            force_widget_os_show(&w);
+                    if let Ok(hwnd) = widget_window.hwnd() {
+                        let hwnd_raw = hwnd.0 as HWND;
+                        unsafe {
+                            let current_style = windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd_raw, GWL_STYLE);
+                            SetWindowLongPtrW(hwnd_raw, GWL_STYLE, current_style & !(WS_CAPTION as isize));
+
+                            let border_color: u32 = 0xFFFFFFFE;
+                            let _ = DwmSetWindowAttribute(hwnd_raw, DWMWA_BORDER_COLOR as u32, &border_color as *const _ as *const _, 4);
+
+                            let corner_preference = DWMWCP_DONOTROUND;
+                            let _ = DwmSetWindowAttribute(hwnd_raw, DWMWA_WINDOW_CORNER_PREFERENCE as u32, &corner_preference as *const _ as *const _, 4);
                         }
                     }
                 }
-            });
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

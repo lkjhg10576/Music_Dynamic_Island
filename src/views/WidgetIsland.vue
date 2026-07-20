@@ -318,7 +318,8 @@
 
                     <div v-else-if="showSpectrumIndicator" class="audio-spectrum"
                         :class="{ 'is-playing': isPlaying, 'expanded': isMusicExpanded }" key="spectrum">
-                        <canvas ref="spectrumCanvasRef" class="spectrum-canvas"></canvas>
+                        <span class="bar" v-for="(val, index) in spectrumData" :key="index"
+                            :style="{ transform: `scaleY(${val})` }"></span>
                     </div>
 
                     <div v-else :class="['status-dot', networkStatus]" key="dot"></div>
@@ -376,13 +377,13 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick, type CSSProperties } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWindow, currentMonitor, availableMonitors, PhysicalPosition, LogicalPosition, PhysicalSize } from '@tauri-apps/api/window'; import { Menu, MenuItem } from '@tauri-apps/api/menu';
+import { getCurrentWindow, currentMonitor, PhysicalPosition, LogicalPosition, PhysicalSize } from '@tauri-apps/api/window'; import { Menu, MenuItem } from '@tauri-apps/api/menu';
 import { listen, emit } from '@tauri-apps/api/event';
 import { formatSpeed } from '../utils/format';
 import {
     NSD_AUTO_HIDE_DELAY, NSD_AUTO_HIDE_ENABLED,
     NSD_AUTO_COLLAPSE_DELAY, NSD_AUTO_COLLAPSE_ENABLED,
-    NSD_ISLAND_OPACITY, NSD_ISLAND_THEME, NSD_ISLAND_ENABLED,
+    NSD_ISLAND_OPACITY, NSD_ISLAND_THEME,
     NSD_MUSIC_CTRL, NSD_GLOW_BORDER,
     NSD_PIN_TASKBAR, NSD_POSITION_LOCKED,
     NSD_MSG_MODE, NSD_ROTATION_MODE,
@@ -394,149 +395,10 @@ import {
     NSD_HW_MODE,
     NSD_HW_DEFAULT_METRIC,
     NSD_ACTIVITY_PRIORITY,
-    NSD_SPECTRUM_COLOR_MODE, NSD_SPECTRUM_CUSTOM_COLOR,
-    NSD_SYSMSG_ENABLED, NSD_SYSMSG_VOLUME_ENABLED,
-    NSD_SYSMSG_POWER_ENABLED, NSD_SYSMSG_BATTERY_ENABLED,
 } from '../constants/storageKeys';
 
 const isIslandVisible = ref(false);
 const isMenuOpen = ref(false);
-let visibilityOperationToken = 0;
-let desiredIslandVisible = false;
-// 入场/离场 rAF 句柄：快速开关时必须取消旧动画，否则 leave 会把 opacity 写回 0 造成“看不见”
-let visibilityAnimFrameId = 0;
-// 必须在 show/hide 之前声明，避免 TDZ
-// 自动隐藏/全屏隐藏现已统一把 paint=false 同步到控制台，不再需要区分 reason 标志。
-let wasVisibleBeforeFullscreen = false;
-let autoHideTimer: number | null = null;
-
-// 用户是否仍希望岛开启。auto-hide / 全屏 hide 不改变此意图；控制台开关与右键关闭会改写。
-const userWantsIslandVisible = () => localStorage.getItem(NSD_ISLAND_ENABLED) !== 'false';
-
-const cancelVisibilityAnimation = () => {
-    if (visibilityAnimFrameId) {
-        cancelAnimationFrame(visibilityAnimFrameId);
-        visibilityAnimFrameId = 0;
-    }
-};
-
-/** 清掉 leave/enter 残留的 inline opacity/transform，避免逻辑显示但肉眼透明。 */
-const resetIslandVisualStyle = (el?: Element | null) => {
-    const node = (el as HTMLElement | null)
-        || (document.querySelector('.island-container') as HTMLElement | null);
-    if (!node) return;
-    node.style.opacity = '1';
-    node.style.transform = 'scale(1)';
-};
-
-/** 运行时强制无边框：防止系统标题栏把 36px 高度吃光，只剩 “MDI Widget” 空标题条。 */
-const ensureWidgetFrame = async () => {
-    const win = getCurrentWindow();
-    // setDecorations / setShadow 失败不能阻断 show（capability 未声明时仅 warn）
-    try {
-        await win.setDecorations(false);
-    } catch (e) {
-        console.warn('[NSD] setDecorations(false) failed:', e);
-    }
-    try {
-        await win.setShadow(false);
-    } catch (e) {
-        console.warn('[NSD] setShadow(false) failed:', e);
-    }
-    try {
-        await win.setAlwaysOnTop(true);
-    } catch (e) {
-        console.warn('[NSD] setAlwaysOnTop failed:', e);
-    }
-};
-
-/** OS 窗口显示并且 Vue 完成一帧渲染后，再向控制台确认灵动岛真正可见。 */
-const showIslandWindow = async (withEnterDelay = false) => {
-    desiredIslandVisible = true;
-    // 取消挂起的自动隐藏，避免“刚打开就被 2s 定时器藏掉”
-    if (autoHideTimer) {
-        clearTimeout(autoHideTimer);
-        autoHideTimer = null;
-    }
-    const token = ++visibilityOperationToken;
-    cancelVisibilityAnimation();
-    try {
-        // 顺序关键：
-        // 1) 先关系统装饰（标题栏会吃掉 36px 客户区）
-        // 2) 先 OS show，再 paint Vue DOM —— 绝不能把 show 放到 requestAnimationFrame 之后！
-        //    被创建的隐藏 WebView 中 rAF 会被 Chromium 节流/暂停，导致 show() 永远拿不到执行机会，
-        //    窗口一直隐藏。装饰已先去除，先 show 不会闪标题栏。
-        // 3) show 后再 harden 一次（部分 Win 首次 show 会回写 decorations）
-        await ensureWidgetFrame();
-        if (token !== visibilityOperationToken) return;
-
-        // 关键修复：先真正显示 OS 窗口（装饰已去除，无标题栏闪烁）
-        await getCurrentWindow().show();
-        if (token !== visibilityOperationToken) return;
-        await ensureWidgetFrame();
-        if (token !== visibilityOperationToken) return;
-
-        if (withEnterDelay) {
-            await new Promise<void>((resolve) => setTimeout(resolve, 40));
-        }
-        if (token !== visibilityOperationToken) return;
-
-        isIslandVisible.value = true;
-        await nextTick();
-        resetIslandVisualStyle();
-        // 仅用于入场动画的一帧渲染，不再阻塞 show（窗口已可见）
-        await new Promise<void>((resolve) => {
-            visibilityAnimFrameId = requestAnimationFrame(() => {
-                visibilityAnimFrameId = 0;
-                resolve();
-            });
-        });
-        if (token !== visibilityOperationToken || !desiredIslandVisible) return;
-
-        if (token === visibilityOperationToken && desiredIslandVisible && isIslandVisible.value) {
-            resetIslandVisualStyle();
-            // 控制台开关跟随真实 paint 态（含 auto-hide 收起后的重显）
-            await emit('island-status-sync', { visible: true });
-        }
-    } catch (e) {
-        console.error('[NSD] showIslandWindow failed:', e);
-        // 关键修复：show 真正失败时绝不能谎报 visible:true —— 否则 MainPanel 会据此跳过后端
-        // set_island_visible 兜底，造成窗口永久隐藏。如实回执 false，让后端启动安全网强制显示。
-        if (token === visibilityOperationToken && desiredIslandVisible) {
-            // 先尝试后端权威入口 show（不依赖本窗口的 Tauri window API，绕开可能的权限/状态问题）
-            try {
-                await invoke<boolean>('set_island_visible', { show: true });
-                isIslandVisible.value = true;
-                resetIslandVisualStyle();
-                await emit('island-status-sync', { visible: true });
-            } catch (invokeErr) {
-                console.error('[NSD] 后端兜底 show 也失败，等待启动安全网:', invokeErr);
-                // DOM 仍置为可见，便于后端安全网 show 后立刻看到内容；同时如实回执 false
-                isIslandVisible.value = true;
-                resetIslandVisualStyle();
-                await emit('island-status-sync', { visible: false }).catch(() => {});
-            }
-        }
-    }
-};
-
-/** 使尚未完成的显示操作失效，再触发 Vue 离场动画。 */
-const hideIslandWindow = () => {
-    const wasVisible = isIslandVisible.value;
-    desiredIslandVisible = false;
-    visibilityOperationToken++;
-    cancelVisibilityAnimation();
-    isIslandVisible.value = false;
-    // 立刻同步 paint=false：无论用户关闭 / 自动隐藏 / 全屏隐藏。
-    // 否则开关停在“已开启”，用户再点一次会变成“关闭”而不是“重新显示”。
-    // 用户意图 nsd_island_enabled 不在这里改写（仅控制台开关 / 右键关闭改写）。
-    void emit('island-status-sync', { visible: false }).catch(() => {});
-    // 若 DOM 尚未显示（show 仍在 await），不会触发 Vue leave，需直接隐藏透明 OS 窗口。
-    // 已显示时则保留原有离场动画，由 onLeave 在结束后 hide OS 窗口。
-    if (!wasVisible) {
-        void getCurrentWindow().hide().catch(() => {});
-    }
-};
 
 // 番茄钟相关变量（由后端 pomodoro-tick 事件驱动）
 const isPomodoroVisible = ref(false);
@@ -557,8 +419,10 @@ const isHealthAlerting = ref(false);
 const healthAlertLabel = ref('');
 const healthAlertType = ref<'sitting' | 'water'>('sitting');
 
-// 全屏自动隐藏相关（wasVisibleBeforeFullscreen 已在顶部可见性模块声明）
+// 全屏自动隐藏相关
 const isAutoHideFullscreen = ref(localStorage.getItem(NSD_AUTO_HIDE_FS) === 'true');
+let wasVisibleBeforeFullscreen = false;
+let isHidingForFullscreen = false;
 
 // 番茄钟计算属性
 const formattedIslandPomoTime = computed(() => {
@@ -669,21 +533,6 @@ const showRtChip = computed(() => {
     if (isHealthAlerting.value && expandedRtId.value !== 'health') return false;
     return true;
 });
-
-// 启动即同步：当某个实时活动真正活跃（rtActive 为真）时，把对应的 activityConfig.enabled 置真，
-// 使灵动岛上的小图标在软件启动后即时出现——无需用户手动进入实时活动设置页触发 control-activity-config 推送。
-// 修复前 activityConfig.enabled 只能由 LiveActive 挂载时 emit 的事件提供，导致不打开设置页小图标就不显示。
-// 仅在活跃时置 enabled=true，不活跃时保留既有状态（由 LiveActive / localStorage 兜底），避免误关。
-watch(rtActive, (active) => {
-    const next: Record<string, { enabled: boolean; priority: number }> = { ...activityConfig.value };
-    RT_IDS.forEach((id, idx) => {
-        if (active[id]) {
-            const priority = next[id]?.priority ?? idx + 1;
-            next[id] = { enabled: true, priority };
-        }
-    });
-    activityConfig.value = next;
-}, { immediate: true });
 
 // 当前预览（最右小图标所代表）的活动 id（rtActivities[currentRtIndex]?.id 的快捷访问）
 // 注：直接在 template / 计算属性中用 rtActivities[currentRtIndex]?.id，不再单独声明计算属性
@@ -859,7 +708,7 @@ const handleCdClose = async () => {
 
 // 自动隐藏相关变量
 const isMouseOver = ref(false);
-// autoHideTimer 已在顶部可见性模块声明
+let autoHideTimer: number | null = null;
 const autoHideDelay = ref(Number(localStorage.getItem(NSD_AUTO_HIDE_DELAY) || '2000')); // 默认2秒
 const isAutoHideEnabled = ref(localStorage.getItem(NSD_AUTO_HIDE_ENABLED) === 'true'); // 自动隐藏功能开关
 
@@ -882,124 +731,15 @@ const msgBody = ref('');
 const msgAumid = ref('');
 
 // 系统操作通知专用变量
-type SysToastType = 'app' | 'sys' | 'volume' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock';
-interface SysToastItem {
-    text: string;
-    type: SysToastType;
-}
-
 const displaySysToast = ref(false);
 const sysToastText = ref('');
-const sysToastType = ref<SysToastType>('app');
-const toastQueue = ref<SysToastItem[]>([]);
+const sysToastType = ref<'app' | 'sys' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock'>('app');
+const toastQueue = ref<{ text: string, type: 'app' | 'sys' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' }[]>([]);
 let isProcessingToast = false;
-
-// 音量 toast 可续期显示：以“距最后一次音量变化的静默时间”决定何时关闭
-const TOAST_DWELL_MS = 2000;
-const TOAST_LEAVE_MS = 200;
-let toastDeadlineAt = 0;
-let toastWaitToken = 0;
-let toastWaitTimer: ReturnType<typeof setTimeout> | null = null;
-// 记录最近一次已应用的 toast 岛宽，避免连续音量更新反复触发同尺寸动画
-let lastToastIslandWidth: number | null = null;
-
-const clearToastWaitTimer = () => {
-    if (toastWaitTimer !== null) {
-        clearTimeout(toastWaitTimer);
-        toastWaitTimer = null;
-    }
-};
-
-/** 可取消的等待：token 变化或组件卸载后旧等待立即失效 */
-const waitUntilToastDeadline = (token: number): Promise<void> => {
-    return new Promise((resolve) => {
-        const tick = () => {
-            if (token !== toastWaitToken) {
-                resolve();
-                return;
-            }
-            const remaining = toastDeadlineAt - Date.now();
-            if (remaining <= 0) {
-                toastWaitTimer = null;
-                resolve();
-                return;
-            }
-            toastWaitTimer = setTimeout(tick, remaining);
-        };
-        clearToastWaitTimer();
-        tick();
-    });
-};
-
-const sleepMs = (ms: number, token: number): Promise<void> => {
-    return new Promise((resolve) => {
-        if (token !== toastWaitToken) {
-            resolve();
-            return;
-        }
-        toastWaitTimer = setTimeout(() => {
-            toastWaitTimer = null;
-            resolve();
-        }, ms);
-    });
-};
-
-/** 用 canvas 测量 toast 文本像素宽度 */
-const measureToastTextWidth = (text: string): number => {
-    try {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-            ctx.font = '600 12.5px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
-            return Math.ceil(ctx.measureText(text).width);
-        }
-    } catch (_e) { /* ignore */ }
-    // 回退：中文约 12.5px，英文约 7.5px
-    let w = 0;
-    for (const ch of text) {
-        w += /[\u4e00-\u9fff]/.test(ch) ? 12.5 : 7.5;
-    }
-    return Math.ceil(w);
-};
-
-/**
- * 计算系统 toast 目标岛宽。
- * 布局：left padding 14 + 图标有效占位(30-8=22) + 文本 + 右 padding 14
- * 若频谱可见，右侧还需预留 ~34px canvas + 少量间隙。
- */
-const calcSysToastWidth = (text: string, type: SysToastType): number => {
-    const textW = measureToastTextWidth(text);
-    // 图标 translateX(-8px) 后有效占位约 22，文本 translateX(-2px)
-    const iconOccupy = 22;
-    const horizontalPadding = 28; // left 14 + right 14
-    const textGap = 4;
-    // 频谱 canvas 34px + 右侧状态点/间隙；无频谱时仍留状态点与少量余量
-    const rightIndicator = showSpectrumIndicator.value ? 42 : 14;
-    const raw = horizontalPadding + iconOccupy + textGap + textW + rightIndicator;
-
-    // 音量文本短，给较窄下限；电源/电池长文本给更宽上限
-    // 例：「已接入电源，当前电量 100%」约 13 字 ≈ 162px + 图标/边距/频谱 ≈ 280+
-    const minW = type === 'volume' ? 210 : (type === 'battery-charge' || type === 'battery-low' ? 300 : 240);
-    const maxW = 420;
-    return Math.max(minW, Math.min(maxW, raw));
-};
-
-const applySysToastIslandSize = (text: string, type: SysToastType) => {
-    const targetWidth = calcSysToastWidth(text, type);
-    if (lastToastIslandWidth !== null && Math.abs(lastToastIslandWidth - targetWidth) < 2) {
-        return; // 尺寸几乎不变，跳过动画
-    }
-    lastToastIslandWidth = targetWidth;
-    animateIslandSize(targetWidth, 42);
-};
-
-const isVolumeToastText = (text: string): boolean => {
-    const lowered = text.toLowerCase();
-    return lowered.includes('音量') || lowered.includes('volume');
-};
 
 // 队列处理函数
 const processToastQueue = async () => {
+    // 如果正在处理，或者队列为空，则直接返�?
     if (isProcessingToast || toastQueue.value.length === 0) return;
 
     // 优先级判断：如果当前正在显示消息通知(最高优先级)，则挂起等待
@@ -1009,44 +749,23 @@ const processToastQueue = async () => {
     const nextToast = toastQueue.value.shift();
 
     if (nextToast) {
-        const token = ++toastWaitToken;
         sysToastText.value = nextToast.text;
         sysToastType.value = nextToast.type;
         displaySysToast.value = true;
-        toastDeadlineAt = Date.now() + TOAST_DWELL_MS;
-        applySysToastIslandSize(nextToast.text, nextToast.type);
-
+        
         // 自动恢复显示：当有系统通知时，如果灵动岛被隐藏，则自动恢复显示
         if (!isIslandVisible.value) {
-            void showIslandWindow();
+            getCurrentWindow().show();
+            isIslandVisible.value = true;
         }
 
-        // 可续期停留：连续音量变化会推后 toastDeadlineAt。
-        // waitUntilToastDeadline 的 timer 回调会重读 deadline；此处 while 再兜住
-        // “await 返回瞬间又被续期”的竞态。
-        while (token === toastWaitToken) {
-            await waitUntilToastDeadline(token);
-            if (token !== toastWaitToken) break;
-            if (Date.now() >= toastDeadlineAt) break;
-        }
-
-        // token 失效说明有新一轮处理接管，或组件已卸载
-        if (token !== toastWaitToken) {
-            isProcessingToast = false;
-            return;
-        }
+        // 停留显示
+        await new Promise(resolve => setTimeout(resolve, 2000));
 
         displaySysToast.value = false;
-        lastToastIslandWidth = null;
         // 等待离开动画播完 (约200ms) 再处理下一个
-        await sleepMs(TOAST_LEAVE_MS, token);
+        await new Promise(resolve => setTimeout(resolve, 200));
 
-        if (token !== toastWaitToken) {
-            isProcessingToast = false;
-            return;
-        }
-
-        // 离开动画期间若队列中已有更新后的 volume，下面 processToastQueue 会接上
         // 系统 toast 结束后，重新评估自动隐藏
         // 场景：音乐控制器开启 + 无音乐播放时，toast 弹出强制显示了灵动岛，
         // toast 结束后应恢复自动隐藏
@@ -1057,14 +776,14 @@ const processToastQueue = async () => {
     processToastQueue(); // 递归检查是否还有下一个通知
 };
 
-// 监听系统通知显示状态：动态宽度 + 结束后恢复用户岛宽
+// 监听系统通知显示状态，解决网速模式下尺寸过小导致文字溢出/遮挡指示灯的问题
 watch(displaySysToast, (newVal) => {
     if (newVal) {
-        applySysToastIslandSize(sysToastText.value, sysToastType.value);
+        // 当有系统操作通知出现时，强制展开到默认标准尺�?
+        animateIslandSize(260, 42);
     } else {
-        lastToastIslandWidth = null;
         // 通知消失时，恢复到当前状态该有的尺寸
-        // （前提是没有被应用消息或音乐面板霸占）
+        // （前提是没有被应用消息或音乐面板霸占�?
         if (!isMsgActive.value && !isMusicExpanded.value && !isMusicExpanding.value) {
             const { h } = getBaseSize();
             const savedWidth = restoreIslandWidth();
@@ -1074,62 +793,17 @@ watch(displaySysToast, (newVal) => {
     }
 });
 
-// 连续音量更新时：文本变化后重新评估宽度（仅在宽度确实变化时动画）
-watch(sysToastText, (text) => {
-    if (!displaySysToast.value) return;
-    applySysToastIslandSize(text, sysToastType.value);
-});
-
 // 暴露给外部调用的触发函数
-const showToast = (text: string, type: SysToastType = 'app') => {
-    // 音量：合并到当前显示或队列中的唯一 volume 项，并续期显示截止时间
-    if (type === 'volume') {
-        // 1) 正在显示音量：只更新数字 + 续期，不重播进/离场
-        if (displaySysToast.value && sysToastType.value === 'volume') {
-            sysToastText.value = text;
-            toastDeadlineAt = Date.now() + TOAST_DWELL_MS;
-            return;
-        }
-        // 2) 已在队列中：原地更新为最新音量，避免堆积
-        const queuedIdx = toastQueue.value.findIndex((item) => item.type === 'volume');
-        if (queuedIdx >= 0) {
-            toastQueue.value[queuedIdx] = { text, type: 'volume' };
-            processToastQueue();
-            return;
-        }
-        // 3) 其余情况（含 leave 动画窗口）正常入队；leave 结束后会立即接上
-        toastQueue.value.push({ text, type: 'volume' });
-        processToastQueue();
-        return;
-    }
-
+const showToast = (text: string, type: 'app' | 'sys' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' = 'app') => {
     toastQueue.value.push({ text, type });
     processToastQueue();
 };
 
-// 监听消息通知状态：
-// - 消息出现时：若正在显示 volume toast，先中断并塞回队列头部，避免消息结束后音量提示丢失
-// - 消息消失时：立刻唤醒可能被挂起的操作通知队列
+// 监听消息通知状态，一旦消息通知消失，立刻唤醒可能被挂起的操作通知队列
 watch(isMsgActive, (newVal) => {
-    if (newVal) {
-        if (displaySysToast.value && sysToastType.value === 'volume') {
-            const volumeText = sysToastText.value;
-            toastWaitToken++;
-            clearToastWaitTimer();
-            displaySysToast.value = false;
-            lastToastIslandWidth = null;
-            // 合并：若队列里已有 volume，更新为最新；否则插到队首
-            const queuedIdx = toastQueue.value.findIndex((item) => item.type === 'volume');
-            if (queuedIdx >= 0) {
-                toastQueue.value[queuedIdx] = { text: volumeText, type: 'volume' };
-            } else {
-                toastQueue.value.unshift({ text: volumeText, type: 'volume' });
-            }
-            isProcessingToast = false;
-        }
-        return;
+    if (!newVal) {
+        processToastQueue();
     }
-    processToastQueue();
 });
 
 // 记录音乐岛是否处于展开状�?
@@ -1207,12 +881,6 @@ const networkStatus = ref<'good' | 'warning' | 'error'>('good');
 const hwEnabled = ref(localStorage.getItem(NSD_HW_ENABLED) === 'true');
 const hwMode = ref(localStorage.getItem(NSD_HW_MODE) || 'single');
 const hwDefaultMetric = ref(localStorage.getItem(NSD_HW_DEFAULT_METRIC) || 'cpu');
-
-// 系统动态感知（由 LiveActive 的开关驱动；事件来自后端 system-event / battery-event）
-const isSysmsgEnabled = ref(localStorage.getItem(NSD_SYSMSG_ENABLED) === 'true');
-const sysmsgVolumeEnabled = ref(localStorage.getItem(NSD_SYSMSG_VOLUME_ENABLED) !== 'false');
-const sysmsgPowerEnabled = ref(localStorage.getItem(NSD_SYSMSG_POWER_ENABLED) !== 'false');
-const sysmsgBatteryEnabled = ref(localStorage.getItem(NSD_SYSMSG_BATTERY_ENABLED) !== 'false');
 const hwCpuPct = ref(0);
 const hwMemPct = ref(0);
 const isHardwareExpanded = ref(false);
@@ -1297,32 +965,8 @@ const isPlaying = ref(false);
 // 流光边框默认状态完全镜像音乐控制器（只要音乐控制器开着它就开，关了就一起关�?
 const isGlowBorderEnabled = ref(localStorage.getItem(NSD_GLOW_BORDER) === 'true');
 
-// 律动频谱（Canvas 2D 渲染）
+// 律动频谱
 const spectrumData = ref([0.35, 0.35, 0.35, 0.35, 0.35]);
-const spectrumCanvasRef = ref<HTMLCanvasElement | null>(null);
-const spectrumColorMode = ref(localStorage.getItem(NSD_SPECTRUM_COLOR_MODE) || 'album'); // 'album' | 'theme' | 'custom'
-const spectrumCustomColor = ref(localStorage.getItem(NSD_SPECTRUM_CUSTOM_COLOR) || '#b6e0ee');
-const albumColors = ref<string[]>([]);
-
-// Canvas 频谱渲染状态（非响应式，避免每帧触发 Vue 更新）
-const SPECTRUM_BAR_COUNT = 5;
-const SPECTRUM_CSS_W = 34;
-const SPECTRUM_CSS_H = 12;
-const SPECTRUM_BAR_W = 2;
-const SPECTRUM_BAR_GAP = 2;
-const SPECTRUM_MIN_H = 2;
-const SPECTRUM_BASELINE = 0.35;
-const SPECTRUM_CEILING = 0.95;
-const SPECTRUM_SMOOTHING = 0.22;
-/** 专辑取色失败/无封面时的默认淡蓝（与旧 .bar 颜色一致） */
-const SPECTRUM_FALLBACK_COLOR = '#b6e0ee';
-let latestSpectrum = [0.35, 0.35, 0.35, 0.35, 0.35];
-let currentHeights = [0.35, 0.35, 0.35, 0.35, 0.35];
-let spectrumRafId = 0;
-let spectrumPeakRef = 0.01;
-let spectrumFillCache: string | CanvasGradient | null = null;
-let spectrumFillCacheKey = '';
-let albumColorToken = 0;
 
 // 封面url
 const coverUrl = ref('');
@@ -1390,314 +1034,23 @@ const showSpectrumIndicator = computed(() => {
 // 频谱开关状态追踪，避免重复调用后端
 let isSpectrumActive = false;
 
-/** 圆角竖条绘制（roundRect fallback） */
-const drawRoundedBar = (
-    ctx: CanvasRenderingContext2D,
-    x: number, y: number, w: number, h: number, r: number
-) => {
-    if (h <= 0 || w <= 0) return;
-    const radius = Math.min(r, w / 2, h / 2);
-    ctx.beginPath();
-    if (typeof (ctx as any).roundRect === 'function') {
-        (ctx as any).roundRect(x, y, w, h, radius);
-    } else {
-        ctx.moveTo(x + radius, y);
-        ctx.arcTo(x + w, y, x + w, y + h, radius);
-        ctx.arcTo(x + w, y + h, x, y + h, radius);
-        ctx.arcTo(x, y + h, x, y, radius);
-        ctx.arcTo(x, y, x + w, y, radius);
-        ctx.closePath();
-    }
-    ctx.fill();
-};
-
-/** 计算当前模式的填充色/渐变，带缓存 */
-const resolveSpectrumFill = (ctx: CanvasRenderingContext2D, height: number) => {
-    const mode = spectrumColorMode.value;
-    const theme = islandTheme.value;
-    const custom = spectrumCustomColor.value;
-    const colors = albumColors.value;
-    const key = `${mode}|${theme}|${custom}|${colors.join(',')}|${height}`;
-    if (spectrumFillCache && spectrumFillCacheKey === key) {
-        return spectrumFillCache;
-    }
-
-    let fill: string | CanvasGradient;
-    if (mode === 'custom') {
-        fill = custom || SPECTRUM_FALLBACK_COLOR;
-    } else if (mode === 'theme') {
-        fill = theme === 'white' ? '#000000' : '#ffffff';
-    } else {
-        // album 模式：有取色则用渐变/纯色，失败或无封面一律回退默认淡蓝
-        if (colors.length >= 2) {
-            const g = ctx.createLinearGradient(0, 0, 0, height);
-            g.addColorStop(0, colors[0]);
-            g.addColorStop(1, colors[colors.length - 1]);
-            fill = g;
-        } else if (colors.length === 1) {
-            fill = colors[0];
-        } else {
-            fill = SPECTRUM_FALLBACK_COLOR;
-        }
-    }
-
-    spectrumFillCache = fill;
-    spectrumFillCacheKey = key;
-    return fill;
-};
-
-/** 确保 canvas 物理像素匹配 DPR */
-const ensureSpectrumCanvasSize = (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => {
-    const dpr = window.devicePixelRatio || 1;
-    const targetW = Math.round(SPECTRUM_CSS_W * dpr);
-    const targetH = Math.round(SPECTRUM_CSS_H * dpr);
-    if (canvas.width !== targetW || canvas.height !== targetH) {
-        canvas.width = targetW;
-        canvas.height = targetH;
-        canvas.style.width = `${SPECTRUM_CSS_W}px`;
-        canvas.style.height = `${SPECTRUM_CSS_H}px`;
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        // 尺寸变化会使渐变失效
-        spectrumFillCache = null;
-        spectrumFillCacheKey = '';
-    }
-};
-
-/** 单帧绘制：插值高度 + 自适应增益 + 圆角条 */
-const renderSpectrumFrame = () => {
-    const canvas = spectrumCanvasRef.value;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    ensureSpectrumCanvasSize(canvas, ctx);
-
-    // 前端二次平滑 + 前端轻量 AGC（跟踪近 1s 峰值）
-    let framePeak = 0.01;
-    for (let i = 0; i < SPECTRUM_BAR_COUNT; i++) {
-        const target = latestSpectrum[i] ?? SPECTRUM_BASELINE;
-        currentHeights[i] += (target - currentHeights[i]) * SPECTRUM_SMOOTHING;
-
-        const n = Math.min(1, Math.max(0,
-            (currentHeights[i] - SPECTRUM_BASELINE) / (SPECTRUM_CEILING - SPECTRUM_BASELINE)
-        ));
-        if (n > framePeak) framePeak = n;
-    }
-    // 峰值快上升慢回落
-    if (framePeak > spectrumPeakRef) {
-        spectrumPeakRef = framePeak;
-    } else {
-        spectrumPeakRef = Math.max(0.01, spectrumPeakRef * 0.995);
-    }
-
-    ctx.clearRect(0, 0, SPECTRUM_CSS_W, SPECTRUM_CSS_H);
-    ctx.fillStyle = resolveSpectrumFill(ctx, SPECTRUM_CSS_H) as any;
-
-    const totalBarsW = SPECTRUM_BAR_COUNT * SPECTRUM_BAR_W + (SPECTRUM_BAR_COUNT - 1) * SPECTRUM_BAR_GAP;
-    const startX = Math.max(0, (SPECTRUM_CSS_W - totalBarsW) / 2);
-
-    for (let i = 0; i < SPECTRUM_BAR_COUNT; i++) {
-        const n = Math.min(1, Math.max(0,
-            (currentHeights[i] - SPECTRUM_BASELINE) / (SPECTRUM_CEILING - SPECTRUM_BASELINE)
-        ));
-        // 自适应增益：任何音量段视觉幅度趋于一致
-        const display = Math.min(1, n / spectrumPeakRef);
-        const barH = SPECTRUM_MIN_H + display * (SPECTRUM_CSS_H - SPECTRUM_MIN_H);
-        const x = startX + i * (SPECTRUM_BAR_W + SPECTRUM_BAR_GAP);
-        const y = (SPECTRUM_CSS_H - barH) / 2; // 居中（与旧 transform-origin:center 一致）
-        drawRoundedBar(ctx, x, y, SPECTRUM_BAR_W, barH, 1.5);
-    }
-};
-
-const stopSpectrumRaf = () => {
-    if (spectrumRafId) {
-        cancelAnimationFrame(spectrumRafId);
-        spectrumRafId = 0;
-    }
-};
-
-const startSpectrumRaf = () => {
-    if (spectrumRafId) return;
-    const loop = () => {
-        renderSpectrumFrame();
-        spectrumRafId = requestAnimationFrame(loop);
-    };
-    spectrumRafId = requestAnimationFrame(loop);
-};
-
-/** RGB → 提亮后的 hex（保证在黑岛上可见） */
-const rgbToHexBoosted = (r: number, g: number, b: number): string => {
-    // 转 HSL 提亮 L
-    r /= 255; g /= 255; b /= 255;
-    const max = Math.max(r, g, b), min = Math.min(r, g, b);
-    let h = 0, s = 0;
-    const l = (max + min) / 2;
-    if (max !== min) {
-        const d = max - min;
-        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-        switch (max) {
-            case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
-            case g: h = ((b - r) / d + 2) / 6; break;
-            default: h = ((r - g) / d + 4) / 6; break;
-        }
-    }
-    const targetL = Math.max(l, 0.58);
-    // HSL → RGB
-    const hue2rgb = (p: number, q: number, t: number) => {
-        if (t < 0) t += 1;
-        if (t > 1) t -= 1;
-        if (t < 1 / 6) return p + (q - p) * 6 * t;
-        if (t < 1 / 2) return q;
-        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-        return p;
-    };
-    let nr: number, ng: number, nb: number;
-    if (s === 0) {
-        nr = ng = nb = targetL;
-    } else {
-        const q = targetL < 0.5 ? targetL * (1 + s) : targetL + s - targetL * s;
-        const p = 2 * targetL - q;
-        nr = hue2rgb(p, q, h + 1 / 3);
-        ng = hue2rgb(p, q, h);
-        nb = hue2rgb(p, q, h - 1 / 3);
-    }
-    const toHex = (v: number) => Math.round(Math.min(255, Math.max(0, v * 255))).toString(16).padStart(2, '0');
-    return `#${toHex(nr)}${toHex(ng)}${toHex(nb)}`;
-};
-
-/** 从 ImageBitmap/Image 像素提取 2 个主色 */
-const sampleColorsFromImage = (img: CanvasImageSource, w: number, h: number): string[] => {
-    const off = document.createElement('canvas');
-    off.width = 8;
-    off.height = 8;
-    const octx = off.getContext('2d', { willReadFrequently: true });
-    if (!octx) return [];
-    octx.drawImage(img, 0, 0, w, h, 0, 0, 8, 8);
-    let data: ImageData;
-    try {
-        data = octx.getImageData(0, 0, 8, 8);
-    } catch {
-        return []; // SecurityError：canvas 被污染
-    }
-
-    const dark: number[][] = [];
-    const bright: number[][] = [];
-    for (let i = 0; i < data.data.length; i += 4) {
-        const r = data.data[i], g = data.data[i + 1], b = data.data[i + 2], a = data.data[i + 3];
-        if (a < 128) continue;
-        const sum = r + g + b;
-        if (sum < 60 || sum > 720) continue; // 过滤过暗/过亮
-        const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-        (lum < 128 ? dark : bright).push([r, g, b]);
-    }
-
-    const avg = (arr: number[][]) => {
-        if (!arr.length) return null;
-        let r = 0, g = 0, b = 0;
-        for (const p of arr) { r += p[0]; g += p[1]; b += p[2]; }
-        const n = arr.length;
-        return rgbToHexBoosted(r / n, g / n, b / n);
-    };
-
-    const c1 = avg(bright) || avg(dark);
-    const c2 = avg(dark) || avg(bright);
-    const result: string[] = [];
-    if (c1) result.push(c1);
-    if (c2 && c2 !== c1) result.push(c2);
-    return result;
-};
-
-/** 加载图片（仅前端路径：dataURL 直载 / 远程 CORS；失败即视为取色失败） */
-const tryLoadImage = (src: string, crossOrigin: boolean) => new Promise<HTMLImageElement>((res, rej) => {
-    const img = new Image();
-    if (crossOrigin) img.crossOrigin = 'anonymous';
-    img.onload = () => res(img);
-    img.onerror = () => rej(new Error('image load failed'));
-    img.src = src;
-});
-
-const loadImageForColor = async (url: string): Promise<HTMLImageElement> => {
-    // dataURL 无跨域问题
-    if (url.startsWith('data:')) {
-        return tryLoadImage(url, false);
-    }
-    // 远程图仅尝试 CORS；失败不走后端取图，直接让上层清空 albumColors → 回退淡蓝
-    return tryLoadImage(url, true);
-};
-
-/** 从封面 URL 提取专辑主色；任何失败都清空 albumColors，由 album 模式回退到默认淡蓝 */
-const extractAlbumColors = async (imgUrl: string) => {
-    const token = ++albumColorToken;
-    if (!imgUrl) {
-        albumColors.value = [];
-        spectrumFillCache = null;
-        return;
-    }
-    try {
-        const img = await loadImageForColor(imgUrl);
-        if (token !== albumColorToken) return; // 过期请求
-        const colors = sampleColorsFromImage(img, img.naturalWidth || img.width, img.naturalHeight || img.height);
-        if (token !== albumColorToken) return;
-        // 无有效像素时也视为失败 → 清空，触发默认淡蓝
-        albumColors.value = colors;
-        spectrumFillCache = null;
-    } catch (e) {
-        if (token !== albumColorToken) return;
-        console.warn('专辑取色失败，回退默认淡蓝', e);
-        albumColors.value = [];
-        spectrumFillCache = null;
-    }
-};
-
 // 按需启停音频频谱捕获：音乐控制器模式开启且灵动岛可见时即激活后端 FFT。
 // 改为以「音乐模式 + 可见」为启停条件（而非 isPlaying）：
 //   1. 暂停时捕获仍在运行，但因无音频会自动回落到静默基准线（0.35），频谱条平滑归位，
 //      彻底修复旧轮询逻辑移除后「暂停/切歌后频谱条卡死在最后高度」的回归；
 //   2. 配合 immediate，窗口重建（省内存模式）后立刻恢复，无需等待下一次音乐轮询。
-//   3. rAF 渲染循环仅在频谱可见时运行，不可见即停，零占用。
-watch([showSpectrumIndicator, isIslandVisible], async () => {
+watch([showSpectrumIndicator, isIslandVisible], () => {
     const shouldActivate = showSpectrumIndicator.value && isIslandVisible.value;
     if (shouldActivate && !isSpectrumActive) {
         isSpectrumActive = true;
         invoke('set_spectrum_active', { active: true }).catch(() => {});
-        await nextTick();
-        startSpectrumRaf();
     } else if (!shouldActivate && isSpectrumActive) {
         isSpectrumActive = false;
         invoke('set_spectrum_active', { active: false }).catch(() => {});
-        stopSpectrumRaf();
         // 关闭捕获时复位到静默基准线，避免残留上一首歌曲的波形
-        const baseline = [0.35, 0.35, 0.35, 0.35, 0.35];
-        spectrumData.value = baseline;
-        latestSpectrum = [...baseline];
-        currentHeights = [...baseline];
-        spectrumPeakRef = 0.01;
-    } else if (shouldActivate) {
-        // 已激活但 canvas 可能因 transition 重建，确保 rAF 在跑
-        await nextTick();
-        startSpectrumRaf();
+        spectrumData.value = [0.35, 0.35, 0.35, 0.35, 0.35];
     }
 }, { immediate: true });
-
-// 颜色模式 / 自定义色 / 主题 / 专辑色 变化时写存储并失效填充缓存
-watch(spectrumColorMode, (v) => {
-    localStorage.setItem(NSD_SPECTRUM_COLOR_MODE, v);
-    spectrumFillCache = null;
-});
-watch(spectrumCustomColor, (v) => {
-    localStorage.setItem(NSD_SPECTRUM_CUSTOM_COLOR, v);
-    spectrumFillCache = null;
-});
-watch(islandTheme, () => {
-    spectrumFillCache = null;
-});
-watch(albumColors, () => {
-    spectrumFillCache = null;
-});
-// 封面变化时重新取色
-watch(coverUrl, (url) => {
-    extractAlbumColors(url || '');
-});
 
 const startRotation = () => {
     if (rotationTimer) clearInterval(rotationTimer);
@@ -1728,7 +1081,8 @@ const scheduleAutoHide = (delay?: number) => {
             && isAutoHideEnabled.value
             && isMusicCtlEnabled.value
             && !isPlaying.value) {
-            hideIslandWindow();
+            isAutoHiding = true;
+            isIslandVisible.value = false;
         }
     }, delay ?? autoHideDelay.value);
 };
@@ -1784,20 +1138,19 @@ const snapToBottomLeft = async () => {
             // 恢复使用 Tauri 最底层的硬件真实分辨率（绝对不会缩水）
             const monitorHeightPhysical = monitor.size.height;
 
-            // X坐标: 屏幕最左侧 + 10px 边距
+            // X坐标: 屏幕最左侧 + 10px的边�?
             const x = monitorLeftPhysical + (10 * scaleFactor);
-            // Y坐标: 物理最底部 - 窗口高度 - 3px 微调
+            // Y坐标: 物理最底部 - 窗口高度 - 3px微调
             const y = monitorTopPhysical + monitorHeightPhysical - ((WINDOW_INIT_HEIGHT + 3) * scaleFactor);
 
-            // 任务栏吸附：先 hide 再 setPosition，绕过任务栏防遮挡。
-            // 仅当用户当前确实要显示岛时再 show，避免把“已关闭”状态又强行拉起空窗。
-            const shouldShow = desiredIslandVisible || isIslandVisible.value || userWantsIslandVisible();
+            // 【终极绝杀核心】：绕过 Windows 系统的任务栏防遮挡机�?
+            // 在强制覆盖任务栏坐标之前，先隐身�?
             await appWindow.hide();
+
             await appWindow.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
-            if (shouldShow) {
-                await appWindow.show();
-                await appWindow.setAlwaysOnTop(true);
-            }
+
+            // 移动完成后，瞬间现身，生米煮成熟饭，Windows 也拦不住了！
+            await appWindow.show();
         }
     } catch (error) {
         console.error('停靠左下角失败', error);
@@ -1879,7 +1232,8 @@ const syncMusicStatus = async () => {
             if (displayMusic.value) {
                 if (playing && !isIslandVisible.value) {
                     // 有音乐播放且灵动岛被隐藏，自动恢复显示
-                    void showIslandWindow();
+                    getCurrentWindow().show();
+                    isIslandVisible.value = true;
                 } else if (!playing && isIslandVisible.value && !isMouseOver.value) {
                     // 音乐停止播放且鼠标不在灵动岛上，延迟隐藏
                     // scheduleAutoHide 内部会校验音乐控制器模式 + 自动隐藏开关
@@ -2229,27 +1583,18 @@ const adjustWindowPosition = async () => {
     } catch (error) {
         console.error('调整窗口位置失败:', error);
     } finally {
-        // 仅定位，不擅自改变显隐意图；只有用户要显示时才 show。
-        if (desiredIslandVisible || isIslandVisible.value || userWantsIslandVisible()) {
-            try {
-                await getCurrentWindow().show();
-                await getCurrentWindow().setAlwaysOnTop(true);
-            } catch (e) {
-                console.error(e);
-            }
+        try {
+            await getCurrentWindow().show();
+        } catch (e) {
+            console.error(e);
         }
     }
 };
 
-// 核心动画实现：基于弹簧 / 衰减公式
+// 核心动画实现：基于你�?AE 公式转化
 const onEnter = (el: Element, done: () => void) => {
     const HTMLElement = el as HTMLElement;
-    const enterToken = visibilityOperationToken;
-    cancelVisibilityAnimation();
     HTMLElement.style.transformOrigin = 'center top'; // 类似苹果灵动岛从顶部展开
-    // 入场前先保证可见，防止 leave 残留 opacity=0
-    HTMLElement.style.opacity = '1';
-    HTMLElement.style.transform = 'scale(0.85)';
     let start = performance.now();
 
     const freq = 2.0;
@@ -2257,16 +1602,10 @@ const onEnter = (el: Element, done: () => void) => {
     const duration = 600;
 
     const animate = (time: number) => {
-        // 期间发生 hide/show 切换：立即停止，避免写脏 style
-        if (enterToken !== visibilityOperationToken || !desiredIslandVisible || !isIslandVisible.value) {
-            visibilityAnimFrameId = 0;
-            done();
-            return;
-        }
         let t = (time - start) / 1000;
         let progress = (time - start) / duration;
 
-        // 数学方程: 1 - cos(2πft) * e^(-dt)
+        // 数学方程�? - cos(2πft) * e^(-dt)
         let scale = 1 - Math.cos(freq * t * 2 * Math.PI) * Math.exp(-decay * t);
         let opacity = Math.min(1, progress * 4); // 快速淡入
 
@@ -2274,39 +1613,29 @@ const onEnter = (el: Element, done: () => void) => {
         HTMLElement.style.opacity = opacity.toString();
 
         if (progress < 1) {
-            visibilityAnimFrameId = requestAnimationFrame(animate);
+            requestAnimationFrame(animate);
         } else {
-            // 重置为最终干净的状态
+            // 重置为最终干净的状�?
             HTMLElement.style.transform = `scale(1)`;
             HTMLElement.style.opacity = '1';
-            visibilityAnimFrameId = 0;
             done();
         }
     };
-    visibilityAnimFrameId = requestAnimationFrame(animate);
+    requestAnimationFrame(animate);
 };
 
 const onLeave = (el: Element, done: () => void) => {
     const HTMLElement = el as HTMLElement;
-    const leaveToken = visibilityOperationToken;
-    cancelVisibilityAnimation();
     HTMLElement.style.transformOrigin = 'center top';
     let start = performance.now();
 
     const duration = 300; // 收起动画通常更干脆、更快
 
     const animate = (time: number) => {
-        // 若期间重新开启（token 已前进 / desired=true），立刻停止，绝不把 opacity 写回 0
-        if (leaveToken !== visibilityOperationToken || desiredIslandVisible || isIslandVisible.value) {
-            visibilityAnimFrameId = 0;
-            resetIslandVisualStyle(HTMLElement);
-            done();
-            return;
-        }
-
         let progress = (time - start) / duration;
 
-        // 离开动画：快速平滑回缩
+        // 离开动画：快速平滑回�?
+        // 使用 easing 曲线或简化的衰减
         let scale = 1 - Math.pow(progress, 3); // 快速内缩
         let opacity = 1 - progress * 1.5;
 
@@ -2314,26 +1643,27 @@ const onLeave = (el: Element, done: () => void) => {
         HTMLElement.style.opacity = Math.max(0, opacity).toString();
 
         if (progress < 1) {
-            visibilityAnimFrameId = requestAnimationFrame(animate);
+            requestAnimationFrame(animate);
         } else {
-            visibilityAnimFrameId = 0;
             done();
-            // 仅当前离场操作仍有效时隐藏 OS 窗口；若期间重新开启，旧动画不得覆盖新状态。
-            if (leaveToken === visibilityOperationToken && !desiredIslandVisible && !isIslandVisible.value) {
-                // hideIslandWindow 已立即 sync false；此处只收尾 hide OS 窗口
-                getCurrentWindow().hide().catch(console.error);
-            } else {
-                // 中途被取消的 leave：恢复可见样式，避免残留透明
-                resetIslandVisualStyle(HTMLElement);
+            // 等待 DOM 动画播放完成后再隐藏窗口
+            getCurrentWindow().hide().catch(console.error);
+            // 只有用户主动关闭时才同步状态到控制台，自动隐藏/全屏隐藏不改变开关
+            if (!isAutoHiding && !isHidingForFullscreen) {
+                emit('island-status-sync', { visible: false });
             }
+            isAutoHiding = false;
+            isHidingForFullscreen = false;
         }
     };
-    visibilityAnimFrameId = requestAnimationFrame(animate);
+    requestAnimationFrame(animate);
 };
 
 let mouseDownX = 0;
 let mouseDownY = 0;
 let isMouseDown = false;
+let isAutoHiding = false; // 标记当前隐藏是否由自动隐藏触发（区别于用户主动关闭）
+
 // 自定义横向拖拽相关状态（任务栏模式下仅允许横向移动）
 let isCustomDragging = false;
 let customDragStartScreenX = 0;
@@ -2601,54 +1931,18 @@ const saveIslandPosition = async () => {
     }
 };
 
-/**
- * 校验保存坐标是否仍落在任意显示器内。
- * 至少保留 48×24 物理像素可见，避免拔掉副屏、分辨率或缩放变化后灵动岛落在屏幕外。
- */
-const isSavedPositionVisible = async (x: number, y: number): Promise<boolean> => {
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
-
-    const appWindow = getCurrentWindow();
-    const [monitors, actualSize] = await Promise.all([
-        availableMonitors(),
-        appWindow.innerSize(),
-    ]);
-    const width = Math.max(1, actualSize.width);
-    const height = Math.max(1, actualSize.height);
-
-    return monitors.some((monitor) => {
-        const left = monitor.position.x;
-        const top = monitor.position.y;
-        const right = left + monitor.size.width;
-        const bottom = top + monitor.size.height;
-        const visibleWidth = Math.min(x + width, right) - Math.max(x, left);
-        const visibleHeight = Math.min(y + height, bottom) - Math.max(y, top);
-        const minVisibleWidth = Math.min(48 * monitor.scaleFactor, width);
-        const minVisibleHeight = Math.min(24 * monitor.scaleFactor, height);
-        return visibleWidth >= minVisibleWidth && visibleHeight >= minVisibleHeight;
-    });
-};
-
 const restoreIslandPosition = async (): Promise<boolean> => {
-    const saved = localStorage.getItem(NSD_ISLAND_POSITION);
-    if (!saved) return false;
-
     try {
-        const parsed: unknown = JSON.parse(saved);
-        if (!parsed || typeof parsed !== 'object') throw new Error('saved position is not an object');
-
-        const { x, y } = parsed as { x?: unknown; y?: unknown };
-        if (typeof x !== 'number' || typeof y !== 'number' || !(await isSavedPositionVisible(x, y))) {
-            throw new Error('saved position is outside available monitors');
+        const saved = localStorage.getItem(NSD_ISLAND_POSITION);
+        if (saved) {
+            const { x, y } = JSON.parse(saved);
+            await getCurrentWindow().setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
+            return true;
         }
-
-        await getCurrentWindow().setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
-        return true;
     } catch (e) {
-        console.warn('保存的灵动岛位置无效，已回退默认位置:', e);
-        localStorage.removeItem(NSD_ISLAND_POSITION);
-        return false;
+        console.error('恢复位置失败:', e);
     }
+    return false;
 };
 
 const handleRightClick = async (event: MouseEvent) => {
@@ -2749,9 +2043,7 @@ const handleRightClick = async (event: MouseEvent) => {
         text: '关闭',
         id: 'close',
         action: () => {
-            // 右键关闭 = 用户主动关闭，写入持久意图，避免重启后又自动打开
-            localStorage.setItem(NSD_ISLAND_ENABLED, 'false');
-            hideIslandWindow();
+            isIslandVisible.value = false;
         }
     });
 
@@ -3040,29 +2332,6 @@ const getAppIcon = (appName: string) => {
 };
 
 onMounted(async () => {
-    // 启动瞬间就关系统装饰：否则冷启动/重建时会先闪出 “MDI Widget” 标题栏空窗
-    void ensureWidgetFrame();
-
-    // 必须最先注册：控制台和 widget 并行启动，显隐操作不能晚于其他初始化。
-    await listen<{ show: boolean }>('control-island-visibility', async (event) => {
-        if (event.payload.show) {
-            // 先显示透明 OS 窗口，等待 40ms 后打开 Vue DOM；完成一帧渲染才同步“已开启”。
-            // 若持久意图已是 false，说明用户明确关了岛：只响应显式 show 时也同步写回 true，
-            // 因为本事件来自控制台开关 / 后端 set_island_visible（权威意图入口）。
-            if (localStorage.getItem(NSD_ISLAND_ENABLED) === 'false') {
-                // 控制台/后端 show 优先于本地旧的 false 意图
-                localStorage.setItem(NSD_ISLAND_ENABLED, 'true');
-            }
-            await showIslandWindow(true);
-        } else {
-            hideIslandWindow();
-        }
-    });
-    await listen('request-island-visibility', async () => {
-        // 回执真实 paint 态；auto-hide 时 isIslandVisible=false 但意图仍可能是 true
-        await emit('island-status-sync', { visible: isIslandVisible.value });
-    });
-
     // widget 可能在主面板未创建或省内存销毁后独立运行，需自行恢复目标播放器
     await invoke('set_target_player', {
         player: localStorage.getItem(NSD_TARGET_PLAYER) || 'netease',
@@ -3103,21 +2372,11 @@ onMounted(async () => {
 
     // 监听系统底层事件（音量、电源）
     await listen<string>('system-event', (event) => {
-        const text = (event as any).payload as string;
-        if (!isSysmsgEnabled.value) return;
-        const lowered = text.toLowerCase();
-        const allowVolume = sysmsgVolumeEnabled.value;
-        const allowPower = sysmsgPowerEnabled.value;
-        const isVolume = isVolumeToastText(text);
-        if (isVolume && !allowVolume) return;
-        if ((lowered.includes('电源') || lowered.includes('供电') || lowered.includes('power')) && !allowPower) return;
-        // 音量走可合并 toast 路径，连续调节只更新数字并续期显示
-        showToast(text, isVolume ? 'volume' : 'sys');
+        showToast(event.payload, 'sys');
     });
 
     await listen<{ state: 'charging' | 'discharging', percent: number }>('battery-event', (event) => {
-        const { state, percent } = (event as any).payload as { state: 'charging' | 'discharging'; percent: number };
-        if (!isSysmsgEnabled.value || !sysmsgBatteryEnabled.value) return;
+        const { state, percent } = event.payload;
 
         if (state === 'charging') {
             showToast(`已接入电源，当前电量 ${percent}%`, 'battery-charge');
@@ -3135,16 +2394,6 @@ onMounted(async () => {
     // 监听来自控制台的主题同步指令
     await listen<{ theme: string }>('control-island-theme', (event) => {
         islandTheme.value = event.payload.theme;
-    });
-
-    // 监听频谱颜色模式同步
-    await listen<{ mode: string; color: string }>('control-spectrum-color', (event) => {
-        if (event.payload?.mode) {
-            spectrumColorMode.value = event.payload.mode;
-        }
-        if (event.payload?.color) {
-            spectrumCustomColor.value = event.payload.color;
-        }
     });
 
     // 监听置于任务栏开�?
@@ -3178,8 +2427,12 @@ onMounted(async () => {
             // 统一交给 scheduleAutoHide 守卫判断（仅在音乐控制器开启+无音乐播放时才隐藏）
             scheduleAutoHide();
         } else if (!isMsgModeEnabled.value) {
-            // 如果关闭了消息模式，立刻恢复显示，并在首帧渲染后同步控制台。
-            await showIslandWindow();
+            // 如果关闭了消息模式，立刻恢复显示
+            await getCurrentWindow().show();
+            isIslandVisible.value = true;
+
+            // 通知控制台恢复开关状态，让主面板的开关同步变绿（开启）
+            await emit('island-status-sync', { visible: true });
         }
     });
 
@@ -3214,13 +2467,18 @@ onMounted(async () => {
         if (isFullscreen) {
             if (isIslandVisible.value) {
                 wasVisibleBeforeFullscreen = true;
-                hideIslandWindow();
+                isHidingForFullscreen = true;
+                isIslandVisible.value = false;
             }
         } else {
-            if (wasVisibleBeforeFullscreen && userWantsIslandVisible()) {
-                await showIslandWindow(true);
+            if (wasVisibleBeforeFullscreen) {
+                await getCurrentWindow().show();
+                setTimeout(() => {
+                    isIslandVisible.value = true;
+                    emit('island-status-sync', { visible: true });
+                }, 40);
+                wasVisibleBeforeFullscreen = false;
             }
-            wasVisibleBeforeFullscreen = false;
         }
     });
 
@@ -3398,19 +2656,11 @@ onMounted(async () => {
         }
     }
 
-    // 启动显示策略：
-    // 1) 用户意图 nsd_island_enabled !== 'false'（缺省 true，兼容旧版）
-    // 2) 未开静默消息模式
-    // 控制台开关与 set_island_visible 是权威入口；此处只做“用户上次想开 + 非静默”的冷启动自显。
-    // 注意：snapToBottomLeft / adjustWindowPosition 可能在上方调用过，但不会再无条件 show。
-    if (userWantsIslandVisible() && !isMsgModeEnabled.value) {
-        await showIslandWindow();
-        // 不在启动时 scheduleAutoHide：否则音乐控制器+自动隐藏用户会看到“岛一闪就没”
-        // 自动隐藏仅在鼠标离开 / 音乐状态变化等路径触发。
-    } else {
-        // 明确不显示时确保 OS 窗口隐藏，并按用户意图同步控制台
-        void getCurrentWindow().hide().catch(() => {});
-        await emit('island-status-sync', { visible: false }).catch(() => {});
+    // 先显示透明�?Tauri 窗口，再触发 Vue 的灵动岛入场弹簧动画
+    // 如果没开消息模式，才在启动时直接显示灵动�?
+    if (!isMsgModeEnabled.value) {
+        await getCurrentWindow().show();
+        isIslandVisible.value = true;
     }
 
     // 监听来自 LiveActive 的硬件监控开关（跨窗口事件，统一由 NSD_HW_ENABLED 驱动）
@@ -3528,7 +2778,12 @@ onMounted(async () => {
                     isMsgActive.value = true;
                     // 自动恢复显示：当有消息活动时，如果灵动岛被隐藏，则自动恢复显�?
                     if (!isIslandVisible.value) {
-                        void showIslandWindow();
+                        getCurrentWindow().show();
+                        isIslandVisible.value = true;
+                    }
+                    if (isMsgModeEnabled.value && !isIslandVisible.value) {
+                        getCurrentWindow().show();
+                        isIslandVisible.value = true;
                     }
                     if (!isPinnedToTaskbar.value) {
                         animateIslandSize(360, 65);
@@ -3555,6 +2810,22 @@ onMounted(async () => {
     // 调大Ping间隔：从5.5秒调大到10秒
     pingTimer = setInterval(checkNetworkLatency, 10000) as unknown as number;
 
+    // 监听控制台发来的显隐调度指令
+    await listen<{ show: boolean }>('control-island-visibility', async (event) => {
+        if (event.payload.show) {
+            // 1. 先让透明�?OS 窗口容器显示，此时内�?DOM �?v-show="false"，视觉上仍是隐形�?
+            await getCurrentWindow().show();
+            await getCurrentWindow().setAlwaysOnTop(true);
+            // 2. 给予 40ms 的浏览器渲染帧缓冲，再撕开 Vue �?v-show 状态，强制触发 enter 动画
+            setTimeout(() => {
+                isIslandVisible.value = true;
+            }, 40);
+        } else {
+            // 控制台关闭指�?-> 触发常规离开动画
+            isIslandVisible.value = false;
+        }
+    });
+
     // 实时监听来自 Rust 底层发来的清透像素流，无缝同步给 Vue 的响应式 DOM 宽高
     await listen<number[]>("island-resize", (event) => {
         const [w, h] = event.payload;
@@ -3562,15 +2833,9 @@ onMounted(async () => {
         currentHeight.value = h;
     });
 
-    // B8: 监听后端推来的频谱数据；只写入目标数组，由 rAF 循环平滑绘制
+    // B8: 监听后端推来的频谱数据（替代 50ms setInterval 轮询，显著减�?IPC 调用次数�?
     await listen<number[]>("spectrum-data", (event) => {
-        const data = event.payload;
-        if (!data || data.length < SPECTRUM_BAR_COUNT) return;
-        for (let i = 0; i < SPECTRUM_BAR_COUNT; i++) {
-            latestSpectrum[i] = data[i];
-        }
-        // 保留 spectrumData 供调试/兼容，但不驱动 DOM
-        spectrumData.value = data.slice(0, SPECTRUM_BAR_COUNT);
+        spectrumData.value = event.payload;
     });
 
     // 初始化时触发一次计�?
@@ -3615,13 +2880,7 @@ onUnmounted(() => {
     clearInterval(musicTimer);
     clearInterval(notifyTimer);
     stopProgressTimer();
-    // 使进行中的 toast 等待立即失效，避免卸载后继续改状态
-    toastWaitToken++;
-    clearToastWaitTimer();
-    toastQueue.value = [];
-    isProcessingToast = false;
-    // 组件卸载时关闭频谱捕获与 rAF，避免后端/前端空跑
-    stopSpectrumRaf();
+    // 组件卸载时关闭频谱捕获，避免后端空跑
     invoke('set_spectrum_active', { active: false }).catch(() => {});
     if (speedCycleTimer) clearInterval(speedCycleTimer);
 });
@@ -4240,19 +3499,26 @@ onUnmounted(() => {
 }
 
 
-/* 音乐律动频谱样式（Canvas 2D） */
+/* 音乐律动频谱样式 */
 .audio-spectrum {
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 2px;
     height: 12px;
     padding-right: 2px;
 }
 
-.spectrum-canvas {
-    display: block;
-    width: 34px;
-    height: 12px;
+/* 暂停状态下的竖线（统一高度�?*/
+.audio-spectrum .bar {
+    width: 2px;
+    height: 18px;
+    background-color: #b6e0ee;
+    border-radius: 3px;
+    transform-origin: center;
+    /* 改用极速的 ease-out 过渡，让前端完美衔接后端的帧�?*/
+    transition: transform 0.08s ease-out;
+    will-change: transform;
 }
 
 .music-ctl-box {
@@ -4603,13 +3869,6 @@ onUnmounted(() => {
     white-space: nowrap;
     opacity: 0.95;
     transform: translateX(-2px) translateY(-1px);
-    min-width: 0;
-    flex: 1 1 auto;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    /* 兜底：异常超长文本省略，正常电源/电池文案靠动态岛宽完整显示 */
-    max-width: 100%;
-    box-sizing: border-box;
 }
 
 /* 宽度调整手柄样式 */

@@ -512,7 +512,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { formatSpeed } from '../utils/format';
 import {
-    NSD_ISLAND_OPACITY, NSD_ISLAND_THEME, NSD_ISLAND_ENABLED,
+    NSD_ISLAND_OPACITY, NSD_ISLAND_THEME,
     NSD_MUSIC_CTRL, NSD_MSG_NOTIFY,
     NSD_MSG_MODE, NSD_ROTATION_MODE, NSD_PIN_TASKBAR,
     NSD_POSITION_LOCKED, NSD_DESTROY_ON_CLOSE,
@@ -838,7 +838,6 @@ let lastRx = 0;
 let lastTx = 0;
 let systemThemeMedia: MediaQueryList;
 let unlistenMonitorStats: (() => void) | null = null;
-let unlistenIslandStatus: (() => void) | null = null;
 
 const speedChartRef = ref<InstanceType<typeof SpeedChart> | null>(null);
 const chartDataQueue = ref<number[]>(Array(15).fill(0));
@@ -1187,87 +1186,33 @@ onMounted(async () => {
         positionLocked.value = event.payload.locked;
     });
 
-    unlistenIslandStatus = await listen<{ visible: boolean }>('island-status-sync', (event) => {
-        // paint 权威回执：控制台开关始终跟随真实显示态。
-        // 自动隐藏也会发 false，这样用户再点开关 = “重新显示”，而不是“关闭”。
-        isWidgetVisible.value = !!event.payload.visible;
+    await listen<{ visible: boolean }>('island-status-sync', (event) => {
+        isWidgetVisible.value = event.payload.visible;
     });
 
-    // 启动策略：读用户持久意图。缺省 true=兼容旧版“默认开岛”。
-    const preferEnabled = localStorage.getItem(NSD_ISLAND_ENABLED) !== 'false';
-    if (preferEnabled) {
-        // 先让 Widget 自己完成 paint；再兜底走后端权威入口，避免 widget 未挂 listener。
-        for (let i = 0; i < 4 && !isWidgetVisible.value; i++) {
-            await emit('request-island-visibility');
-            await new Promise(r => setTimeout(r, 200));
-        }
-        if (!isWidgetVisible.value) {
-            try {
-                await invoke<boolean>('set_island_visible', { show: true });
-            } catch (e) {
-                console.warn('[NSD] startup set_island_visible failed:', e);
-                await emit('control-island-visibility', { show: true }).catch(() => {});
-            }
-            // 等 Vue 回执；绝不因 OS visible 强制 true（透明空窗会被误判）
-            for (let i = 0; i < 8 && !isWidgetVisible.value; i++) {
-                await new Promise(r => setTimeout(r, 150));
-            }
-        }
-    } else {
-        isWidgetVisible.value = false;
+    for (let i = 0; i < 6; i++) {
         try {
-            await invoke<boolean>('set_island_visible', { show: false });
-        } catch {
-            await emit('control-island-visibility', { show: false }).catch(() => {});
-        }
+            const visible = await invoke<boolean>('is_widget_visible');
+            if (visible) {
+                isWidgetVisible.value = true;
+                return;
+            }
+        } catch { /* 忽略 */ }
+        await new Promise(r => setTimeout(r, 200));
     }
+    isWidgetVisible.value = false;
 });
 
 onUnmounted(() => {
     systemThemeMedia?.removeEventListener('change', handleSystemThemeUpdate);
     if (unlistenMonitorStats) unlistenMonitorStats();
-    if (unlistenIslandStatus) unlistenIslandStatus();
     localStorage.setItem(NSD_TRAFFIC_STATS, JSON.stringify(trafficData.value));
 });
 
 const toggleWidget = async () => {
-    // 以当前 paint 态取反：自动隐藏后 isWidgetVisible=false，点开关会“重新显示”。
     const nextState = !isWidgetVisible.value;
-    localStorage.setItem(NSD_ISLAND_ENABLED, String(nextState));
-
-    // 关闭立即反映；开启在后端成功后乐观 true，最终以 island-status-sync 为准。
+    await emit('control-island-visibility', { show: nextState });
     isWidgetVisible.value = nextState;
-
-    try {
-        await invoke<boolean>('set_island_visible', { show: nextState });
-    } catch (e) {
-        console.error('[NSD] set_island_visible failed, fallback emit:', e);
-        try {
-            await emit('control-island-visibility', { show: nextState });
-        } catch (emitErr) {
-            console.error('[NSD] control-island-visibility emit failed:', emitErr);
-            // 失败回滚意图与 UI
-            localStorage.setItem(NSD_ISLAND_ENABLED, String(!nextState));
-            isWidgetVisible.value = !nextState;
-            return;
-        }
-    }
-
-    // 开启后最多等 ~1.5s paint 回执；超时不强制 true，避免空窗假开启。
-    if (nextState) {
-        const started = Date.now();
-        while (Date.now() - started < 1500) {
-            await new Promise(r => setTimeout(r, 150));
-            if (localStorage.getItem(NSD_ISLAND_ENABLED) === 'false') return;
-            // island-status-sync 到 true 则确认；若中途 sync 回 false 保持 false
-            if (isWidgetVisible.value) return;
-        }
-        // 超时仍未确认 paint：回落为关闭，避免“已开启但看不见”
-        if (localStorage.getItem(NSD_ISLAND_ENABLED) === 'true' && !isWidgetVisible.value) {
-            console.warn('[NSD] island opened but Vue paint confirm timed out; fallback UI to closed');
-            isWidgetVisible.value = false;
-        }
-    }
 };
 </script>
 
@@ -2135,18 +2080,6 @@ input:checked+.slider:before {
     color: var(--item-title-color);
     box-shadow: 0 1px 4px var(--card-shadow-hover);
     opacity: 1;
-}
-
-.capsule-btn.is-disabled,
-.capsule-btn:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-    pointer-events: none;
-}
-
-.capsule-btn:focus-visible {
-    outline: 2px solid var(--arrow-up-color, #3b82f6);
-    outline-offset: 1px;
 }
 
 .spectrum-color-item {
