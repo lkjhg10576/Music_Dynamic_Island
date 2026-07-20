@@ -499,36 +499,23 @@ fn get_os_tier() -> String {
     }
 }
 
-/// 对指定 label 窗口应用材质。
+/// 仅对控制台（main）应用原生材质。
 /// 先分别清理 mica/acrylic/blur，再按档 apply，避免材质叠加。
 /// `dark` 仅用于 mica 深/浅主题跟随。
 ///
-/// 注意：透明无边框的 `widget`（灵动岛）禁止接触任何原生材质 API。
-/// window-vibrancy 的 apply_* 和 clear_* 都会改写 Windows 合成属性，可能导致
-/// WebView2 透明窗口不可见，因此 widget 必须在任何原生调用之前直接返回。
+/// 接口层硬隔离：本命令不接受窗口 label，从设计上不可能误伤灵动岛。
+/// 透明无边框的 `widget`（灵动岛）禁止接触任何 window-vibrancy API
+/// （apply_* 与 clear_* 都会改写 DWM/Composition，破坏 WebView2 透明合成）。
+/// 灵动岛外观只由 Vue/CSS rgba 控制。
 #[tauri::command]
-fn set_material(
+fn set_console_material(
     app: tauri::AppHandle,
-    label: String,
     material: String,
     dark: bool,
 ) -> Result<(), String> {
-    // 校验材质值（widget 也要校验，避免静默接受错误输入）
     match material.as_str() {
         "acrylic" | "mica" | "blur" | "none" => {}
         _ => return Err(format!("unknown material: {material}")),
-    }
-
-    // 灵动岛是透明无边框 WebView2 窗口，任何 window-vibrancy 调用（包括 clear_*）
-    // 都可能改写其 DWM/Composition 属性并破坏透明合成。必须在获取窗口和调用
-    // 原生材质 API 之前直接返回；灵动岛外观只由 Vue/CSS rgba 控制。
-    if label == "widget" {
-        return Ok(());
-    }
-
-    // 原生材质仅允许应用于控制台，避免将来新增窗口时误伤透明窗口。
-    if label != "main" {
-        return Err(format!("unknown window label: {label}"));
     }
 
     let win = app
@@ -538,7 +525,7 @@ fn set_material(
     #[cfg(target_os = "windows")]
     {
         // 清场：window-vibrancy 0.6 无统一 clear_material，需分别调用。
-        // 此处的 win 已被严格限定为 main，绝不会触碰 widget。
+        // win 固定为 main，绝不会触碰 widget。
         let _ = window_vibrancy::clear_mica(&win);
         let _ = window_vibrancy::clear_acrylic(&win);
         let _ = window_vibrancy::clear_blur(&win);
@@ -556,7 +543,6 @@ fn set_material(
     #[cfg(not(target_os = "windows"))]
     {
         // 非 Windows 仅允许 none，保持跨平台编译可用
-        // 抑制未使用警告
         let _ = (win, dark);
         match material.as_str() {
             "none" => Ok(()),
@@ -633,7 +619,7 @@ pub fn run() {
             set_destroy_on_close,
             close_main_window,
             get_os_tier,
-            set_material,
+            set_console_material,
             set_hardware_emit,
             get_network_latency,
             notification::fetch_latest_notification,

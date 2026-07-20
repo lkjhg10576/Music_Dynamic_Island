@@ -619,16 +619,15 @@ const isEffectiveDark = (): boolean => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
 };
 
-/** 仅对控制台（main）应用材质；widget 绝不调用原生材质 */
+/** 仅对控制台应用材质；接口无 label，从根本上杜绝误操作灵动岛 */
 const applyConsoleMaterial = async (material: Material = consoleMaterial.value) => {
     try {
-        await invoke('set_material', {
-            label: 'main',
+        await invoke('set_console_material', {
             material,
             dark: isEffectiveDark(),
         });
     } catch (e) {
-        console.error(`[NSD] set_material(main, ${material}) failed:`, e);
+        console.error(`[NSD] set_console_material(${material}) failed:`, e);
     }
 };
 
