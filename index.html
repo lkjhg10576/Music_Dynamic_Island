@@ -11,6 +11,18 @@
 
   <script>
     (function () {
+      // 灵动岛路由必须尽早透明：共用 style.css 默认实色底会在 Vue 懒加载前闪成空板
+      var path = (location.pathname || '') + (location.hash || '');
+      var isWidget = path.indexOf('widget') !== -1;
+      if (isWidget) {
+        document.documentElement.style.background = 'transparent';
+        document.documentElement.style.backgroundColor = 'transparent';
+        if (document.body) {
+          document.body.style.background = 'transparent';
+          document.body.style.backgroundColor = 'transparent';
+        }
+      }
+
       const theme = localStorage.getItem('nsd_theme_mode') || 'light';
       if (theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
         document.documentElement.classList.add('dark-theme');

@@ -429,6 +429,27 @@ const resetIslandVisualStyle = (el?: Element | null) => {
     node.style.transform = 'scale(1)';
 };
 
+/** 运行时强制无边框：防止系统标题栏把 36px 高度吃光，只剩 “MDI Widget” 空标题条。 */
+const ensureWidgetFrame = async () => {
+    const win = getCurrentWindow();
+    // setDecorations / setShadow 失败不能阻断 show（capability 未声明时仅 warn）
+    try {
+        await win.setDecorations(false);
+    } catch (e) {
+        console.warn('[NSD] setDecorations(false) failed:', e);
+    }
+    try {
+        await win.setShadow(false);
+    } catch (e) {
+        console.warn('[NSD] setShadow(false) failed:', e);
+    }
+    try {
+        await win.setAlwaysOnTop(true);
+    } catch (e) {
+        console.warn('[NSD] setAlwaysOnTop failed:', e);
+    }
+};
+
 /** OS 窗口显示并且 Vue 完成一帧渲染后，再向控制台确认灵动岛真正可见。 */
 const showIslandWindow = async (withEnterDelay = false) => {
     desiredIslandVisible = true;
@@ -440,9 +461,13 @@ const showIslandWindow = async (withEnterDelay = false) => {
     const token = ++visibilityOperationToken;
     cancelVisibilityAnimation();
     try {
+        // 先关装饰再 show：否则标题栏先闪、客户区高度为零
+        await ensureWidgetFrame();
+        if (token !== visibilityOperationToken) return;
         await getCurrentWindow().show();
         if (token !== visibilityOperationToken) return;
-        await getCurrentWindow().setAlwaysOnTop(true);
+        // 部分 Windows 版本 show 后会回写 decorations，再断言一次
+        await ensureWidgetFrame();
         if (token !== visibilityOperationToken) return;
         if (withEnterDelay) {
             await new Promise<void>((resolve) => setTimeout(resolve, 40));
@@ -2999,6 +3024,9 @@ const getAppIcon = (appName: string) => {
 };
 
 onMounted(async () => {
+    // 启动瞬间就关系统装饰：否则冷启动/重建时会先闪出 “MDI Widget” 标题栏空窗
+    void ensureWidgetFrame();
+
     // 必须最先注册：控制台和 widget 并行启动，显隐操作不能晚于其他初始化。
     await listen<{ show: boolean }>('control-island-visibility', async (event) => {
         if (event.payload.show) {

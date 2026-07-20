@@ -442,7 +442,24 @@ fn is_widget_alive(app: tauri::AppHandle) -> bool {
     app.get_webview_window("widget").is_some()
 }
 
+/// 硬化灵动岛 OS 窗口：无边框 + 无阴影 + Windows DWM 去标题/边框。
+/// 必须在 show 前调用；窗口已存在时也要反复断言，防止标题栏回弹成“MDI Widget 空窗”。
+fn harden_widget_window(widget_window: &tauri::WebviewWindow) {
+    // Tauri API 层：明确关闭系统装饰与阴影（比只写 conf 更稳）
+    let _ = widget_window.set_decorations(false);
+    let _ = widget_window.set_shadow(false);
+    let _ = widget_window.set_always_on_top(true);
+
+    #[cfg(target_os = "windows")]
+    {
+        apply_widget_dwm_attrs(widget_window);
+    }
+}
+
 /// 为透明无边框灵动岛套用 Windows DWM 属性（去标题/圆角/边框），绝不动 window-vibrancy。
+///
+/// 关键：仅清 WS_CAPTION 且不带 SWP_FRAMECHANGED 时，Win10/11 仍可能继续绘制系统标题栏；
+/// 灵动岛外高只有 36px，标题栏会吃掉全部客户区 → 用户只看到 “MDI Widget” 空标题条。
 #[cfg(target_os = "windows")]
 fn apply_widget_dwm_attrs(widget_window: &tauri::WebviewWindow) {
     use windows_sys::Win32::Foundation::HWND;
@@ -450,16 +467,40 @@ fn apply_widget_dwm_attrs(widget_window: &tauri::WebviewWindow) {
         DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetWindowLongPtrW, GWL_STYLE, WS_CAPTION,
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
     };
+
+    // Win32 常量用字面值，避免不同 windows-sys 版本导出名不一致导致编不过
+    // style: CAPTION(0x00C00000)=BORDER|DLGFRAME, SYSMENU, THICKFRAME, MIN/MAXIMIZEBOX
+    const CAPTION_STYLE_BITS: isize =
+        0x00C00000 | 0x00080000 | 0x00040000 | 0x00020000 | 0x00010000;
+    // exstyle: CLIENTEDGE | WINDOWEDGE | DLGMODALFRAME | STATICEDGE
+    const EDGE_EXSTYLE_BITS: isize = 0x00000200 | 0x00000100 | 0x00000001 | 0x00020000;
+    // SWP_NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|FRAMECHANGED
+    const SWP_FLAGS: u32 = 0x0002 | 0x0001 | 0x0004 | 0x0010 | 0x0020;
 
     if let Ok(hwnd) = widget_window.hwnd() {
         let hwnd_raw = hwnd.0 as HWND;
         unsafe {
             let current_style = GetWindowLongPtrW(hwnd_raw, GWL_STYLE);
-            SetWindowLongPtrW(hwnd_raw, GWL_STYLE, current_style & !(WS_CAPTION as isize));
+            SetWindowLongPtrW(hwnd_raw, GWL_STYLE, current_style & !CAPTION_STYLE_BITS);
 
-            let border_color: u32 = 0xFFFFFFFE;
+            let current_ex = GetWindowLongPtrW(hwnd_raw, GWL_EXSTYLE);
+            SetWindowLongPtrW(hwnd_raw, GWL_EXSTYLE, current_ex & !EDGE_EXSTYLE_BITS);
+
+            // 必须 SWP_FRAMECHANGED，否则 style 改了非客户区不会立刻重算
+            // 切勿设置 DWMNCRP_DISABLED：会破坏 WebView2 透明合成
+            let _ = SetWindowPos(
+                hwnd_raw,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_FLAGS,
+            );
+
+            let border_color: u32 = 0xFFFFFFFE; // DWMWA_COLOR_NONE
             let _ = DwmSetWindowAttribute(
                 hwnd_raw,
                 DWMWA_BORDER_COLOR as u32,
@@ -507,6 +548,8 @@ fn force_widget_os_show(widget_window: &tauri::WebviewWindow) {
 /// 注意：不对 widget 调用任何 window-vibrancy API。
 fn ensure_widget_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
     if let Some(win) = app.get_webview_window("widget") {
+        // 已存在也要重新硬化：运行中可能被系统/上一次 show 回弹成有标题栏空窗
+        harden_widget_window(&win);
         return Ok(win);
     }
 
@@ -526,10 +569,7 @@ fn ensure_widget_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, 
         .build()
         .map_err(|e| format!("重建灵动岛窗口失败: {e}"))?;
 
-    #[cfg(target_os = "windows")]
-    {
-        apply_widget_dwm_attrs(&win);
-    }
+    harden_widget_window(&win);
 
     Ok(win)
 }
@@ -555,11 +595,13 @@ fn set_island_visible(app: tauri::AppHandle, show: bool) -> Result<bool, String>
     );
 
     if show {
+        // 先硬化无边框，再 show，避免 36px 高度被系统标题栏占满
+        harden_widget_window(&win);
         win.show().map_err(|e| format!("显示灵动岛失败: {e}"))?;
-        let _ = win.set_always_on_top(true);
+        // show 后再 hardening 一次：部分 Win 版本会在首次 show 时回写 decorations
+        harden_widget_window(&win);
         #[cfg(target_os = "windows")]
         {
-            apply_widget_dwm_attrs(&win);
             force_widget_os_show(&win);
         }
 
@@ -584,8 +626,8 @@ fn set_island_visible(app: tauri::AppHandle, show: bool) -> Result<bool, String>
                     serde_json::json!({ "show": true }),
                 );
                 if let Some(w) = app_retry.get_webview_window("widget") {
+                    harden_widget_window(&w);
                     let _ = w.show();
-                    let _ = w.set_always_on_top(true);
                     #[cfg(target_os = "windows")]
                     {
                         force_widget_os_show(&w);
@@ -976,13 +1018,10 @@ pub fn run() {
                 bind_main_window_close_event(&main_window);
             }
 
-            // 启动时确保灵动岛 WebView 存在（仅创建/套 DWM，不 show）
+            // 启动时确保灵动岛 WebView 存在（仅创建/硬化无边框，不 show）
             match ensure_widget_window(app.handle()) {
                 Ok(widget_window) => {
-                    #[cfg(target_os = "windows")]
-                    {
-                        apply_widget_dwm_attrs(&widget_window);
-                    }
+                    harden_widget_window(&widget_window);
                 }
                 Err(e) => {
                     eprintln!("[NSD] 启动时创建灵动岛失败: {e}");
