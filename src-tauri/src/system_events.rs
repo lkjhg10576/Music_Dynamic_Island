@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter};
 use serde::Serialize;
@@ -66,18 +66,86 @@ fn emit_sys_event(app: &AppHandle, kind: &str, level: &str, text: &str) {
     let _ = app.emit("sysmsg-event", payload);
 }
 
+/// 缓存默认播放设备的 IAudioEndpointVolume，避免每轮重新 CoCreate。
+/// 仅在本监控线程内使用（与 CoInitializeEx 同线程）。设备切换 / COM 失败时 invalidate。
+struct VolumeEndpointCache {
+    endpoint: Option<IAudioEndpointVolume>,
+}
+
+impl VolumeEndpointCache {
+    fn new() -> Self {
+        Self { endpoint: None }
+    }
+
+    fn invalidate(&mut self) {
+        self.endpoint = None;
+    }
+
+    fn ensure(&mut self) -> bool {
+        if self.endpoint.is_some() {
+            return true;
+        }
+        unsafe {
+            let enumerator: IMMDeviceEnumerator =
+                match CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) {
+                    Ok(e) => e,
+                    Err(_) => return false,
+                };
+            let device = match enumerator.GetDefaultAudioEndpoint(eRender, eConsole) {
+                Ok(d) => d,
+                Err(_) => return false,
+            };
+            // 与原先 get_system_volume 一致：靠目标类型注解完成 Activate 泛型推导
+            let endpoint: Result<IAudioEndpointVolume, _> = device.Activate(CLSCTX_ALL, None);
+            match endpoint {
+                Ok(ep) => {
+                    self.endpoint = Some(ep);
+                    true
+                }
+                Err(_) => false,
+            }
+        }
+    }
+
+    /// 读取主音量标量 0.0~1.0；失败则清空缓存，下次重建。
+    fn read_scalar(&mut self) -> Option<f32> {
+        if !self.ensure() {
+            return None;
+        }
+        unsafe {
+            match self.endpoint.as_ref()?.GetMasterVolumeLevelScalar() {
+                Ok(v) => Some(v),
+                Err(_) => {
+                    self.invalidate();
+                    None
+                }
+            }
+        }
+    }
+}
+
 pub fn start_monitor(app: AppHandle) {
     std::thread::spawn(move || {
         // 初始化 COM 接口以获取音频
-        unsafe { let _ = CoInitializeEx(None, COINIT_MULTITHREADED); }
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        }
 
-        let mut last_volume = get_system_volume().unwrap_or(-1.0);
-        let mut last_power_state = 255;    // 255 = 未知状态
+        let mut volume_cache = VolumeEndpointCache::new();
+        // last_volume_pct: 0..=100；None 表示尚无有效读数，不触发“变化”
+        let mut last_volume_pct: Option<i32> = volume_cache
+            .read_scalar()
+            .map(|v| (v * 100.0).round() as i32);
+        let mut last_power_state = 255; // 255 = 未知状态
         let mut last_battery_percent = 255; // 255 = 未知电量
         // 锁屏检测：true = 已解锁（可操作桌面），false = 已锁定
         let mut last_unlocked = is_desktop_unlocked().unwrap_or(true);
-        // 空闲优化：连续多次状态无变化时延长休眠，减少 COM API 调用频率
+        // 空闲优化：连续多次状态无变化时延长休眠
         let mut stability_counter: u32 = 0;
+        // 最近一次音量变化时间：用于拉高轮询频率，避免连续调音量漏检
+        let mut last_volume_change_at: Option<Instant> = None;
+        // COM 连续失败计数：达阈值后强制 invalidate，防止设备切换后长期失效
+        let mut volume_fail_streak: u32 = 0;
 
         // 启动时先拉取一次真实状态打底
         if let Some((ac_status, battery_percent)) = get_power_status() {
@@ -86,33 +154,70 @@ pub fn start_monitor(app: AppHandle) {
         }
 
         loop {
-            // 空闲优化：状态越稳定，检查间隔越长（800ms ~ 2000ms）
-            let sleep_ms = if stability_counter >= 3 { 2000 } else { 800 };
+            // 音量活跃窗口内 300ms；刚有其它变化 600ms；完全空闲 1200ms（不再 2000ms 以免调音量首帧过慢）
+            let volume_hot = last_volume_change_at
+                .map(|t| t.elapsed() < Duration::from_millis(2500))
+                .unwrap_or(false);
+            let sleep_ms = if volume_hot {
+                300
+            } else if stability_counter >= 3 {
+                1200
+            } else {
+                600
+            };
             std::thread::sleep(Duration::from_millis(sleep_ms));
 
             let mut changed = false;
 
-            // 1. 检查音量变化
-            if let Some(current_volume) = get_system_volume() {
-                if (current_volume - last_volume).abs() > 0.01 && last_volume != -1.0 {
-                    let vol_percent = (current_volume * 100.0).round() as i32;
-                    if SYS_EVT_VOLUME.load(Ordering::Relaxed) {
-                        emit_sys_event(&app, "volume", "info", &format!("当前系统音量 {}%", vol_percent));
+            // 1. 检查音量变化（按整数百分比比较，对齐 Windows 步进，避免 0.01 浮点漏检）
+            match volume_cache.read_scalar() {
+                Some(current_volume) => {
+                    volume_fail_streak = 0;
+                    // 钳制到合法区间后四舍五入
+                    let vol_percent = ((current_volume.clamp(0.0, 1.0)) * 100.0).round() as i32;
+                    let vol_percent = vol_percent.clamp(0, 100);
+
+                    if let Some(prev) = last_volume_pct {
+                        if vol_percent != prev {
+                            if SYS_EVT_VOLUME.load(Ordering::Relaxed) {
+                                emit_sys_event(
+                                    &app,
+                                    "volume",
+                                    "info",
+                                    &format!("当前系统音量 {}%", vol_percent),
+                                );
+                            }
+                            last_volume_change_at = Some(Instant::now());
+                            changed = true;
+                        }
                     }
-                    changed = true;
+                    last_volume_pct = Some(vol_percent);
                 }
-                last_volume = current_volume;
+                None => {
+                    volume_fail_streak = volume_fail_streak.saturating_add(1);
+                    // 连续失败 3 次强制丢弃 endpoint，下一轮重新枚举默认设备
+                    if volume_fail_streak >= 3 {
+                        volume_cache.invalidate();
+                        volume_fail_streak = 0;
+                        // 设备可能已切换：清空基线，恢复后首次读数不弹（防假变化）
+                        last_volume_pct = None;
+                    }
+                }
             }
 
             // 2. 检查电源状态与电量变化
             if let Some((current_power, current_percent)) = get_power_status() {
-
                 // 【情况 A】电源插入/拔出状态发生了改变
                 if current_power != last_power_state && last_power_state != 255 {
                     if current_power == 1 {
                         // 插入电源
                         if SYS_EVT_POWER.load(Ordering::Relaxed) {
-                            emit_sys_event(&app, "power", "success", &format!("已接入电源，当前电量 {}%", current_percent));
+                            emit_sys_event(
+                                &app,
+                                "power",
+                                "success",
+                                &format!("已接入电源，当前电量 {}%", current_percent),
+                            );
                         }
                     } else if current_power == 0 {
                         // 拔出电源
@@ -128,7 +233,12 @@ pub fn start_monitor(app: AppHandle) {
                     // 低电量防抖机制：仅在跌破这几个关键节点时，触发红色警告
                     if current_percent <= 20 && [20, 15, 10, 5].contains(&current_percent) {
                         if SYS_EVT_BATTERY.load(Ordering::Relaxed) {
-                            emit_sys_event(&app, "battery", "warn", &format!("电池电量低，剩余 {}%", current_percent));
+                            emit_sys_event(
+                                &app,
+                                "battery",
+                                "warn",
+                                &format!("电池电量低，剩余 {}%", current_percent),
+                            );
                         }
                         changed = true;
                     }
@@ -164,18 +274,6 @@ pub fn start_monitor(app: AppHandle) {
             }
         }
     });
-}
-
-// 辅助函数：获取 Windows 系统音量 (0.0 到 1.0)
-fn get_system_volume() -> Option<f32> {
-    unsafe {
-        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-        let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole).ok()?;
-        let endpoint_volume: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None).ok()?;
-
-        let volume = endpoint_volume.GetMasterVolumeLevelScalar().ok()?;
-        Some(volume)
-    }
 }
 
 // 辅助函数：同时获取电源插入状态和剩余电量
