@@ -26,7 +26,9 @@ static DESTROY_ON_CLOSE: AtomicBool = AtomicBool::new(false);
 
 // 灵动岛用户期望可见态（控制台开关权威源）。
 // 延迟 show/hide / 重建重试线程必须读取它，禁止硬编码 true/false 盖掉用户最新操作。
-static ISLAND_DESIRED_VISIBLE: AtomicBool = AtomicBool::new(false);
+// 默认 true：应用默认“开岛”。控制台/右键显式关闭会经 set_island_visible(false) 写回 false，
+// 该值也驱动“启动安全网”决定是否兜底显示，故初始即按默认意图置 true。
+static ISLAND_DESIRED_VISIBLE: AtomicBool = AtomicBool::new(true);
 
 // B1 硬件统计缓存：后台线程每 1s 刷新，command 零阻塞读取
 static HW_CPU_X100: AtomicU32 = AtomicU32::new(0);
@@ -913,6 +915,28 @@ pub fn run() {
                     eprintln!("[NSD] 启动时创建灵动岛失败: {e}");
                 }
             }
+
+            // 启动安全网（权威兜底显示）：
+            // 前端两个 WebView 的 onMounted 各自尝试 show，存在时序/异常导致窗口仍隐藏的可能。
+            // 后端在此延迟校验：若 OS 窗口仍隐藏且用户未显式关闭（ISLAND_DESIRED_VISIBLE 仍为 true），
+            // 则强制 show + 置顶，确保灵动岛在启动流程中一定可见。
+            // 层级（HWND_TOPMOST）与尺寸（210x36）由 harden_widget_window / force_widget_os_show 保证，
+            // 不会被其他窗口遮挡，也不会是零尺寸。
+            let app_for_startup = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(700));
+                if let Some(w) = app_for_startup.get_webview_window("widget") {
+                    let os_visible = w.is_visible().unwrap_or(false);
+                    if !os_visible && ISLAND_DESIRED_VISIBLE.load(Ordering::SeqCst) {
+                        harden_widget_window(&w);
+                        let _ = w.show();
+                        #[cfg(target_os = "windows")]
+                        {
+                            force_widget_os_show(&w);
+                        }
+                    }
+                }
+            });
             Ok(())
         })
         .run(tauri::generate_context!())

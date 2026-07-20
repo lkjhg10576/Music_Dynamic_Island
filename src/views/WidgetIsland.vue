@@ -463,8 +463,16 @@ const showIslandWindow = async (withEnterDelay = false) => {
     try {
         // 顺序关键：
         // 1) 先关系统装饰（标题栏会吃掉 36px 客户区）
-        // 2) 先 paint Vue DOM，再 OS show —— 避免空客户区/空标题条
+        // 2) 先 OS show，再 paint Vue DOM —— 绝不能把 show 放到 requestAnimationFrame 之后！
+        //    被创建的隐藏 WebView 中 rAF 会被 Chromium 节流/暂停，导致 show() 永远拿不到执行机会，
+        //    窗口一直隐藏。装饰已先去除，先 show 不会闪标题栏。
         // 3) show 后再 harden 一次（部分 Win 首次 show 会回写 decorations）
+        await ensureWidgetFrame();
+        if (token !== visibilityOperationToken) return;
+
+        // 关键修复：先真正显示 OS 窗口（装饰已去除，无标题栏闪烁）
+        await getCurrentWindow().show();
+        if (token !== visibilityOperationToken) return;
         await ensureWidgetFrame();
         if (token !== visibilityOperationToken) return;
 
@@ -476,6 +484,7 @@ const showIslandWindow = async (withEnterDelay = false) => {
         isIslandVisible.value = true;
         await nextTick();
         resetIslandVisualStyle();
+        // 仅用于入场动画的一帧渲染，不再阻塞 show（窗口已可见）
         await new Promise<void>((resolve) => {
             visibilityAnimFrameId = requestAnimationFrame(() => {
                 visibilityAnimFrameId = 0;
@@ -484,11 +493,6 @@ const showIslandWindow = async (withEnterDelay = false) => {
         });
         if (token !== visibilityOperationToken || !desiredIslandVisible) return;
 
-        await getCurrentWindow().show();
-        if (token !== visibilityOperationToken) return;
-        await ensureWidgetFrame();
-        if (token !== visibilityOperationToken) return;
-
         if (token === visibilityOperationToken && desiredIslandVisible && isIslandVisible.value) {
             resetIslandVisualStyle();
             // 控制台开关跟随真实 paint 态（含 auto-hide 收起后的重显）
@@ -496,14 +500,21 @@ const showIslandWindow = async (withEnterDelay = false) => {
         }
     } catch (e) {
         console.error('[NSD] showIslandWindow failed:', e);
-        // show API 失败时仍尽量打开 DOM，便于用户看到岛并排查
+        // 关键修复：show 真正失败时绝不能谎报 visible:true —— 否则 MainPanel 会据此跳过后端
+        // set_island_visible 兜底，造成窗口永久隐藏。如实回执 false，让后端启动安全网强制显示。
         if (token === visibilityOperationToken && desiredIslandVisible) {
-            isIslandVisible.value = true;
-            resetIslandVisualStyle();
+            // 先尝试后端权威入口 show（不依赖本窗口的 Tauri window API，绕开可能的权限/状态问题）
             try {
+                await invoke<boolean>('set_island_visible', { show: true });
+                isIslandVisible.value = true;
+                resetIslandVisualStyle();
                 await emit('island-status-sync', { visible: true });
-            } catch (syncErr) {
-                console.error('[NSD] island-status-sync failed:', syncErr);
+            } catch (invokeErr) {
+                console.error('[NSD] 后端兜底 show 也失败，等待启动安全网:', invokeErr);
+                // DOM 仍置为可见，便于后端安全网 show 后立刻看到内容；同时如实回执 false
+                isIslandVisible.value = true;
+                resetIslandVisualStyle();
+                await emit('island-status-sync', { visible: false }).catch(() => {});
             }
         }
     }
