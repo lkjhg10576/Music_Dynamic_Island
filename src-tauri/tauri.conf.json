@@ -23,8 +23,7 @@
         "label": "main",
         "url": "/",
         "visible": false,
-        "decorations": false,
-        "transparent": true
+        "decorations": false
       },
       {
         "title": "MDI Widget",
