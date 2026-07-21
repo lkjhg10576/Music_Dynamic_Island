@@ -471,12 +471,21 @@
                 <span class="action-link" @click="openNSDweb">官方网站</span>
                 <span class="action-link" @click="openNSDdata">开源数据</span>
                 <span class="action-link" @click="openMywebsite">作者主页</span>
-                <span class="action-link"
-                    :style="{ opacity: isChecking ? 0.5 : 1, pointerEvents: isChecking ? 'none' : 'auto', position: 'relative' }"
-                    @click="checkUpdate">
-                    <span v-if="hasNewVersion" class="update-dot"></span>
-                    {{ isChecking ? '检查中...' : (hasNewVersion ? '检测到新版本' : '检查更新') }}
-                </span>
+                <div class="update-check-group">
+                    <span class="action-link"
+                        :style="{ opacity: isChecking ? 0.5 : 1, pointerEvents: isChecking ? 'none' : 'auto', position: 'relative' }"
+                        @click="checkUpdate">
+                        <span v-if="hasNewVersion" class="update-dot"></span>
+                        {{ isChecking ? '检查中...' : (hasNewVersion ? '检测到新版本' : '检查更新') }}
+                    </span>
+                    <label class="beta-check-switch" @click.stop>
+                        <span class="beta-check-label">检测Beta版本</span>
+                        <span class="switch mini-switch">
+                            <input type="checkbox" :checked="checkBeta" @change="onCheckBetaChange">
+                            <span class="slider"></span>
+                        </span>
+                    </label>
+                </div>
             </div>
         </footer>
 
@@ -521,6 +530,7 @@ import {
     NSD_THEME_MODE, NSD_TARGET_PLAYER, NSD_TRAFFIC_STATS,
     NSD_CHART_METRIC, NSD_AUTO_HIDE_FS,
     NSD_SPECTRUM_COLOR_MODE, NSD_SPECTRUM_CUSTOM_COLOR,
+    NSD_CHECK_BETA,
 } from '../constants/storageKeys';
 
 const isWidgetVisible = ref(false);
@@ -549,6 +559,7 @@ const toggleDynamicSet = () => {
 
 const isChecking = ref(false);
 const hasNewVersion = ref(false);
+const checkBeta = ref(localStorage.getItem(NSD_CHECK_BETA) === 'true');
 
 // --- 音乐控制平台切换功能 ---
 const targetPlayer = ref(localStorage.getItem(NSD_TARGET_PLAYER) || 'netease');
@@ -826,12 +837,123 @@ const handleDialogConfirm = () => {
 
 const parseVersion = (v: string) => {
     // 使用正则匹配出类似于 X.Y.Z 的纯数字版本号部分
+    // 兼容 v1.2.3、v1.3.0-beta.1 等标签，按基础版本参与比较
     const match = v.match(/\d+\.\d+\.\d+/);
     if (match) {
         return match[0].split('.').map(Number);
     }
     // 如果实在没匹配到，返回 [0, 0, 0] 防止代码崩溃
     return [0, 0, 0];
+};
+
+/** 比较两个版本数组：remote > local 返回 1，相等 0，小于 -1 */
+const compareVersions = (remote: number[], local: number[]): number => {
+    for (let i = 0; i < 3; i++) {
+        const rNum = remote[i] || 0;
+        const lNum = local[i] || 0;
+        if (rNum > lNum) return 1;
+        if (rNum < lNum) return -1;
+    }
+    return 0;
+};
+
+/** 判断 remote 版本字符串是否比 local 更新 */
+const isNewerVersion = (remoteVersionStr: string, localVersionStr: string): boolean => {
+    return compareVersions(parseVersion(remoteVersionStr), parseVersion(localVersionStr)) > 0;
+};
+
+type GithubRelease = {
+    tag_name?: string;
+    html_url?: string;
+    draft?: boolean;
+    prerelease?: boolean;
+};
+
+const GITHUB_RELEASES_API = 'https://api.github.com/repos/lkjhg10576/Music_Dynamic_Island/releases';
+const GITHUB_API_HEADERS = {
+    'Accept': 'application/vnd.github.v3+json',
+    'User-Agent': 'Tauri-App-NetSpeed-Dynamic',
+} as const;
+
+/**
+ * 按 checkBeta 选择目标发行版：
+ * - false: 请求 releases/latest（仅正式 Latest）
+ * - true:  请求 releases 列表，排除 draft，允许 prerelease，选出版本最高且比本地新的
+ */
+const fetchTargetRelease = async (
+    _localVersionStr: string,
+    includeBeta: boolean,
+    signal?: AbortSignal,
+): Promise<{ release: GithubRelease | null; notFound: boolean }> => {
+    if (!includeBeta) {
+        const response = await fetch(`${GITHUB_RELEASES_API}/latest`, {
+            method: 'GET',
+            headers: { ...GITHUB_API_HEADERS },
+            signal,
+        });
+        if (response.status === 404) {
+            return { release: null, notFound: true };
+        }
+        if (!response.ok) {
+            throw new Error(`GitHub API error: ${response.status}`);
+        }
+        const data = await response.json() as GithubRelease;
+        if (!data?.tag_name) {
+            return { release: null, notFound: true };
+        }
+        return { release: data, notFound: false };
+    }
+
+    // Beta 模式：获取发行版列表（含 Pre-release），排除 draft
+    const response = await fetch(`${GITHUB_RELEASES_API}?per_page=30`, {
+        method: 'GET',
+        headers: { ...GITHUB_API_HEADERS },
+        signal,
+    });
+    if (response.status === 404) {
+        return { release: null, notFound: true };
+    }
+    if (!response.ok) {
+        throw new Error(`GitHub API error: ${response.status}`);
+    }
+
+    const list = await response.json() as GithubRelease[];
+    if (!Array.isArray(list) || list.length === 0) {
+        return { release: null, notFound: true };
+    }
+
+    const candidates = list.filter((item) => {
+        if (!item || item.draft) return false;
+        if (!item.tag_name || !/\d+\.\d+\.\d+/.test(item.tag_name)) return false;
+        return true;
+    });
+
+    if (candidates.length === 0) {
+        return { release: null, notFound: true };
+    }
+
+    // 不依赖 API 返回顺序：按版本号选出最高的发行版
+    let best = candidates[0];
+    for (let i = 1; i < candidates.length; i++) {
+        const cur = candidates[i];
+        if (compareVersions(parseVersion(cur.tag_name!), parseVersion(best.tag_name!)) > 0) {
+            best = cur;
+        }
+    }
+
+    // 仅当比本地新时才视为目标更新版本；否则返回最高版供“已是最新”判断
+    return { release: best, notFound: false };
+};
+
+const onCheckBetaChange = (e: Event) => {
+    const enabled = (e.target as HTMLInputElement).checked;
+    const wasEnabled = checkBeta.value;
+    checkBeta.value = enabled;
+    localStorage.setItem(NSD_CHECK_BETA, String(enabled));
+    // 仅从关闭切换为开启时立即检测一次
+    if (enabled && !wasEnabled) {
+        checkUpdate();
+    }
 };
 
 let lastRx = 0;
@@ -903,30 +1025,15 @@ const openMywebsite = () => {
     openUrl('https://github.com/lkjhg10576');
 }
 
-// 新增：静默检查更新（后台偷偷查，不弹窗，报错了也不干扰用户）
+// 静默检查更新（后台偷偷查，不弹窗，报错了也不干扰用户）
 const silentCheckUpdate = async () => {
     try {
         const localVersionStr = await getVersion();
-        const response = await fetch('https://api.github.com/repos/lkjhg10576/Music_Dynamic_Island/releases/latest', {
-            method: 'GET',
-            headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Tauri-App-NetSpeed-Dynamic' }
-        });
-        if (!response.ok) return;
+        const { release } = await fetchTargetRelease(localVersionStr, checkBeta.value);
+        if (!release?.tag_name) return;
 
-        const data = await response.json();
-        const remoteVersionStr = data.tag_name;
-        const local = parseVersion(localVersionStr);
-        const remote = parseVersion(remoteVersionStr);
-
-        for (let i = 0; i < 3; i++) {
-            const rNum = remote[i] || 0;
-            const lNum = local[i] || 0;
-            if (rNum > lNum) {
-                hasNewVersion.value = true; // 发现新版本，把红点亮起来
-                break;
-            } else if (rNum < lNum) {
-                break;
-            }
+        if (isNewerVersion(release.tag_name, localVersionStr)) {
+            hasNewVersion.value = true; // 发现新版本，把红点亮起来
         }
     } catch (error) {
         // 静默模式失败就当无事发生
@@ -952,43 +1059,21 @@ const checkUpdate = async () => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-        const response = await fetch('https://api.github.com/repos/lkjhg10576/Music_Dynamic_Island/releases/latest', {
-            method: 'GET',
-            headers: {
-                'Accept': 'application/vnd.github.v3+json',
-                'User-Agent': 'Tauri-App-NetSpeed-Dynamic'
-            },
-            signal: controller.signal
-        });
+        const { release, notFound } = await fetchTargetRelease(
+            localVersionStr,
+            checkBeta.value,
+            controller.signal,
+        );
 
         clearTimeout(timeoutId);
 
-        if (response.status === 404) {
+        if (notFound || !release?.tag_name) {
             showDialog('检查更新', '未找到可用版本');
             return;
         }
 
-        if (!response.ok) {
-            showDialog('检查更新', '检查更新失败，请稍后再试');
-            return;
-        }
-
-        const data = await response.json();
-        const remoteVersionStr = data.tag_name;
-        const local = parseVersion(localVersionStr);
-        const remote = parseVersion(remoteVersionStr);
-
-        let findNew = false;
-        for (let i = 0; i < 3; i++) {
-            const rNum = remote[i] || 0;
-            const lNum = local[i] || 0;
-            if (rNum > lNum) {
-                findNew = true;
-                break;
-            } else if (rNum < lNum) {
-                break;
-            }
-        }
+        const remoteVersionStr = release.tag_name;
+        const findNew = isNewerVersion(remoteVersionStr, localVersionStr);
 
         if (findNew) {
             hasNewVersion.value = true;
@@ -997,7 +1082,9 @@ const checkUpdate = async () => {
                 `发现新版本 ${remoteVersionStr}！当前版本为 v${localVersionStr}。是否前往 GitHub 下载更新？`,
                 true,
                 () => {
-                    openUrl(data.html_url);
+                    if (release.html_url) {
+                        openUrl(release.html_url);
+                    }
                     hasNewVersion.value = false; // 用户点击去更新后，消掉红点并恢复文字
                 }
             );
@@ -1007,14 +1094,16 @@ const checkUpdate = async () => {
         }
     } catch (error: any) {
         console.error('检查更新时出错:', error);
-        // 👇 精准识别是不是超时导致的
+        // 精准识别是不是超时导致的
         if (error.name === 'AbortError') {
             showDialog('网络超时', '连接 GitHub 超时，请检查网络或稍后再试');
+        } else if (typeof error?.message === 'string' && error.message.startsWith('GitHub API error:')) {
+            showDialog('检查更新', '检查更新失败，请稍后再试');
         } else {
             showDialog('网络错误', '请求失败，请检查您的网络连接');
         }
     } finally {
-        isChecking.value = false; // 👈 无论成功失败，最后都恢复状态
+        isChecking.value = false; // 无论成功失败，最后都恢复状态
     }
 };
 
@@ -1699,6 +1788,45 @@ input:checked+.slider:before {
 .action-link:hover {
     color: var(--footer-text);
     text-decoration: underline;
+}
+
+.update-check-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+}
+
+.beta-check-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.beta-check-label {
+    font-size: 11px;
+    color: var(--footer-text);
+    opacity: 0.85;
+    white-space: nowrap;
+}
+
+.beta-check-switch .mini-switch {
+    width: 32px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+.beta-check-switch .mini-switch .slider:before {
+    height: 12px;
+    width: 12px;
+    left: 3px;
+    bottom: 3px;
+}
+
+.beta-check-switch .mini-switch input:checked + .slider:before {
+    transform: translateX(14px);
 }
 
 .update-dot {

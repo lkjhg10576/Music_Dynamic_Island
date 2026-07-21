@@ -52,6 +52,7 @@ export const NSD_THEME_MODE = 'nsd_theme_mode';
 export const NSD_TARGET_PLAYER = 'nsd_target_player';
 export const NSD_TRAFFIC_STATS = 'nsd_traffic_stats';
 export const NSD_CHART_METRIC = 'nsd_chart_metric'; // 实时状态下拉选择：speed | cpu | ram
+export const NSD_CHECK_BETA = 'nsd_check_beta'; // 是否检测 Pre-release / Beta 版本
 
 // 硬件监控配置（后端推送模式下）
 export const NSD_HW_ENABLED = 'nsd_hw_enabled';
