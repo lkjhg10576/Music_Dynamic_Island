@@ -319,7 +319,7 @@
                     <div v-else-if="showSpectrumIndicator" class="audio-spectrum"
                         :class="{ 'is-playing': isPlaying, 'expanded': isMusicExpanded }" key="spectrum">
                         <span class="bar" v-for="(val, index) in spectrumData" :key="index"
-                            :style="{ transform: `scaleY(${val})`, backgroundColor: spectrumBarColor }"></span>
+                            :style="{ transform: `scaleY(${val})`, backgroundColor: spectrumBarColor, transition: 'transform 0.08s ease-out, background-color 0.08s linear' }"></span>
                     </div>
 
                     <div v-else :class="['status-dot', networkStatus]" key="dot"></div>
@@ -1169,18 +1169,76 @@ const spectrumData = ref([0.35, 0.35, 0.35, 0.35, 0.35]);
 const spectrumColorMode = ref(localStorage.getItem(NSD_SPECTRUM_COLOR_MODE) || 'album');
 const spectrumCustomColor = ref(localStorage.getItem(NSD_SPECTRUM_CUSTOM_COLOR) || '#b6e0ee');
 // 从专辑封面提取的主色（album 模式使用，默认色作为兜底）
-const albumDominantColor = ref('#b6e0ee');
+const DEFAULT_SPECTRUM_COLOR = '#b6e0ee';
+const ALBUM_COLOR_TRANSITION_DURATION = 400;
+const albumDominantColor = ref(DEFAULT_SPECTRUM_COLOR);
+let albumColorAnimationFrame: number | null = null;
+let albumColorExtractionVersion = 0;
+
+type RgbColor = { r: number; g: number; b: number };
+
+const parseHexColor = (color: string): RgbColor | null => {
+    const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(color);
+    if (!match) return null;
+    return {
+        r: parseInt(match[1], 16),
+        g: parseInt(match[2], 16),
+        b: parseInt(match[3], 16),
+    };
+};
+
+const toHexColor = ({ r, g, b }: RgbColor): string => {
+    const toChannel = (value: number) => Math.round(value).toString(16).padStart(2, '0');
+    return `#${toChannel(r)}${toChannel(g)}${toChannel(b)}`;
+};
+
+const interpolateColor = (from: string, to: string, progress: number): string => {
+    const fromRgb = parseHexColor(from);
+    const toRgb = parseHexColor(to);
+    if (!fromRgb || !toRgb) return to;
+    return toHexColor({
+        r: fromRgb.r + (toRgb.r - fromRgb.r) * progress,
+        g: fromRgb.g + (toRgb.g - fromRgb.g) * progress,
+        b: fromRgb.b + (toRgb.b - fromRgb.b) * progress,
+    });
+};
+
+const animateAlbumColor = (targetColor: string) => {
+    if (albumColorAnimationFrame !== null) {
+        cancelAnimationFrame(albumColorAnimationFrame);
+        albumColorAnimationFrame = null;
+    }
+
+    const startColor = albumDominantColor.value;
+    if (startColor === targetColor) return;
+
+    const startTime = performance.now();
+    const animate = (now: number) => {
+        const progress = Math.min((now - startTime) / ALBUM_COLOR_TRANSITION_DURATION, 1);
+        const easedProgress = 1 - Math.pow(1 - progress, 3);
+        albumDominantColor.value = interpolateColor(startColor, targetColor, easedProgress);
+
+        if (progress < 1) {
+            albumColorAnimationFrame = requestAnimationFrame(animate);
+        } else {
+            albumDominantColor.value = targetColor;
+            albumColorAnimationFrame = null;
+        }
+    };
+
+    albumColorAnimationFrame = requestAnimationFrame(animate);
+};
 
 // 从封面图 URL 提取主色：canvas 缩小采样到 16x16 + RGB 量化到 4 档 + 取最频繁桶的平均色
 // 跳过过暗/过亮像素，避免黑/白主导；失败或超时回退默认色
 const extractAlbumColor = (url: string): Promise<string> => {
     return new Promise<string>((resolve) => {
-        if (!url) { resolve('#b6e0ee'); return; }
+        if (!url) { resolve(DEFAULT_SPECTRUM_COLOR); return; }
         const img = new Image();
         img.crossOrigin = 'anonymous';
         let settled = false;
         const done = (color: string) => { if (!settled) { settled = true; resolve(color); } };
-        const timer = setTimeout(() => done('#b6e0ee'), 3000);
+        const timer = setTimeout(() => done(DEFAULT_SPECTRUM_COLOR), 3000);
         img.onload = () => {
             clearTimeout(timer);
             try {
@@ -1189,7 +1247,7 @@ const extractAlbumColor = (url: string): Promise<string> => {
                 canvas.width = size;
                 canvas.height = size;
                 const ctx = canvas.getContext('2d');
-                if (!ctx) { done('#b6e0ee'); return; }
+                if (!ctx) { done(DEFAULT_SPECTRUM_COLOR); return; }
                 ctx.drawImage(img, 0, 0, size, size);
                 const data = ctx.getImageData(0, 0, size, size).data;
                 const bucket = new Map<string, { count: number, r: number, g: number, b: number }>();
@@ -1205,22 +1263,22 @@ const extractAlbumColor = (url: string): Promise<string> => {
                     cur.r += r; cur.g += g; cur.b += b;
                     bucket.set(key, cur);
                 }
-                if (bucket.size === 0) { done('#b6e0ee'); return; }
+                if (bucket.size === 0) { done(DEFAULT_SPECTRUM_COLOR); return; }
                 let best: { count: number, r: number, g: number, b: number } | null = null;
                 for (const v of bucket.values()) {
                     if (!best || v.count > best.count) best = v;
                 }
-                if (!best || best.count === 0) { done('#b6e0ee'); return; }
+                if (!best || best.count === 0) { done(DEFAULT_SPECTRUM_COLOR); return; }
                 const r = Math.round(best.r / best.count);
                 const g = Math.round(best.g / best.count);
                 const b = Math.round(best.b / best.count);
                 const toHex = (n: number) => n.toString(16).padStart(2, '0');
                 done(`#${toHex(r)}${toHex(g)}${toHex(b)}`);
             } catch (e) {
-                done('#b6e0ee');
+                done(DEFAULT_SPECTRUM_COLOR);
             }
         };
-        img.onerror = () => { clearTimeout(timer); done('#b6e0ee'); };
+        img.onerror = () => { clearTimeout(timer); done(DEFAULT_SPECTRUM_COLOR); };
         img.src = url;
     });
 };
@@ -1239,11 +1297,17 @@ const spectrumBarColor = computed(() => {
 const coverUrl = ref('');
 const coverCache = new Map<string, string>();
 
-// 封面变化时，若处于 album 模式则重新提取主色
+// 封面变化时，若处于 album 模式则将当前频谱颜色平滑过渡到新的取色结果
 watch(coverUrl, async (url) => {
-    if (spectrumColorMode.value === 'album') {
-        albumDominantColor.value = await extractAlbumColor(url);
-    }
+    const extractionVersion = ++albumColorExtractionVersion;
+    if (spectrumColorMode.value !== 'album') return;
+
+    const targetColor = await extractAlbumColor(url);
+    if (extractionVersion !== albumColorExtractionVersion
+        || spectrumColorMode.value !== 'album'
+        || url !== coverUrl.value) return;
+
+    animateAlbumColor(targetColor);
 });
 
 // 记录是否开启了置于任务�?
@@ -3151,6 +3215,11 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+    albumColorExtractionVersion++;
+    if (albumColorAnimationFrame !== null) {
+        cancelAnimationFrame(albumColorAnimationFrame);
+        albumColorAnimationFrame = null;
+    }
     window.removeEventListener('blur', collapseMusic);
     window.removeEventListener('blur', handleForceTopmost);
     // 清理自定义横向拖拽的文档级监听器
@@ -3804,7 +3873,7 @@ onUnmounted(() => {
     border-radius: 3px;
     transform-origin: center;
     /* 改用极速的 ease-out 过渡，让前端完美衔接后端的帧�?*/
-    transition: transform 0.08s ease-out;
+    transition: transform 0.08s ease-out, background-color 0.08s linear;
     will-change: transform;
 }
 
