@@ -398,6 +398,14 @@ import {
     NSD_SYSMSG_ENABLED,
     NSD_SPECTRUM_COLOR_MODE,
     NSD_SPECTRUM_CUSTOM_COLOR,
+    NSD_SPRING_STYLE,
+    NSD_BORDER_RADIUS,
+    NSD_ALWAYS_ON_TOP,
+    NSD_BASE_WIDTH,
+    NSD_MUSIC_BASE_WIDTH,
+    NSD_MUSIC_EXPANDED_WIDTH,
+    NSD_MSG_EXPANDED_WIDTH,
+    NSD_APP_SCALE,
 } from '../constants/storageKeys';
 
 const isIslandVisible = ref(false);
@@ -1021,7 +1029,40 @@ const islandOpacity = ref(Number(localStorage.getItem(NSD_ISLAND_OPACITY) || '10
 // 灵动岛自身主题色
 const islandTheme = ref(localStorage.getItem(NSD_ISLAND_THEME) || 'black');
 
-// 1. 瞬间判定当前是否处于大窗口状�?
+// 个性化设置（默认值 = 现状，保证向后兼容）
+const springStyle = ref<'stiff' | 'bouncy'>(
+    (localStorage.getItem(NSD_SPRING_STYLE) as 'stiff' | 'bouncy') || 'bouncy'
+);
+const borderRadius = ref(Number(localStorage.getItem(NSD_BORDER_RADIUS)) || 100);
+const isAlwaysOnTop = ref(localStorage.getItem(NSD_ALWAYS_ON_TOP) !== 'false');
+const baseWidth = ref(Number(localStorage.getItem(NSD_BASE_WIDTH)) || 150);
+const musicBaseWidth = ref(Number(localStorage.getItem(NSD_MUSIC_BASE_WIDTH)) || 260);
+const musicExpandedWidth = ref(Number(localStorage.getItem(NSD_MUSIC_EXPANDED_WIDTH)) || 320);
+const msgExpandedWidth = ref(Number(localStorage.getItem(NSD_MSG_EXPANDED_WIDTH)) || 360);
+const appScale = ref(Number(localStorage.getItem(NSD_APP_SCALE)) || 1.0);
+
+const applyAppScale = (scale: number) => {
+    document.documentElement.style.zoom = String(scale);
+};
+
+const applyAlwaysOnTop = async (enabled: boolean) => {
+    try {
+        await getCurrentWindow().setAlwaysOnTop(enabled);
+    } catch (e) {
+        console.error(e);
+    }
+};
+
+const refreshIslandSizeIfIdle = () => {
+    if (!isMsgActive.value && !displaySysToast.value && !isMusicExpanded.value && !isMusicExpanding.value) {
+        const { h } = getBaseSize();
+        const savedWidth = restoreIslandWidth();
+        const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
+        animateIslandSize(targetWidth, h);
+    }
+};
+
+// 1. 瞬间判定当前是否处于大窗口状态
 const isExpandedSize = computed(() => isMusicExpanded.value || isMsgActive.value);
 
 // 2. 外层容器：状态一变，立马切成目标圆角
@@ -1041,7 +1082,7 @@ const islandStyle = computed<CSSProperties>(() => {
         width: '100vw',
         height: '100vh',
         // 只要展开就是 24px，收起就�?100px
-        borderRadius: isExpandedSize.value ? '24px' : '100px',
+        borderRadius: isExpandedSize.value ? '24px' : (borderRadius.value === 12 ? '12px' : '100px'),
         position: 'relative',
     };
 });
@@ -1052,7 +1093,7 @@ const coreContentStyle = computed(() => {
     const alpha = Math.pow(linear, 1 / 2.2);
 
     // 展开 22px，收�?98px
-    const innerRadius = isExpandedSize.value ? '22px' : '98px';
+    const innerRadius = isExpandedSize.value ? '22px' : (borderRadius.value === 12 ? '10px' : '98px');
 
     if (islandTheme.value === 'white') {
         return {
@@ -1351,8 +1392,8 @@ const displayMusic = computed(() => !isMsgActive.value && !displaySysToast.value
 // 辅助函数：获取当前状态应该拥有的默认大小
 const getBaseSize = () => {
     if (isPomodoroVisible.value || isCountdownVisible.value || hwEnabled.value) return { w: 250, h: 38 };
-    if (displaySpeed.value) return { w: 150, h: 34 };
-    return { w: 260, h: 42 };
+    if (displaySpeed.value) return { w: baseWidth.value, h: 34 };
+    return { w: musicBaseWidth.value, h: 42 };
 };
 
 let suppressContentWatch = false;
@@ -1944,9 +1985,10 @@ const onEnter = (el: Element, done: () => void) => {
     HTMLElement.style.transformOrigin = 'center top'; // 类似苹果灵动岛从顶部展开
     let start = performance.now();
 
-    const freq = 2.0;
-    const decay = 10.5; // 适度拉高阻力
-    const duration = 600;
+    const stiff = springStyle.value === 'stiff';
+    const freq = stiff ? 3.2 : 2.0;
+    const decay = stiff ? 18 : 10.5;
+    const duration = stiff ? 350 : 600;
 
     const animate = (time: number) => {
         let t = (time - start) / 1000;
@@ -2588,7 +2630,7 @@ const expandMusic = (e: MouseEvent) => {
     musicExpandAnimTimer = window.setTimeout(() => {
         isMusicExpanded.value = true;
         isMusicExpanding.value = false;
-        animateIslandSize(320, 150);
+        animateIslandSize(musicExpandedWidth.value, 150);
 
         // 3. 根据 Rust 端的弹簧衰减频率，约 400ms 后动画彻底结束，此时解锁
         setTimeout(() => {
@@ -2679,6 +2721,10 @@ const getAppIcon = (appName: string) => {
 };
 
 onMounted(async () => {
+    // 启动时应用个性化缩放与置顶
+    applyAppScale(appScale.value);
+    await applyAlwaysOnTop(isAlwaysOnTop.value);
+
     // widget 可能在主面板未创建或省内存销毁后独立运行，需自行恢复目标播放器
     await invoke('set_target_player', {
         player: localStorage.getItem(NSD_TARGET_PLAYER) || 'netease',
@@ -2737,6 +2783,47 @@ onMounted(async () => {
     // 监听来自控制台的主题同步指令
     await listen<{ theme: string }>('control-island-theme', (event) => {
         islandTheme.value = event.payload.theme;
+    });
+
+    // 监听个性化中心的打包设置同步
+    await listen<{
+        springStyle?: 'stiff' | 'bouncy';
+        borderRadius?: number;
+        isAlwaysOnTop?: boolean;
+        baseWidth?: number;
+        musicBaseWidth?: number;
+        musicExpandedWidth?: number;
+        msgExpandedWidth?: number;
+        appScale?: number;
+    }>('sync-dynamic-settings', async (event) => {
+        const p = event.payload;
+        if (p.springStyle === 'stiff' || p.springStyle === 'bouncy') {
+            springStyle.value = p.springStyle;
+        }
+        if (typeof p.borderRadius === 'number') {
+            borderRadius.value = p.borderRadius;
+        }
+        if (typeof p.baseWidth === 'number') {
+            baseWidth.value = p.baseWidth;
+        }
+        if (typeof p.musicBaseWidth === 'number') {
+            musicBaseWidth.value = p.musicBaseWidth;
+        }
+        if (typeof p.musicExpandedWidth === 'number') {
+            musicExpandedWidth.value = p.musicExpandedWidth;
+        }
+        if (typeof p.msgExpandedWidth === 'number') {
+            msgExpandedWidth.value = p.msgExpandedWidth;
+        }
+        if (typeof p.appScale === 'number') {
+            appScale.value = p.appScale;
+            applyAppScale(p.appScale);
+        }
+        if (typeof p.isAlwaysOnTop === 'boolean') {
+            isAlwaysOnTop.value = p.isAlwaysOnTop;
+            await applyAlwaysOnTop(p.isAlwaysOnTop);
+        }
+        refreshIslandSizeIfIdle();
     });
 
     // 监听来自控制台的频谱颜色同步指令（模式 + 自定义色）
@@ -3139,7 +3226,7 @@ onMounted(async () => {
                         isIslandVisible.value = true;
                     }
                     if (!isPinnedToTaskbar.value) {
-                        animateIslandSize(360, 65);
+                        animateIslandSize(msgExpandedWidth.value, 65);
                     }
                 }
 
@@ -3168,7 +3255,7 @@ onMounted(async () => {
         if (event.payload.show) {
             // 1. 先让透明�?OS 窗口容器显示，此时内�?DOM �?v-show="false"，视觉上仍是隐形�?
             await getCurrentWindow().show();
-            await getCurrentWindow().setAlwaysOnTop(true);
+            await applyAlwaysOnTop(isAlwaysOnTop.value);
             // 2. 给予 40ms 的浏览器渲染帧缓冲，再撕开 Vue �?v-show 状态，强制触发 enter 动画
             setTimeout(() => {
                 isIslandVisible.value = true;

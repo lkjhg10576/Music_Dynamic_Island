@@ -28,7 +28,7 @@
 
             <div class="header-controls">
                 <button class="dynamicset-btn" :class="{ 'is-active': isDynamicSet }" @click="toggleDynamicSet">
-                    {{ currentView === 'main' ? '灵动岛设置' : (currentView === 'island' ? 'LiveActive' : '返回设置') }}
+                    {{ currentView === 'main' ? '灵动岛设置' : (currentView === 'island' ? 'LiveActive' : (currentView === 'live' ? '个性化' : '返回设置')) }}
                 </button>
                 <span class="control-separator"></span>
 
@@ -248,6 +248,10 @@
             <template v-else-if="currentView === 'live'">
                 <LiveActive />
             </template>
+
+            <template v-else-if="currentView === 'personalize'">
+                <PersonalizeCenter />
+            </template>
         </div>
 
         <footer class="panel-footer">
@@ -306,6 +310,7 @@ import SpeedChart from '../components/SpeedChart.vue';
 import StatsChart from '../components/StatsChart.vue';
 import DynamicSet from '../components/DynamicSet.vue';
 import LiveActive from './LiveActive.vue';
+import PersonalizeCenter from '../components/PersonalizeCenter.vue';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -333,13 +338,14 @@ const appVersion = ref('1.0.0');
 
 const isDynamicSet = computed(() => currentView.value !== 'main');
 
-// 三视图状态：'main' | 'island' | 'live'
-const currentView = ref<'main' | 'island' | 'live'>('main');
+// 四视图状态：'main' | 'island' | 'live' | 'personalize'
+const currentView = ref<'main' | 'island' | 'live' | 'personalize'>('main');
 
-// 切换视图：主设置 → 岛设置 → LiveActive → 主设置
+// 切换视图：主设置 → 岛设置 → LiveActive → 个性化 → 主设置
 const toggleDynamicSet = () => {
     if (currentView.value === 'main') currentView.value = 'island';
     else if (currentView.value === 'island') currentView.value = 'live';
+    else if (currentView.value === 'live') currentView.value = 'personalize';
     else currentView.value = 'main';
 };
 

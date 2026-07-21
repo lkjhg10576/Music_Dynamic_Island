@@ -9,6 +9,16 @@ export const NSD_ISLAND_THEME = 'nsd_island_theme';
 export const NSD_ISLAND_WIDTH = 'nsd_island_width';
 export const NSD_ISLAND_POSITION = 'nsd_island_position';
 
+// 灵动岛个性化
+export const NSD_SPRING_STYLE = 'nsd_spring_style';
+export const NSD_BORDER_RADIUS = 'nsd_border_radius';
+export const NSD_ALWAYS_ON_TOP = 'nsd_always_on_top';
+export const NSD_BASE_WIDTH = 'nsd_base_width';
+export const NSD_MUSIC_BASE_WIDTH = 'nsd_music_base_width';
+export const NSD_MUSIC_EXPANDED_WIDTH = 'nsd_music_expanded_width';
+export const NSD_MSG_EXPANDED_WIDTH = 'nsd_msg_expanded_width';
+export const NSD_APP_SCALE = 'nsd_app_scale';
+
 // 音乐频谱颜色
 export const NSD_SPECTRUM_COLOR_MODE = 'nsd_spectrum_color_mode'; // 'album' | 'theme' | 'custom'
 export const NSD_SPECTRUM_CUSTOM_COLOR = 'nsd_spectrum_custom_color'; // hex, 默认 '#b6e0ee'
