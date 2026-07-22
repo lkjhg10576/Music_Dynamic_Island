@@ -396,9 +396,6 @@ import {
     NSD_HW_DEFAULT_METRIC,
     NSD_ACTIVITY_PRIORITY,
     NSD_SYSMSG_ENABLED,
-    NSD_SYSMSG_NETWORK_LATENCY_ENABLED,
-    NSD_SYSMSG_NETWORK_DISCONNECT_ENABLED,
-    NSD_SYSMSG_NETWORK_RECOVERY_ENABLED,
     NSD_SPECTRUM_COLOR_MODE,
     NSD_SPECTRUM_CUSTOM_COLOR,
     NSD_SPRING_STYLE,
@@ -982,18 +979,8 @@ const showToast = (text: string, type: SysToastType = 'app') => {
 
 // ===== 系统动态感知（sysmsg）=====
 // 总开关：默认 false；由控制台动态感知卡片控制（本地 + control-sysmsg-config 即时同步）
+// 网络 toast / 状态灯由后端 NetworkMonitor 推送（sysmsg-event / network-status）
 const isSysmsgEnabled = ref(localStorage.getItem(NSD_SYSMSG_ENABLED) === 'true');
-// 网络感知三类提醒独立开关（与控制台“网络感知”分组一一对应）
-function loadSysmsgNetworkFlag(key: string): boolean {
-    const cat = localStorage.getItem(key);
-    if (cat === 'true') return true;
-    if (cat === 'false') return false;
-    // 兼容旧总开关：未写过分类键时跟随 NSD_SYSMSG_ENABLED
-    return localStorage.getItem(NSD_SYSMSG_ENABLED) === 'true';
-}
-const isNetworkLatencyAlertEnabled = ref(loadSysmsgNetworkFlag(NSD_SYSMSG_NETWORK_LATENCY_ENABLED));
-const isNetworkDisconnectAlertEnabled = ref(loadSysmsgNetworkFlag(NSD_SYSMSG_NETWORK_DISCONNECT_ENABLED));
-const isNetworkRecoveryAlertEnabled = ref(loadSysmsgNetworkFlag(NSD_SYSMSG_NETWORK_RECOVERY_ENABLED));
 
 // 把后端结构化 sysmsg-event 映射成灵动岛通知类型
 function showSysmsgToast(p: { kind: string; level: string; text: string }) {
@@ -1925,101 +1912,11 @@ watch([currentTrackInfo, displayMusic, isMusicExpanded], async () => {
     }, 100);
 });
 
-let pingTimer: number;
 let musicTimer: number;
 let msgTimer: number | null = null;
 let notifyTimer: number;
 
-// 防抖控制变量
-let lowTrafficStartTime = Date.now();
-const RED_DELAY_MS = 5000;
-// 延迟异常阈值（严格高于此值才提醒）
-const NETWORK_LATENCY_ALERT_MS = 200;
-// 网络连接状态机：null 表示尚未完成初始化探测基线
-let networkConnected: boolean | null = null;
-// 是否处于高延迟（>200ms）状态；用于“进入高延迟时弹一次”
-let isHighLatency = false;
-
-// 通过真实延迟控制状态灯，并按独立开关触发网络感知提醒（三类开关互不影响）
-const checkNetworkLatency = async () => {
-    try {
-        const latency = await invoke<number>('get_network_latency');
-
-        // 只要能拿到延迟数字，说明网络肯定是通的
-        if (latency < 150) {
-            networkStatus.value = 'good';      // 延迟优秀，绿灯
-        } else {
-            networkStatus.value = 'warning';   // 延迟较高不稳定，黄色
-        }
-
-        // 初始化探测只建立基线，不发送恢复/断连通知
-        if (networkConnected === null) {
-            networkConnected = true;
-            isHighLatency = latency > NETWORK_LATENCY_ALERT_MS;
-            return;
-        }
-
-        // 从断连恢复：首次探测成功即视为恢复（状态灯 good/warning 均可）
-        if (networkConnected === false) {
-            networkConnected = true;
-            if (isNetworkRecoveryAlertEnabled.value) {
-                showToast('网络已恢复连接', 'sys');
-            }
-        } else {
-            networkConnected = true;
-        }
-
-        // 延迟异常：仅在进入高延迟状态时弹一次；恢复到 <=200ms 后重置触发锁
-        if (latency > NETWORK_LATENCY_ALERT_MS) {
-            if (!isHighLatency) {
-                isHighLatency = true;
-                if (isNetworkLatencyAlertEnabled.value) {
-                    showToast(`网络延迟异常 ${Math.round(latency)}ms`, 'sys');
-                }
-            }
-        } else {
-            isHighLatency = false;
-        }
-    } catch (error) {
-        // 当Rust抛出超时异常时，说明网络可能断开连接
-
-        // 1. 如果当前正处于大流量状态，绝不变红，降级显示为黄灯
-        if (isHighDownload.value || isHighUpload.value) {
-            networkStatus.value = 'warning';
-            return;
-        }
-
-        // 2. 如果流量刚刚消失，判断距离大流量结束是否超过了设定的缓冲时间
-        const timeSinceLowTraffic = Date.now() - lowTrafficStartTime;
-        if (timeSinceLowTraffic < RED_DELAY_MS) {
-            // 还在缓冲期内，判定为大流量带来的余波卡顿，依然保持黄灯
-            networkStatus.value = 'warning';
-            return;
-        }
-
-        // 已经下了好几秒都没流量了，结果还连不上，说明是真的断网了，变红！
-        networkStatus.value = 'error';
-
-        // 初始化探测只建立基线，不发送断连通知
-        if (networkConnected === null) {
-            networkConnected = false;
-            isHighLatency = false;
-            return;
-        }
-
-        // 连接状态从成功转为断开时提醒一次
-        if (networkConnected === true) {
-            networkConnected = false;
-            isHighLatency = false;
-            if (isNetworkDisconnectAlertEnabled.value) {
-                showToast('网络连接已断开', 'sys');
-            }
-        } else {
-            networkConnected = false;
-            isHighLatency = false;
-        }
-    }
-};
+// 网络状态灯由后端 network-status 事件驱动（见 onMounted 中的 listen）
 
 // 调整窗口位置到正确位�?
 const adjustWindowPosition = async () => {
@@ -2850,24 +2747,17 @@ onMounted(async () => {
         }
     });
 
-    // 跨窗口同步动态感知总开关与网络感知独立开关（由控制台卡片切换触发）
-    await listen<{
-        enabled: boolean;
-        networkLatency?: boolean;
-        networkDisconnect?: boolean;
-        networkRecovery?: boolean;
-    }>('control-sysmsg-config', (event) => {
-        const p = event.payload;
-        isSysmsgEnabled.value = p.enabled;
-        if (typeof p.networkLatency === 'boolean') {
-            isNetworkLatencyAlertEnabled.value = p.networkLatency;
+    // 后端 NetworkMonitor 推送状态灯（good / warning / error）
+    await listen<{ status: string }>('network-status', (event) => {
+        const s = event.payload?.status;
+        if (s === 'good' || s === 'warning' || s === 'error') {
+            networkStatus.value = s;
         }
-        if (typeof p.networkDisconnect === 'boolean') {
-            isNetworkDisconnectAlertEnabled.value = p.networkDisconnect;
-        }
-        if (typeof p.networkRecovery === 'boolean') {
-            isNetworkRecoveryAlertEnabled.value = p.networkRecovery;
-        }
+    });
+
+    // 跨窗口同步动态感知总开关（网络 toast 门控已下沉后端）
+    await listen<{ enabled: boolean }>('control-sysmsg-config', (event) => {
+        isSysmsgEnabled.value = event.payload.enabled;
     });
 
     // 监听来自控制台的透明度同步指�?
@@ -3264,15 +3154,8 @@ onMounted(async () => {
             const highUp = txDiff >= 1024 * 1024;
             isHighDownload.value = highDown;
             isHighUpload.value = highUp;
-            // 维护低流量持续计时：大流量时重置，供断网红灯判断缓冲期使用
-            if (highDown || highUp) {
-                lowTrafficStartTime = Date.now();
-            }
         }
     });
-
-    // 初始化探测只建立基线，避免连续调用导致竞态/重复提醒
-    checkNetworkLatency();
 
     // 启动网速显示轮换定时器（每 5 秒切换上传/下载）
     speedCycleTimer = window.setInterval(() => {
@@ -3350,9 +3233,6 @@ onMounted(async () => {
         }
     }, 5000);
 
-    // 调大Ping间隔：从5.5秒调大到10秒
-    pingTimer = setInterval(checkNetworkLatency, 10000) as unknown as number;
-
     // 监听控制台发来的显隐调度指令
     await listen<{ show: boolean }>('control-island-visibility', async (event) => {
         if (event.payload.show) {
@@ -3422,7 +3302,6 @@ onUnmounted(() => {
     // 清理自定义横向拖拽的文档级监听器
     document.removeEventListener('mousemove', handleCustomDragMove);
     document.removeEventListener('mouseup', handleCustomDragEnd);
-    clearInterval(pingTimer);
     stopRotation();
     stopHwRotation();
     clearInterval(musicTimer);

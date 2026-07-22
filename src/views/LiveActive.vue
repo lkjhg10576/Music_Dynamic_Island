@@ -407,7 +407,7 @@
                                                 v-for="(feat, idx) in group.features"
                                                 :key="feat.key"
                                                 class="sysmsg-feature-item"
-                                                :class="{ 'is-on': isSysmsgFeatureOn(feat.key), 'is-last': idx === group.features.length - 1 }"
+                                                :class="{ 'is-on': isSysmsgFeatureOn(feat.key), 'is-last': idx === group.features.length - 1 && group.id !== 'network' }"
                                             >
                                                 <div class="sysmsg-feature-left">
                                                     <div class="sysmsg-feature-icon" v-html="feat.icon" aria-hidden="true"></div>
@@ -424,6 +424,33 @@
                                                     >
                                                     <span class="slider"></span>
                                                 </label>
+                                            </div>
+                                            <!-- 网络感知：延迟探测间隔（1~60s，默认 30） -->
+                                            <div
+                                                v-if="group.id === 'network'"
+                                                class="sysmsg-feature-item sysmsg-interval-item is-last"
+                                            >
+                                                <div class="sysmsg-feature-left">
+                                                    <div class="sysmsg-feature-icon" aria-hidden="true">
+                                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                                                    </div>
+                                                    <div class="sysmsg-feature-text">
+                                                        <span class="sysmsg-feature-title">延迟探测间隔</span>
+                                                        <span class="sysmsg-feature-desc">联网时周期性测量延迟，范围 1~60 秒</span>
+                                                    </div>
+                                                </div>
+                                                <div class="sysmsg-interval-input-group">
+                                                    <input
+                                                        type="number"
+                                                        class="sysmsg-interval-input"
+                                                        min="1"
+                                                        max="60"
+                                                        v-model.number="sysmsgNetworkLatencyInterval"
+                                                        @change="applyNetworkLatencyInterval"
+                                                        @blur="applyNetworkLatencyInterval"
+                                                    />
+                                                    <span class="sysmsg-interval-unit">秒</span>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -473,6 +500,7 @@ import {
     NSD_SYSMSG_NETWORK_LATENCY_ENABLED,
     NSD_SYSMSG_NETWORK_DISCONNECT_ENABLED,
     NSD_SYSMSG_NETWORK_RECOVERY_ENABLED,
+    NSD_SYSMSG_NETWORK_LATENCY_INTERVAL,
 } from '../constants/storageKeys';
 
 // ===== 三步设置状态 =====
@@ -551,6 +579,14 @@ const sysmsgUnlock = ref(loadSysmsgCategory(NSD_SYSMSG_UNLOCK_ENABLED));
 const sysmsgNetworkLatency = ref(loadSysmsgCategory(NSD_SYSMSG_NETWORK_LATENCY_ENABLED));
 const sysmsgNetworkDisconnect = ref(loadSysmsgCategory(NSD_SYSMSG_NETWORK_DISCONNECT_ENABLED));
 const sysmsgNetworkRecovery = ref(loadSysmsgCategory(NSD_SYSMSG_NETWORK_RECOVERY_ENABLED));
+
+/** 延迟探测间隔（秒）：1~60，默认 30 */
+function loadNetworkLatencyInterval(): number {
+    const raw = Number(localStorage.getItem(NSD_SYSMSG_NETWORK_LATENCY_INTERVAL));
+    if (!Number.isFinite(raw)) return 30;
+    return Math.min(60, Math.max(1, Math.round(raw)));
+}
+const sysmsgNetworkLatencyInterval = ref(loadNetworkLatencyInterval());
 
 type SysmsgFeatureKey =
     | 'volume'
@@ -761,9 +797,12 @@ function syncHwToWidget() {
 
 // ===== 系统动态感知（sysmsg）：各分类独立开关，总闸 = 任一分类开启 =====
 async function applySysmsgConfig() {
-    const backendEnabled = sysmsgVolume.value || sysmsgPower.value || sysmsgBattery.value || sysmsgUnlock.value;
+    // 总闸 = 任一分类开启（含三类网络感知）；后端 SYS_EVT_ENABLED 同步用同一值
     const enabled =
-        backendEnabled
+        sysmsgVolume.value
+        || sysmsgPower.value
+        || sysmsgBattery.value
+        || sysmsgUnlock.value
         || sysmsgNetworkLatency.value
         || sysmsgNetworkDisconnect.value
         || sysmsgNetworkRecovery.value;
@@ -779,28 +818,38 @@ async function applySysmsgConfig() {
     localStorage.setItem(NSD_SYSMSG_NETWORK_LATENCY_ENABLED, String(sysmsgNetworkLatency.value));
     localStorage.setItem(NSD_SYSMSG_NETWORK_DISCONNECT_ENABLED, String(sysmsgNetworkDisconnect.value));
     localStorage.setItem(NSD_SYSMSG_NETWORK_RECOVERY_ENABLED, String(sysmsgNetworkRecovery.value));
-    // 下发后端过滤：仅覆盖现有系统事件；网络提醒由灵动岛本地探测处理
+    // 下发后端过滤：七类开关全部交给后端 NetworkMonitor / start_monitor
     try {
         await invoke('set_system_event_filter', {
-            enabled: backendEnabled,
+            enabled,
             volume: sysmsgVolume.value,
             power: sysmsgPower.value,
             battery: sysmsgBattery.value,
             unlock: sysmsgUnlock.value,
-        });
-    } catch (_e) {
-        // 命令可能尚不可用，忽略
-    }
-    // 跨窗口通知灵动岛：同步总开关与三类独立网络提醒开关
-    try {
-        emit('control-sysmsg-config', {
-            enabled,
             networkLatency: sysmsgNetworkLatency.value,
             networkDisconnect: sysmsgNetworkDisconnect.value,
             networkRecovery: sysmsgNetworkRecovery.value,
         });
     } catch (_e) {
+        // 命令可能尚不可用，忽略
+    }
+    // 跨窗口通知灵动岛：仅同步总开关（网络 toast 由后端 sysmsg-event 驱动）
+    try {
+        emit('control-sysmsg-config', { enabled });
+    } catch (_e) {
         // 忽略
+    }
+}
+
+/** clamp + 持久化 + 下发延迟探测间隔（1~60s） */
+async function applyNetworkLatencyInterval() {
+    const clamped = Math.min(60, Math.max(1, Math.round(Number(sysmsgNetworkLatencyInterval.value) || 30)));
+    sysmsgNetworkLatencyInterval.value = clamped;
+    localStorage.setItem(NSD_SYSMSG_NETWORK_LATENCY_INTERVAL, String(clamped));
+    try {
+        await invoke('set_network_latency_interval', { secs: clamped });
+    } catch (_e) {
+        // 命令可能尚不可用，忽略
     }
 }
 
@@ -1243,6 +1292,8 @@ onMounted(async () => {
 
     // 同步系统动态感知（sysmsg）的持久化开关到后端与灵动岛
     applySysmsgConfig();
+    // 下发已持久化的延迟探测间隔
+    applyNetworkLatencyInterval();
 
     // 监听各活动 enabled 状态变化，自动同步配置到灵动岛
     watch([isPomoRunning, cdRunning, hwEnabled, srEnabled, wrEnabled], () => {
@@ -2674,6 +2725,38 @@ onUnmounted(() => {
     color: var(--item-desc-color, #94a3b8);
     line-height: 1.35;
     word-break: break-word;
+}
+
+.sysmsg-interval-item {
+    cursor: default;
+}
+
+.sysmsg-interval-input-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.sysmsg-interval-input {
+    width: 48px;
+    padding: 2px 4px;
+    border: 1px solid var(--control-border, rgba(255,255,255,0.15));
+    border-radius: 4px;
+    background: var(--input-bg, rgba(255,255,255,0.08));
+    color: var(--text-color, #fff);
+    font-size: 12px;
+    text-align: center;
+    outline: none;
+}
+
+.sysmsg-interval-input:focus {
+    border-color: var(--accent-color, #ff4757);
+}
+
+.sysmsg-interval-unit {
+    font-size: 11px;
+    color: var(--item-desc-color, rgba(255,255,255,0.5));
 }
 
 .sysmsg-feature-item .custom-switch {

@@ -24,6 +24,22 @@ static ANIMATION_ID: AtomicU32 = AtomicU32::new(0);
 // B1 省内存模式：关闭主窗口时彻底销毁 WebView（默认 false，保持原 hide 行为）
 static DESTROY_ON_CLOSE: AtomicBool = AtomicBool::new(false);
 
+// 网络延迟探测间隔（秒），默认 30，允许范围 1~60；由前端设置页实时下发
+static NETWORK_LATENCY_INTERVAL_SECS: AtomicU64 = AtomicU64::new(30);
+
+/// 供 system_events::NetworkMonitor 读取当前延迟探测间隔（已钳制到 1~60）
+pub(crate) fn network_latency_interval_secs() -> u64 {
+    NETWORK_LATENCY_INTERVAL_SECS
+        .load(Ordering::Relaxed)
+        .clamp(1, 60)
+}
+
+#[tauri::command]
+fn set_network_latency_interval(secs: u64) {
+    let clamped = secs.clamp(1, 60);
+    NETWORK_LATENCY_INTERVAL_SECS.store(clamped, Ordering::Relaxed);
+}
+
 // B1 硬件统计缓存：后台线程每 1s 刷新，command 零阻塞读取
 static HW_CPU_X100: AtomicU32 = AtomicU32::new(0);
 static HW_MEM_USED: AtomicU64 = AtomicU64::new(0);
@@ -414,8 +430,10 @@ fn get_network_stats() -> (u64, u64) {
     )
 }
 
+/// 测量到 223.5.5.5:53 的 TCP 连接延迟（毫秒）。
+/// 超时 1500ms 返回 Err；供前端命令与 NetworkMonitor 线程共用。
 #[tauri::command]
-async fn get_network_latency() -> Result<u128, String> {
+pub(crate) async fn get_network_latency() -> Result<u128, String> {
     let start = Instant::now();
     let connect_future = tokio::net::TcpStream::connect("223.5.5.5:53");
     match tokio::time::timeout(Duration::from_millis(1500), connect_future).await {
@@ -537,6 +555,7 @@ pub fn run() {
             health_reminder::skip_water_reminder,
             health_reminder::get_health_reminder_state,
             system_events::set_system_event_filter,
+            set_network_latency_interval,
         ])
         .setup(|app| {
             // B8: 注册 AppHandle 到 audio_spectrum 模块，支持 emit 频谱事件
@@ -545,6 +564,8 @@ pub fn run() {
             start_animation_thread();
             audio_spectrum::start_monitor();
             system_events::start_monitor(app.handle().clone());
+            // 独立线程：NLM 连通性 + 延迟探测（不与 start_monitor 混用 COM 套间）
+            system_events::start_network_monitor(app.handle().clone());
             pomodoro::start_pomodoro_thread(app.handle().clone());
             countdown::start_countdown_thread(app.handle().clone());
             health_reminder::start_health_reminder_thread(app.handle().clone());

@@ -89,3 +89,5 @@ export const NSD_SYSMSG_UNLOCK_ENABLED = 'nsd_sysmsg_unlock_enabled';
 export const NSD_SYSMSG_NETWORK_LATENCY_ENABLED = 'nsd_sysmsg_network_latency_enabled';
 export const NSD_SYSMSG_NETWORK_DISCONNECT_ENABLED = 'nsd_sysmsg_network_disconnect_enabled';
 export const NSD_SYSMSG_NETWORK_RECOVERY_ENABLED = 'nsd_sysmsg_network_recovery_enabled';
+/** 网络延迟探测间隔（秒），范围 1~60，默认 30 */
+export const NSD_SYSMSG_NETWORK_LATENCY_INTERVAL = 'nsd_sysmsg_network_latency_interval';
