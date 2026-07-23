@@ -227,4 +227,4 @@ Copyright (c) 2026 lkjhg10576
 ## 特别补充
 
 该分支使用了AI编程，在AI编写时已注意了质量问题，项目本身也是我本人长期使用的，我可以保证没有问题，但若介意，还请不要使用
-项目使用过以下模型编写代码：DeepSeek v4 Pro/Flash，Kimi-K2.7-Code，MiniMax M3，GLM5.2，Hy3，
+项目使用过以下模型编写代码，介意请勿使用：DeepSeek v4 Pro/Flash，Kimi-K2.7-Code，MiniMax M3，GLM5.2，Hy3，GPT5.6 Sol/Terra，Claude Sonnet 5，Claude Opus 4.8，Grok4.5，LongCat2.0，Step-3.7-Flash
