@@ -433,7 +433,7 @@ fn get_network_stats() -> (u64, u64) {
 /// 测量到 223.5.5.5:53 的 TCP 连接延迟（毫秒）。
 /// 超时 1500ms 返回 Err；供前端命令与 NetworkMonitor 线程共用。
 #[tauri::command]
-pub async fn get_network_latency() -> Result<u128, String> {
+async fn get_network_latency() -> Result<u128, String> {
     let start = Instant::now();
     let connect_future = tokio::net::TcpStream::connect("223.5.5.5:53");
     match tokio::time::timeout(Duration::from_millis(1500), connect_future).await {
