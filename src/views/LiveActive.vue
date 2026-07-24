@@ -55,7 +55,7 @@
                                 <button class="pomo-btn" @click="handlePomoStop">停止</button>
                             </template>
                         </div>
-                        <label v-else-if="item.id !== 'countdown' && item.id !== 'hardware' && item.id !== 'health' && item.id !== 'sysmsg'" class="custom-switch" @click.stop>
+                        <label v-else-if="item.id !== 'countdown' && item.id !== 'hardware' && item.id !== 'health' && item.id !== 'sysmsg' && item.id !== 'printer'" class="custom-switch" @click.stop>
                             <input type="checkbox" v-model="item.enabled" :disabled="item.disable">
                             <span class="slider"></span>
                         </label>
@@ -457,6 +457,38 @@
                                 </div>
                             </template>
 
+                            <template v-else-if="item.id === 'printer'">
+                                <div class="printer-config-panel">
+                                    <div class="health-reminder-row">
+                                        <div class="health-reminder-header">
+                                            <span class="health-reminder-icon">🖨️</span>
+                                            <div class="health-reminder-info">
+                                                <span class="health-reminder-title">启用打印机队列监控</span>
+                                                <span class="health-reminder-desc">实时捕捉 Windows 打印任务进度</span>
+                                            </div>
+                                        </div>
+                                        <div class="health-reminder-controls">
+                                            <label class="custom-switch mini">
+                                                <input type="checkbox" v-model="printerEnabled">
+                                                <span class="slider"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div class="health-status-row" v-if="printerEnabled">
+                                        <span class="health-status-text">
+                                            {{ printerJobCount > 0 ? '⏳ 监控中 · ' + printerJobCount + ' 个任务' : '✓ 监控运行中' }}
+                                        </span>
+                                        <span class="health-countdown-text" v-if="printerDefaultName">{{ printerDefaultName }}</span>
+                                    </div>
+                                    <div class="health-status-row" v-else>
+                                        <span class="health-status-text">已关闭</span>
+                                    </div>
+
+                                    <p class="printer-hint">开启后，批量打印时灵动岛将自动展开显示队列进度，无需手动干预。</p>
+                                </div>
+                            </template>
+
                             <template v-else>
                                 <div class="pro-coming-soon">
                                     <div class="loader-line"></div>
@@ -565,6 +597,9 @@ const wrMinutes = ref(Number(localStorage.getItem(NSD_WATER_REMINDER_SECS) || '1
 const printerEnabled = ref(
     localStorage.getItem(NSD_PRINTER_MONITOR_ENABLED) !== 'false'
 );
+// 打印队列实时状态（由后端 print-queue-tick 驱动，用于设置页概览）
+const printerJobCount = ref(0);
+const printerDefaultName = ref('');
 const wrActive = ref(false);
 const wrAlerting = ref(false);
 const wrRemainingSeconds = ref(0);
@@ -1307,6 +1342,29 @@ onMounted(async () => {
         await invoke('set_printer_monitor_enabled', { enabled: printerEnabled.value });
     } catch (_e) {
         // 命令尚未注册时忽略
+    }
+
+    // 监听打印机队列实时状态推送，刷新设置页概览
+    try {
+        await listen<any>('print-queue-tick', (event) => {
+            const p = event.payload;
+            if (Array.isArray(p?.jobs)) {
+                printerJobCount.value = p.jobs.length;
+            } else if (typeof p?.hasJobs === 'boolean') {
+                printerJobCount.value = p.hasJobs ? 1 : 0;
+            }
+            if (p?.defaultPrinter) printerDefaultName.value = p.defaultPrinter;
+        });
+        // 启动时主动拉取一次当前打印状态
+        const state = await invoke<any>('get_printer_state');
+        if (Array.isArray(state?.jobs)) {
+            printerJobCount.value = state.jobs.length;
+        } else if (typeof state?.hasJobs === 'boolean') {
+            printerJobCount.value = state.hasJobs ? 1 : 0;
+        }
+        if (state?.defaultPrinter) printerDefaultName.value = state.defaultPrinter;
+    } catch (_e) {
+        // 后端 print 模块未就绪时忽略
     }
 
     // 监听各活动 enabled 状态变化，自动同步配置到灵动岛
@@ -2598,6 +2656,20 @@ onUnmounted(() => {
     font-size: 10px;
     color: var(--item-desc-color, rgba(255,255,255,0.5));
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* ===== 打印机队列设置 ===== */
+.printer-config-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.printer-hint {
+    margin: 2px 0 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--item-desc-color, rgba(255,255,255,0.5));
 }
 
 .health-skip-btn {
