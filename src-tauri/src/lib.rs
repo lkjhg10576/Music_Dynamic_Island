@@ -74,6 +74,7 @@ struct AnimationCommand {
     target_width: f64,
     target_height: f64,
     is_pinned: bool,
+    spring_style: String,
 }
 
 /// 启动常驻动画线程（单次创建，loop 监听 channel）
@@ -89,9 +90,13 @@ fn start_animation_thread() {
             match cmd {
                 Ok(mut cmd) => {
                     let mut start_time = std::time::Instant::now();
-                    let duration = std::time::Duration::from_millis(400);
-                    let freq = 2.4;
-                    let decay = 12.0;
+                    // 根据 spring_style 选择弹性物理常数
+                    let (freq, decay, duration_ms) = if cmd.spring_style == "stiff" {
+                        (3.8, 22.0, 250)
+                    } else {
+                        (2.4, 12.0, 400)
+                    };
+                    let duration = std::time::Duration::from_millis(duration_ms);
 
                     while start_time.elapsed() < duration {
                         // 在循环中继续检查 channel：如有新动画命令立即中断当前动画
@@ -105,7 +110,7 @@ fn start_animation_thread() {
                         std::thread::sleep(std::time::Duration::from_millis(8));
 
                         let elapsed = start_time.elapsed().as_secs_f64();
-                        let progress = elapsed / 0.4;
+                        let progress = elapsed / (duration_ms as f64 / 1000.0);
                         if progress >= 1.0 { break; }
 
                         let spring = 1.0 - (freq * elapsed * 2.0 * std::f64::consts::PI).cos() * (-decay * elapsed).exp();
@@ -234,6 +239,7 @@ async fn start_island_animation(
     target_width: f64,
     target_height: f64,
     is_pinned: bool,
+    spring_style: String,
 ) -> Result<(), String> {
     let id = ANIMATION_ID.fetch_add(1, Ordering::SeqCst) + 1;
     let scale_factor = window.scale_factor().unwrap_or(1.0);
@@ -288,6 +294,7 @@ async fn start_island_animation(
                 target_width,
                 target_height,
                 is_pinned,
+                spring_style,
             };
 
             let tx = ANIMATION_CHANNEL.lock().unwrap().clone();
@@ -520,14 +527,20 @@ fn save_csv_file(app: tauri::AppHandle, default_name: String, content: String) -
         .download_dir()
         .map_err(|e| format!("无法获取下载目录: {}", e))?;
 
+    // 防止路径穿越：仅取文件名部分，忽略目录组件
+    let safe_name = std::path::Path::new(&default_name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("export.csv");
+
     // 拆分文件名主干与扩展名，用于同名冲突时插入序号
-    let (stem, ext) = match default_name.rfind('.') {
-        Some(pos) => (&default_name[..pos], &default_name[pos..]),
-        None => (default_name.as_str(), ""),
+    let (stem, ext) = match safe_name.rfind('.') {
+        Some(pos) => (&safe_name[..pos], &safe_name[pos..]),
+        None => (safe_name, ""),
     };
 
     // 计算最终不冲突的路径
-    let mut target = dir.join(&default_name);
+    let mut target = dir.join(safe_name);
     let mut idx = 1;
     while target.exists() {
         target = dir.join(format!("{}({}){}", stem, idx, ext));
@@ -538,6 +551,28 @@ fn save_csv_file(app: tauri::AppHandle, default_name: String, content: String) -
     let bom = "\u{FEFF}";
     let full_content = format!("{}{}", bom, content);
     std::fs::write(&target, full_content.as_bytes())
+        .map_err(|e| format!("写入文件失败: {}", e))?;
+
+    Ok(target.to_string_lossy().to_string())
+}
+
+/// 导出设置文件到 Downloads 目录
+#[tauri::command]
+fn save_settings_file(app: tauri::AppHandle, content: String) -> Result<String, String> {
+    let dir = app
+        .path()
+        .download_dir()
+        .map_err(|e| format!("无法获取下载目录: {}", e))?;
+
+    let default_name = "mdi-settings.json";
+    let mut target = dir.join(default_name);
+    let mut idx = 1;
+    while target.exists() {
+        target = dir.join(format!("mdi-settings-({}).json", idx));
+        idx += 1;
+    }
+
+    std::fs::write(&target, content.as_bytes())
         .map_err(|e| format!("写入文件失败: {}", e))?;
 
     Ok(target.to_string_lossy().to_string())
@@ -578,6 +613,8 @@ pub fn run() {
             pomodoro::resume_pomodoro,
             pomodoro::stop_pomodoro,
             pomodoro::get_pomodoro_state,
+            pomodoro::set_pomodoro_dnd,
+            pomodoro::get_pomodoro_dnd,
             countdown::start_countdown,
             countdown::pause_countdown,
             countdown::resume_countdown,
@@ -595,6 +632,7 @@ pub fn run() {
             system_events::set_system_event_filter,
             set_network_latency_interval,
             save_csv_file,
+            save_settings_file,
             print_queue::set_printer_monitor_enabled,
             print_queue::get_printer_state,
         ])

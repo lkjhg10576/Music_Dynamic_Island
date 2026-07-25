@@ -132,7 +132,8 @@ pub fn start_health_reminder_thread(app_handle: AppHandle) {
 #[tauri::command]
 pub fn start_sitting_reminder(interval_secs: u32) {
     SITTING_INTERVAL_SECS.store(interval_secs, Ordering::Relaxed);
-    SITTING_REMAINING_SECS.store(interval_secs as i32, Ordering::Relaxed);
+    // Clamp to i32::MAX to prevent truncation overflow
+    SITTING_REMAINING_SECS.store(interval_secs.min(i32::MAX as u32) as i32, Ordering::Relaxed);
     SITTING_ALERT_TICK.store(0, Ordering::Relaxed);
     SITTING_ENABLED.store(true, Ordering::Relaxed);
     SITTING_CAN_SKIP.store(true, Ordering::Relaxed);
@@ -159,7 +160,8 @@ pub fn skip_sitting_reminder() {
     let remaining = SITTING_REMAINING_SECS.load(Ordering::Relaxed);
     if remaining > 0 && SITTING_CAN_SKIP.load(Ordering::Relaxed) {
         let interval = SITTING_INTERVAL_SECS.load(Ordering::Relaxed);
-        SITTING_REMAINING_SECS.store(remaining + interval as i32, Ordering::Relaxed);
+        let new_remaining = remaining.saturating_add(interval.min(i32::MAX as u32) as i32);
+        SITTING_REMAINING_SECS.store(new_remaining, Ordering::Relaxed);
         SITTING_CAN_SKIP.store(false, Ordering::Relaxed);
     }
 }
@@ -167,7 +169,7 @@ pub fn skip_sitting_reminder() {
 #[tauri::command]
 pub fn start_water_reminder(interval_secs: u32) {
     WATER_INTERVAL_SECS.store(interval_secs, Ordering::Relaxed);
-    WATER_REMAINING_SECS.store(interval_secs as i32, Ordering::Relaxed);
+    WATER_REMAINING_SECS.store(interval_secs.min(i32::MAX as u32) as i32, Ordering::Relaxed);
     WATER_ALERT_TICK.store(0, Ordering::Relaxed);
     WATER_ENABLED.store(true, Ordering::Relaxed);
     WATER_CAN_SKIP.store(true, Ordering::Relaxed);
@@ -184,7 +186,7 @@ pub fn stop_water_reminder() {
 #[tauri::command]
 pub fn dismiss_water_alert() {
     let interval = WATER_INTERVAL_SECS.load(Ordering::Relaxed);
-    WATER_REMAINING_SECS.store(interval as i32, Ordering::Relaxed);
+    WATER_REMAINING_SECS.store(interval.min(i32::MAX as u32) as i32, Ordering::Relaxed);
     WATER_ALERT_TICK.store(0, Ordering::Relaxed);
     WATER_CAN_SKIP.store(true, Ordering::Relaxed);
 }
@@ -194,7 +196,8 @@ pub fn skip_water_reminder() {
     let remaining = WATER_REMAINING_SECS.load(Ordering::Relaxed);
     if remaining > 0 && WATER_CAN_SKIP.load(Ordering::Relaxed) {
         let interval = WATER_INTERVAL_SECS.load(Ordering::Relaxed);
-        WATER_REMAINING_SECS.store(remaining + interval as i32, Ordering::Relaxed);
+        let new_remaining = remaining.saturating_add(interval.min(i32::MAX as u32) as i32);
+        WATER_REMAINING_SECS.store(new_remaining, Ordering::Relaxed);
         WATER_CAN_SKIP.store(false, Ordering::Relaxed);
     }
 }

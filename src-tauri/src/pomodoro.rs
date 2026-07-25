@@ -15,6 +15,8 @@ static POMO_REMAINING_CYCLES: AtomicU32 = AtomicU32::new(0);
 static POMO_TOTAL_CYCLES: AtomicU32 = AtomicU32::new(0);
 static POMO_PHASE: AtomicU32 = AtomicU32::new(0);           // 0=focus, 1=break
 static POMO_PHASE_TOTAL_SECS: AtomicU32 = AtomicU32::new(0);
+static POMO_DND_ENABLED: AtomicBool = AtomicBool::new(false); // 免打扰实际生效状态
+static POMO_DND_PREFERENCE: AtomicBool = AtomicBool::new(false); // 用户免打扰偏好（跨阶段保持）
 
 /// 启动后台番茄钟线程（每秒 tick，空闲时降低唤醒频率以节省 CPU）
 pub fn start_pomodoro_thread(app_handle: AppHandle) {
@@ -57,8 +59,9 @@ pub fn start_pomodoro_thread(app_handle: AppHandle) {
                 // ── 阶段切换 ──
                 let phase = POMO_PHASE.load(Ordering::Relaxed);
                 if phase == 0 {
-                    // 专注结束 → 切换到休息
+                    // 专注结束 → 切换到休息，关闭免打扰
                     POMO_PHASE.store(1, Ordering::Relaxed);
+                    POMO_DND_ENABLED.store(false, Ordering::Relaxed);
                     let break_secs = POMO_BREAK_SECS.load(Ordering::Relaxed);
                     POMO_REMAINING_SECS.store(break_secs, Ordering::Relaxed);
                     POMO_PHASE_TOTAL_SECS.store(break_secs, Ordering::Relaxed);
@@ -94,6 +97,9 @@ pub fn start_pomodoro_thread(app_handle: AppHandle) {
                     } else {
                         POMO_REMAINING_CYCLES.store(remaining_cycles - 1, Ordering::Relaxed);
                         POMO_PHASE.store(0, Ordering::Relaxed);
+                        // 下一轮专注开始，若用户偏好开启免打扰则重新生效
+                        let pref = POMO_DND_PREFERENCE.load(Ordering::Relaxed);
+                        POMO_DND_ENABLED.store(pref, Ordering::Relaxed);
                         let focus_secs = POMO_FOCUS_SECS.load(Ordering::Relaxed);
                         POMO_REMAINING_SECS.store(focus_secs, Ordering::Relaxed);
                         POMO_PHASE_TOTAL_SECS.store(focus_secs, Ordering::Relaxed);
@@ -138,8 +144,12 @@ pub fn start_pomodoro(focus_secs: u32, break_secs: u32, cycles: u32) {
     POMO_PHASE.store(0, Ordering::Relaxed); // 从专注开始
     POMO_REMAINING_SECS.store(focus_secs, Ordering::Relaxed);
     POMO_PHASE_TOTAL_SECS.store(focus_secs, Ordering::Relaxed);
-    POMO_ACTIVE.store(true, Ordering::Relaxed);
     POMO_PAUSED.store(false, Ordering::Relaxed);
+    // 番茄钟启动时，若用户开启了免打扰偏好且从专注阶段开始，立即生效
+    let pref = POMO_DND_PREFERENCE.load(Ordering::Relaxed);
+    POMO_DND_ENABLED.store(pref, Ordering::Relaxed);
+    // POMO_ACTIVE 必须最后设置，确保定时器线程不会读到未初始化的值
+    POMO_ACTIVE.store(true, Ordering::Relaxed);
 }
 
 #[tauri::command]
@@ -156,6 +166,7 @@ pub fn resume_pomodoro() {
 pub fn stop_pomodoro() {
     POMO_ACTIVE.store(false, Ordering::Relaxed);
     POMO_PAUSED.store(false, Ordering::Relaxed);
+    POMO_DND_ENABLED.store(false, Ordering::Relaxed); // 停止时关闭实际生效状态，偏好保留
 }
 
 #[tauri::command]
@@ -177,5 +188,26 @@ pub fn get_pomodoro_state() -> serde_json::Value {
         "focus_secs": POMO_FOCUS_SECS.load(Ordering::Relaxed),
         "break_secs": POMO_BREAK_SECS.load(Ordering::Relaxed),
         "total_secs": POMO_PHASE_TOTAL_SECS.load(Ordering::Relaxed),
+        "dnd_enabled": POMO_DND_ENABLED.load(Ordering::Relaxed),
     })
+}
+
+#[tauri::command]
+pub fn set_pomodoro_dnd(enabled: bool) {
+    POMO_DND_PREFERENCE.store(enabled, Ordering::Relaxed);
+    // 仅在专注阶段生效时同步实际状态；休息期间不开启
+    let phase = POMO_PHASE.load(Ordering::Relaxed);
+    let active = POMO_ACTIVE.load(Ordering::Relaxed);
+    let effective = enabled && active && phase == 0;
+    POMO_DND_ENABLED.store(effective, Ordering::Relaxed);
+}
+
+#[tauri::command]
+pub fn get_pomodoro_dnd() -> bool {
+    POMO_DND_PREFERENCE.load(Ordering::Relaxed)
+}
+
+/// 供 notification.rs / system_events.rs 调用：检查番茄钟免打扰是否开启
+pub fn is_pomodoro_dnd() -> bool {
+    POMO_DND_ENABLED.load(Ordering::Relaxed)
 }

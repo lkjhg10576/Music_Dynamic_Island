@@ -97,10 +97,12 @@ const draw = () => {
 
     // 计算数据点坐标
     // 若传入 maxValue（>0），则使用固定上限；否则按数据动态取最大值
+    if (data.length === 0) return;
     const maxVal = props.maxValue > 0 ? props.maxValue : Math.max(...data, 0.01);
     const points: { x: number; y: number }[] = [];
+    const divisor = data.length > 1 ? data.length - 1 : 1;
     for (let i = 0; i < data.length; i++) {
-        const x = padding.left + (i / (data.length - 1)) * chartW;
+        const x = padding.left + (i / divisor) * chartW;
         const y = padding.top + chartH - (data[i] / maxVal) * chartH;
         points.push({ x, y });
     }

@@ -52,6 +52,7 @@ export const NSD_POMODORO_TIME = 'nsd_pomodoro_time';
 export const NSD_POMODORO_FOCUS_SECS = 'nsd_pomodoro_focus_secs';
 export const NSD_POMODORO_BREAK_SECS = 'nsd_pomodoro_break_secs';
 export const NSD_POMODORO_CYCLES = 'nsd_pomodoro_cycles';
+export const NSD_POMODORO_DND = 'nsd_pomodoro_dnd';
 
 // 倒计时
 export const NSD_COUNTDOWN_VISIBLE = 'nsd_countdown_visible';

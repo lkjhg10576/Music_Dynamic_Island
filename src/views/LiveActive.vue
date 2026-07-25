@@ -196,7 +196,7 @@
                                     <div class="pro-meta">
                                         <span class="pro-title">免打扰模式</span>
                                     </div>
-                                    <label class="custom-switch mini"><input type="checkbox"><span
+                                    <label class="custom-switch mini"><input type="checkbox" v-model="pomoDnd"><span
                                             class="slider"></span></label>
                                 </div>
                             </template>
@@ -513,6 +513,7 @@ import {
     NSD_POMODORO_FOCUS_SECS,
     NSD_POMODORO_BREAK_SECS,
     NSD_POMODORO_CYCLES,
+    NSD_POMODORO_DND,
     NSD_COUNTDOWN_SECS,
     NSD_HW_ENABLED,
     NSD_HW_MODE,
@@ -536,6 +537,10 @@ import {
     NSD_SYSMSG_NETWORK_LATENCY_INTERVAL,
 } from '../constants/storageKeys';
 
+// watch 停止函数（在 async onMounted 中注册的 watch 需手动清理）
+let stopActivityWatch: (() => void) | null = null;
+let stopDndWatch: (() => void) | null = null;
+
 // ===== 三步设置状态 =====
 const pomoStep = ref(0); // 0=专注时间, 1=休息时间, 2=循环轮数
 const pomoFocusM = ref(Number(localStorage.getItem(NSD_POMODORO_FOCUS_SECS + '_m')) || 25);
@@ -544,6 +549,7 @@ const pomoBreakM = ref(Number(localStorage.getItem(NSD_POMODORO_BREAK_SECS + '_m
 const pomoBreakS = ref(Number(localStorage.getItem(NSD_POMODORO_BREAK_SECS + '_s')) || 0);
 const pomoCycles = ref(Number(localStorage.getItem(NSD_POMODORO_CYCLES)) || 4);
 const pomoConfigDone = ref(false);
+const pomoDnd = ref(localStorage.getItem(NSD_POMODORO_DND) === 'true');
 
 // ===== 运行中状态（由后端事件驱动） =====
 const isPomoRunning = ref(false);
@@ -1237,6 +1243,10 @@ onMounted(async () => {
             pomoRemainingCycles.value = state.remaining_cycles;
             pomoTotalCycles.value = state.total_cycles;
             pomoConfigDone.value = true;
+            // 恢复后端 DND 状态
+            if (pomoDnd.value) {
+                await invoke('set_pomodoro_dnd', { enabled: true });
+            }
         }
     } catch (_e) {
         // 后端 pomodoro 模块不存在或未初始化，忽略
@@ -1368,7 +1378,8 @@ onMounted(async () => {
     }
 
     // 监听各活动 enabled 状态变化，自动同步配置到灵动岛
-    watch(
+    // 注意：这些 watch 在 async onMounted 中注册，需手动清理
+    stopActivityWatch = watch(
         [isPomoRunning, cdRunning, hwEnabled, srEnabled, wrEnabled, printerEnabled],
         async () => {
             localStorage.setItem(NSD_PRINTER_MONITOR_ENABLED, String(printerEnabled.value));
@@ -1379,12 +1390,22 @@ onMounted(async () => {
         }
     );
 
+    // 番茄钟免打扰模式：切换时同步到后端
+    stopDndWatch = watch(pomoDnd, async (val) => {
+        localStorage.setItem(NSD_POMODORO_DND, String(val));
+        try {
+            await invoke('set_pomodoro_dnd', { enabled: val });
+        } catch (_e) {}
+    });
+
     nextTick(() => { checkScroll(); });
     window.addEventListener('resize', checkScroll);
 });
 
 onUnmounted(() => {
     window.removeEventListener('resize', checkScroll);
+    if (stopActivityWatch) stopActivityWatch();
+    if (stopDndWatch) stopDndWatch();
 });
 </script>
 

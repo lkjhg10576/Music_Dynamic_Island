@@ -1,4 +1,4 @@
-﻿<template>
+<template>
     <transition @enter="onEnter" @leave="onLeave" :css="false">
         <div v-show="isIslandVisible" :class="['island-container', { 'has-music-border': isGlowBorderEnabled }]"
             @mousedown="handleMouseDown" @mousemove="handleMouseMove" @mouseup="handleMouseUp"
@@ -2680,7 +2680,8 @@ const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
             startHeight: realStartH,
             targetWidth: targetWidth,
             targetHeight: targetHeight,
-            isPinned: isPinnedToTaskbar.value
+            isPinned: isPinnedToTaskbar.value,
+            springStyle: springStyle.value
         });
     } catch (err) {
         console.error('呼叫 Rust 动画失败:', err);
@@ -2750,6 +2751,8 @@ const collapseMusic = () => {
     const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
     animateIslandSize(targetWidth, h);
 };
+
+const preventContextMenu = (e: Event) => { e.preventDefault(); };
 
 // force_window_topmost：窗口 blur 事件驱动置顶（替代原 speedTimer 中每 800ms 轮询）
 const handleForceTopmost = () => {
@@ -2887,9 +2890,7 @@ onMounted(async () => {
     // force_window_topmost：窗口 blur 事件驱动置顶（函数定义已提升到模块级，供 onUnmounted 清理）
     window.addEventListener('blur', handleForceTopmost);
 
-    document.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-    }, { capture: true }); // 使用捕获阶段，确保先于 Tauri 底层拦截
+    document.addEventListener('contextmenu', preventContextMenu, { capture: true }); // 使用捕获阶段，确保先于 Tauri 底层拦截
 
     // 音乐控制器状态监听器
     await listen<{ enabled: boolean }>('control-music-ctl', (event) => {
@@ -3468,6 +3469,7 @@ onUnmounted(() => {
     }
     window.removeEventListener('blur', collapseMusic);
     window.removeEventListener('blur', handleForceTopmost);
+    document.removeEventListener('contextmenu', preventContextMenu, { capture: true });
     // 清理自定义横向拖拽的文档级监听器
     document.removeEventListener('mousemove', handleCustomDragMove);
     document.removeEventListener('mouseup', handleCustomDragEnd);

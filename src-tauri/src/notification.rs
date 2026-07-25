@@ -274,7 +274,10 @@ fn start_listener_thread(rx: Receiver<Ctrl>, ctrl_tx: SyncSender<Ctrl>, app: tau
 
         match fetch_incremental(first_run) {
             Ok(batch) if !batch.items.is_empty() => {
-                let _ = app.emit("notification-event", batch);
+                // 番茄钟免打扰模式：专注期间静默通知
+                if !crate::pomodoro::is_pomodoro_dnd() {
+                    let _ = app.emit("notification-event", batch);
+                }
             }
             _ => {}
         }
@@ -390,6 +393,12 @@ pub fn launch_app_by_aumid(aumid: String) -> Result<(), String> {
         return Err("通知无来源应用标识".to_string());
     }
 
+    // 验证 aumid 格式：必须匹配 Windows AppUserModelId 规范（仅含字母、数字、点、感叹号）
+    // 防止恶意 aumid 利用 registry 查询执行任意命令
+    if !aumid.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '!') {
+        return Err("无效的应用标识格式".to_string());
+    }
+
     let subkey = format!("Applications\\{}\\shell\\open\\command", aumid);
 
     // 依次尝试 HKCR 和 HKCU 两个根键
@@ -403,7 +412,5 @@ pub fn launch_app_by_aumid(aumid: String) -> Result<(), String> {
         }
     }
 
-    // 兜底：直接用 aumid 尝试 ShellExecute（对部分注册了协议的应用有效）
-    shell_execute(&aumid, "");
-    Ok(())
+    Err("未找到对应应用的启动命令".to_string())
 }

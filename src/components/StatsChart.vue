@@ -48,6 +48,7 @@ const props = defineProps<{
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
 let rafId: number | null = null;
+let cachedMaxVal = 1;
 
 const tooltip = reactive({
     visible: false,
@@ -90,6 +91,22 @@ const draw = () => {
     ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // roundRect polyfill for older WebView2 runtimes
+    if (!ctx.roundRect) {
+        (ctx as any).roundRect = (x: number, y: number, w: number, h: number, radii: number[]) => {
+            const r = radii[0] || 0;
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + w - r, y);
+            ctx.arcTo(x + w, y, x + w, y + r, r);
+            ctx.lineTo(x + w, y + h - r);
+            ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+            ctx.lineTo(x + r, y + h);
+            ctx.arcTo(x, y + h, x, y + h - r, r);
+            ctx.lineTo(x, y + r);
+            ctx.arcTo(x, y, x + r, y, r);
+        };
+    }
+
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const w = rect.width;
@@ -108,6 +125,7 @@ const draw = () => {
     if (!days.length) return;
 
     const maxVal = Math.max(...upData, ...downData, 1);
+    cachedMaxVal = maxVal;
 
     barRects.length = 0;
 
@@ -291,10 +309,9 @@ const handleMouseMove = (e: MouseEvent) => {
         }
         if (nearest >= 0) {
             const centerX = padding.left + categoryW * nearest + categoryW / 2;
-            const maxVal = Math.max(...props.upData, ...props.downData, 1);
             const chartH = rect.height - padding.top - padding.bottom;
             const maxData = Math.max(props.upData[nearest], props.downData[nearest]);
-            const topY = padding.top + chartH - (maxData / maxVal) * chartH;
+            const topY = padding.top + chartH - (maxData / cachedMaxVal) * chartH;
 
             tooltip.visible = true;
             const pos = clampTooltip(centerX - tooltipW / 2, topY - tooltipH - 6);

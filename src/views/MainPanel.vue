@@ -198,6 +198,22 @@
 
                         <input type="range" min="0" max="100" v-model="opacity" class="range-input" />
                     </div>
+
+                    <div class="setting-item" style="border-top: 1px dashed var(--control-border); padding-top: 10px; margin-top: 4px;">
+                        <div class="item-meta">
+                            <span class="item-title">设置备份</span>
+                            <span class="item-desc">导出或导入所有设置配置</span>
+                        </div>
+                        <div class="settings-backup-btns">
+                            <button class="export-btn" @click="exportSettings" :disabled="isSettingsExporting">
+                                {{ isSettingsExporting ? '导出中...' : '导出设置' }}
+                            </button>
+                            <button class="export-btn" @click="$refs.importInput.click()">
+                                导入设置
+                            </button>
+                            <input ref="importInput" type="file" accept=".json" style="display: none;" @change="importSettings">
+                        </div>
+                    </div>
                 </div>
 
                 <template v-else>
@@ -453,7 +469,7 @@ const formatBytesUnit = (bytes: number) => {
     if (bytes === 0) return 'B';
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
     return sizes[i];
 };
 
@@ -623,6 +639,62 @@ const handleDialogConfirm = () => {
     closeDialog();
 };
 
+// ===== 设置导入/导出 =====
+const isSettingsExporting = ref(false);
+const importInput = ref<HTMLInputElement | null>(null);
+
+// 需要导出的 localStorage key 前缀
+const SETTINGS_PREFIX = 'nsd_';
+
+const exportSettings = async () => {
+    isSettingsExporting.value = true;
+    try {
+        const settings: Record<string, string> = {};
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith(SETTINGS_PREFIX)) {
+                settings[key] = localStorage.getItem(key) || '';
+            }
+        }
+        const payload = JSON.stringify({ version: '0.6.0-1', settings }, null, 2);
+        const savedPath: string = await invoke('save_settings_file', { content: payload });
+        showDialog('导出成功', `已保存到：\n${savedPath}`);
+    } catch (e: any) {
+        showDialog('导出失败', typeof e === 'string' ? e : '导出设置时出错，请稍后再试。');
+    } finally {
+        isSettingsExporting.value = false;
+    }
+};
+
+const importSettings = async (event: Event) => {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        if (!data.settings || typeof data.settings !== 'object') {
+            showDialog('导入失败', '文件格式不正确，请选择有效的 MDI 设置文件。');
+            return;
+        }
+        let count = 0;
+        for (const [key, value] of Object.entries(data.settings)) {
+            if (key.startsWith(SETTINGS_PREFIX) && typeof value === 'string') {
+                localStorage.setItem(key, value);
+                count++;
+            }
+        }
+        showDialog('导入成功', `已导入 ${count} 项设置，页面将刷新以生效。`);
+        // 延迟刷新让用户看到提示
+        setTimeout(() => window.location.reload(), 1500);
+    } catch (e: any) {
+        showDialog('导入失败', typeof e === 'string' ? e : '解析设置文件时出错，请检查文件格式。');
+    } finally {
+        // 清空 input 以便再次选择同一文件
+        input.value = '';
+    }
+};
+
 const parseVersion = (v: string) => {
     // 使用正则匹配出类似于 X.Y.Z 的纯数字版本号部分
     // 兼容 v1.2.3、v1.3.0-beta.1 等标签，按基础版本参与比较
@@ -748,6 +820,11 @@ let lastRx = 0;
 let lastTx = 0;
 let systemThemeMedia: MediaQueryList;
 let unlistenMonitorStats: (() => void) | null = null;
+let unlistenOpenSettings: (() => void) | null = null;
+let unlistenPositionLock: (() => void) | null = null;
+let unlistenIslandStatus: (() => void) | null = null;
+let handleResize: (() => void) | null = null;
+let handleContextMenu: ((e: Event) => void) | null = null;
 
 const speedChartRef = ref<InstanceType<typeof SpeedChart> | null>(null);
 const chartDataQueue = ref<number[]>(Array(15).fill(0));
@@ -798,7 +875,7 @@ const formatMem = (bytes: number) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 };
 
@@ -938,9 +1015,8 @@ onMounted(async () => {
 
     silentCheckUpdate();
 
-    window.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-    }, { capture: true });
+    handleContextMenu = (e: Event) => { e.preventDefault(); };
+    window.addEventListener('contextmenu', handleContextMenu, { capture: true });
 
     applyTheme();
     systemThemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
@@ -1004,10 +1080,11 @@ onMounted(async () => {
         }
     });
 
-    window.addEventListener('resize', () => {
+    handleResize = () => {
         speedChartRef.value?.resize();
         statsChartRef.value?.resize();
-    });
+    };
+    window.addEventListener('resize', handleResize);
 
     try {
         autoStart.value = await isEnabled();
@@ -1022,7 +1099,7 @@ onMounted(async () => {
     }
 
     // 监听来自灵动岛右键菜单的“打开设置”信号
-    await listen('open-settings-panel', async () => {
+    unlistenOpenSettings = await listen('open-settings-panel', async () => {
         // 1. 如果当前在主设置页，就切到灵动岛设置页
         if (currentView.value === 'main') {
             currentView.value = 'island';
@@ -1036,11 +1113,11 @@ onMounted(async () => {
     });
 
     // 监听来自灵动岛右键菜单的位置锁定同步信号
-    await listen<{ locked: boolean }>('position-lock-sync', (event) => {
+    unlistenPositionLock = await listen<{ locked: boolean }>('position-lock-sync', (event) => {
         positionLocked.value = event.payload.locked;
     });
 
-    await listen<{ visible: boolean }>('island-status-sync', (event) => {
+    unlistenIslandStatus = await listen<{ visible: boolean }>('island-status-sync', (event) => {
         isWidgetVisible.value = event.payload.visible;
     });
 
@@ -1060,6 +1137,11 @@ onMounted(async () => {
 onUnmounted(() => {
     systemThemeMedia?.removeEventListener('change', handleSystemThemeUpdate);
     if (unlistenMonitorStats) unlistenMonitorStats();
+    if (unlistenOpenSettings) unlistenOpenSettings();
+    if (unlistenPositionLock) unlistenPositionLock();
+    if (unlistenIslandStatus) unlistenIslandStatus();
+    if (handleResize) window.removeEventListener('resize', handleResize);
+    if (handleContextMenu) window.removeEventListener('contextmenu', handleContextMenu, { capture: true });
     localStorage.setItem(NSD_TRAFFIC_STATS, JSON.stringify(trafficData.value));
 });
 
@@ -1820,11 +1902,6 @@ input:checked+.slider:before {
     transform: translateX(-50%) translateY(0);
 }
 
-.tooltip-wrapper:hover::before {
-    opacity: 1;
-    transform: translateX(-50%) scale(1);
-}
-
 /* 数据统计模块样式 */
 .card-header-row {
     display: flex;
@@ -2041,6 +2118,16 @@ input:checked+.slider:before {
 .export-btn:hover {
     background: var(--btn-sec-bg);
     border-color: var(--slider-checked-bg);
+}
+
+.export-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.settings-backup-btns {
+    display: flex;
+    gap: 8px;
 }
 
 .export-range-options {

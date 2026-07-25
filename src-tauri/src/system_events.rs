@@ -73,6 +73,10 @@ fn emit_sys_event(app: &AppHandle, kind: &str, level: &str, text: &str) {
     if !SYS_EVT_ENABLED.load(Ordering::Relaxed) {
         return;
     }
+    // 番茄钟免打扰模式：专注期间静默系统事件
+    if crate::pomodoro::is_pomodoro_dnd() {
+        return;
+    }
     let payload = SysEventPayload {
         kind: kind.to_string(),
         level: level.to_string(),
