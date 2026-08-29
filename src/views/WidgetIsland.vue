@@ -613,6 +613,10 @@ function clickRtChip(targetId?: string) {
     if (!list.length) return;
     // 先折叠所有已展开的实时活动，避免多活动并行时状态残留导致关闭按钮/切换异常
     collapseAllExpandedActivities();
+    // 音乐面板处于展开/展开中时必须先复位其展开态：实时活动展开会把岛切回小岛高度，
+    // 若 isMusicExpanded 残留，音乐控制面板无法随之折叠，且会卡住 showHardwareRing 等
+    // 叠加显示逻辑（它们的守卫都依赖 !isMusicExpanded），导致显示异常
+    resetMusicExpandedState();
     let idx: number;
     if (targetId) {
         idx = list.findIndex(a => a.id === targetId);
@@ -2749,6 +2753,24 @@ const collapseMusic = () => {
     const savedWidth = restoreIslandWidth();
     const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
     animateIslandSize(targetWidth, h);
+};
+
+// 直接复位音乐展开态（不播放收缩动画、不恢复岛尺寸）：
+// 供切换到实时活动展开态时调用，最终岛尺寸由实时活动自己的展开动画决定。
+// 不能复用 collapseMusic：它受 isAnimationLocked 保护会把收缩请求挂起为
+// isPendingCollapse，稍后补发时会把实时活动刚展开的尺寸覆盖回小岛尺寸
+const resetMusicExpandedState = () => {
+    if (!isMusicExpanded.value && !isMusicExpanding.value) return;
+    if (musicExpandAnimTimer) {
+        clearTimeout(musicExpandAnimTimer);
+        musicExpandAnimTimer = null;
+    }
+    isMusicExpanded.value = false;
+    isMusicExpanding.value = false;
+    isPendingCollapse = false;
+    // 若正处于 expandMusic 的展开周期，其解锁回调可能随上面的定时器一起被清除，
+    // 这里必须手动解锁，否则后续 collapseMusic 只会挂起、永远不再执行
+    isAnimationLocked = false;
 };
 
 // force_window_topmost：窗口 blur 事件驱动置顶（替代原 speedTimer 中每 800ms 轮询）
