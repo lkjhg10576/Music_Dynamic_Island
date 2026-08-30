@@ -1,4 +1,4 @@
-name: Rust
+name: Rust Tests
 
 on:
   push:
@@ -10,11 +10,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  test:
     runs-on: windows-latest
 
     steps:
     - uses: actions/checkout@v5
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+        cache: 'npm'
 
     - name: Install Rust
       run: |
@@ -26,18 +32,13 @@ jobs:
       with:
         workspaces: src-tauri -> target
 
-    - name: Build
-      run: cargo build --release
-      working-directory: src-tauri
+    # tauri.conf.json 的 frontendDist 指向 ../dist，cargo test 编译期（generate_context!）会校验其存在
+    - name: Install frontend dependencies
+      run: npm ci --legacy-peer-deps
+
+    - name: Build frontend
+      run: npm run build
 
     - name: Run tests
       run: cargo test --verbose
       working-directory: src-tauri
-      continue-on-error: true
-
-    - name: Upload Rust build artifacts
-      uses: actions/upload-artifact@v6
-      with:
-        name: rust-build
-        path: src-tauri/target/release/
-        retention-days: 5

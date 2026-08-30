@@ -6,6 +6,11 @@ mod countdown;
 mod health_reminder;
 mod system_events;
 mod print_queue;
+mod storage;
+mod traffic_stats;
+mod config_store;
+mod session_binder;
+mod lyrics_cache;
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicBool, Ordering};
@@ -13,7 +18,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TrySendError};
 use tauri::{Manager, Emitter, WebviewWindowBuilder, WebviewUrl};
 use sysinfo::{Networks, System};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri_plugin_autostart::MacosLauncher;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton};
@@ -304,13 +309,12 @@ async fn start_island_animation(
     Ok(())
 }
 
-// 网速原子缓存：硬件监控线程写入，get_network_stats / get_hardware_stats 零阻塞读取
+// 网速原子缓存：硬件监控线程写入，monitor-stats 事件推送使用
 // 消除 AppState Networks 的双份刷新，降低长时间运行后的 CPU 爬坡
 static HW_LAST_RX: AtomicU64 = AtomicU64::new(0);
 static HW_LAST_TX: AtomicU64 = AtomicU64::new(0);
 static HW_TOTAL_RX: AtomicU64 = AtomicU64::new(0);
 static HW_TOTAL_TX: AtomicU64 = AtomicU64::new(0);
-static HW_EMIT_ENABLED: AtomicBool = AtomicBool::new(true);
 
 // B1 后台线程：每 1s 刷新 CPU / 内存统计，写入原子变量供 command 零阻塞读取
 // 同时每 2s emit "monitor-stats" 事件，推送网速差值 + CPU/内存
@@ -327,6 +331,8 @@ fn start_hardware_monitor(app_handle: tauri::AppHandle) {
         // 首次刷新建立 CPU 基线
         sys.refresh_cpu_usage();
         std::thread::sleep(Duration::from_millis(200));
+        // 流量统计：载入历史数据后由本线程按天累计
+        traffic_stats::init(&app_handle);
         loop {
             sys.refresh_cpu_usage();
             sys.refresh_memory();
@@ -380,6 +386,10 @@ fn start_hardware_monitor(app_handle: tauri::AppHandle) {
             pending_tx += tx_speed;
             sample_count += 1;
 
+            // 流量统计：按天累计本秒上/下行字节量，节流落盘（主窗口关闭后仍持续统计）
+            traffic_stats::accumulate(tx_speed, rx_speed);
+            traffic_stats::maybe_persist(&app_handle);
+
             // 每 2s 推送 monitor-stats 事件（始终推送，控制台图表依赖此事件）
             if last_emit.elapsed() >= Duration::from_secs(2) {
                 // 取推送周期内的平均速度（字节/秒），使网速显示更连贯、更具代表性
@@ -407,48 +417,56 @@ fn start_hardware_monitor(app_handle: tauri::AppHandle) {
     });
 }
 
-// 控制硬件监控事件推送开关（保留命令以维持 API 兼容，但当前始终推送）
-#[tauri::command]
-fn set_hardware_emit(enabled: bool) {
-    HW_EMIT_ENABLED.store(enabled, Ordering::Relaxed);
-}
-
-#[tauri::command]
-fn get_hardware_stats() -> (f32, u64, u64) {
-    (
-        HW_CPU_X100.load(Ordering::Relaxed) as f32 / 100.0,
-        HW_MEM_USED.load(Ordering::Relaxed),
-        HW_MEM_TOTAL.load(Ordering::Relaxed),
-    )
-}
-
-#[tauri::command]
-fn get_network_stats() -> (u64, u64) {
-    // 直接从硬件监控线程的原子缓存读取，消除双份 Networks 刷新
-    (
-        HW_TOTAL_RX.load(Ordering::Relaxed),
-        HW_TOTAL_TX.load(Ordering::Relaxed),
-    )
-}
-
-/// 测量到 223.5.5.5:53 的 TCP 连接延迟（毫秒）。
-/// 超时 1500ms 返回 Err；供前端命令与 NetworkMonitor 线程共用。
-#[tauri::command]
-async fn get_network_latency() -> Result<u128, String> {
-    let start = Instant::now();
-    let connect_future = tokio::net::TcpStream::connect("223.5.5.5:53");
-    match tokio::time::timeout(Duration::from_millis(1500), connect_future).await {
-        Ok(Ok(_)) => Ok(start.elapsed().as_millis()),
-        _ => Err("Timeout".to_string()),
-    }
-}
-
 #[tauri::command]
 fn is_widget_visible(app: tauri::AppHandle) -> bool {
     match app.get_webview_window("widget") {
         Some(win) => win.is_visible().unwrap_or(false),
         None => false,
     }
+}
+
+#[tauri::command]
+fn get_traffic_stats() -> serde_json::Value {
+    serde_json::to_value(traffic_stats::snapshot()).unwrap_or(serde_json::Value::Null)
+}
+
+/// 一次性迁移：前端把 localStorage 里的历史流量数据合并到后端落盘
+#[tauri::command]
+fn merge_legacy_traffic(
+    app: tauri::AppHandle,
+    legacy: std::collections::HashMap<String, traffic_stats::DayTraffic>,
+) -> Result<(), String> {
+    traffic_stats::merge_legacy(&app, legacy)
+}
+
+// ===== 设置单一数据源（config.json + config-changed 广播） =====
+
+#[tauri::command]
+fn config_get(key: String) -> Option<serde_json::Value> {
+    config_store::get(&key)
+}
+
+#[tauri::command]
+fn config_get_all() -> std::collections::HashMap<String, serde_json::Value> {
+    config_store::get_all()
+}
+
+#[tauri::command]
+fn config_set(app: tauri::AppHandle, key: String, value: serde_json::Value) -> Result<(), String> {
+    config_store::set(&app, key, value)
+}
+
+#[tauri::command]
+fn config_remove(app: tauri::AppHandle, key: String) -> Result<(), String> {
+    config_store::remove(&app, key)
+}
+
+#[tauri::command]
+fn config_migrate_legacy(
+    app: tauri::AppHandle,
+    legacy: std::collections::HashMap<String, serde_json::Value>,
+) -> Result<(), String> {
+    config_store::merge_legacy(&app, legacy)
 }
 
 #[tauri::command]
@@ -550,22 +568,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--autostart"])))
         .invoke_handler(tauri::generate_handler![
-            get_network_stats,
             is_widget_visible,
             set_destroy_on_close,
             close_main_window,
-            set_hardware_emit,
-            get_network_latency,
             notification::check_notification_access,
             notification::open_notification_settings,
             notification::set_notification_listening,
-            notification::fetch_notifications,
             notification::launch_app_by_aumid,
-            get_hardware_stats,
             force_window_topmost,
             set_window_bounds,
             start_island_animation,
-            audio_spectrum::get_audio_spectrum,
             audio_spectrum::set_spectrum_active,
             music_controller::set_target_player,
             music_controller::fetch_netease_music_info,
@@ -575,6 +587,13 @@ pub fn run() {
             music_controller::get_music_timeline,
             music_controller::seek_music,
             music_controller::fetch_netease_lyrics,
+            music_controller::import_current_track,
+            music_controller::search_lyrics_candidates,
+            music_controller::get_lyrics_by_candidate,
+            lyrics_cache::save_lyrics_binding,
+            lyrics_cache::list_lyrics_cache,
+            lyrics_cache::get_lyrics_by_key,
+            lyrics_cache::delete_lyrics_entry,
             pomodoro::start_pomodoro,
             pomodoro::pause_pomodoro,
             pomodoro::resume_pomodoro,
@@ -597,10 +616,19 @@ pub fn run() {
             system_events::set_system_event_filter,
             set_network_latency_interval,
             save_csv_file,
+            get_traffic_stats,
+            merge_legacy_traffic,
+            config_get,
+            config_get_all,
+            config_set,
+            config_remove,
+            config_migrate_legacy,
             print_queue::set_printer_monitor_enabled,
             print_queue::get_printer_state,
         ])
         .setup(|app| {
+            // 设置单一数据源：载入 config.json + 落盘线程
+            config_store::init(app.handle());
             // B8: 注册 AppHandle 到 audio_spectrum 模块，支持 emit 频谱事件
             audio_spectrum::set_app_handle(Arc::new(app.handle().clone()));
             // B3: 启动常驻动画线程（单次创建）
@@ -614,6 +642,8 @@ pub fn run() {
             health_reminder::start_health_reminder_thread(app.handle().clone());
             print_queue::start_print_queue_monitor(app.handle().clone());
             start_hardware_monitor(app.handle().clone());
+            // SMTC 会话绑定管理器：事件驱动音乐信息推送（替代前端 3s 轮询）
+            session_binder::init(app.handle().clone());
 
             // 全屏应用检测线程
 

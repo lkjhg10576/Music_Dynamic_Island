@@ -1,5 +1,5 @@
 <template>
-    <div class="panel-container">
+    <div class="panel-container" @click="viewDropdownOpen = false">
         <div class="custom-titlebar">
             <div data-tauri-drag-region class="titlebar-drag-area"></div>
 
@@ -27,9 +27,23 @@
             </div>
 
             <div class="header-controls">
-                <button class="dynamicset-btn" :class="{ 'is-active': isDynamicSet }" @click="toggleDynamicSet">
-                    {{ currentView === 'main' ? '灵动岛设置' : (currentView === 'island' ? 'LiveActive' : (currentView === 'live' ? '个性化' : '返回设置')) }}
-                </button>
+                <div class="metric-dropdown view-dropdown" :class="{ open: viewDropdownOpen }">
+                    <button class="dynamicset-btn view-trigger" :class="{ 'is-active': isDynamicSet }" @click.stop="toggleDynamicSet">
+                        <span>{{ currentViewLabel }}</span>
+                        <svg class="metric-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <polyline points="6 9 12 15 18 9" stroke-width="2.5" stroke-linecap="round"
+                                stroke-linejoin="round" />
+                        </svg>
+                    </button>
+                    <transition name="metric-menu">
+                        <div class="metric-menu view-menu" v-show="viewDropdownOpen" @click.stop>
+                            <div v-for="v in VIEW_ITEMS" :key="v.id" class="metric-option"
+                                :class="{ active: currentView === v.id }" @click="switchView(v.id)">
+                                {{ v.label }}
+                            </div>
+                        </div>
+                    </transition>
+                </div>
                 <span class="control-separator"></span>
 
                 <span class="status-badge" :class="{ 'is-active': isWidgetVisible }">
@@ -271,6 +285,10 @@
             <template v-else-if="currentView === 'personalize'">
                 <PersonalizeCenter />
             </template>
+
+            <template v-else-if="currentView === 'lyrics'">
+                <LyricsManager ref="lyricsManagerRef" />
+            </template>
         </div>
 
         <footer class="panel-footer">
@@ -354,6 +372,7 @@ import StatsChart from '../components/StatsChart.vue';
 import DynamicSet from '../components/DynamicSet.vue';
 import LiveActive from './LiveActive.vue';
 import PersonalizeCenter from '../components/PersonalizeCenter.vue';
+import LyricsManager from '../components/LyricsManager.vue';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -366,12 +385,13 @@ import {
     NSD_CHART_METRIC,
     NSD_CHECK_BETA,
 } from '../constants/storageKeys';
+import { getSettingRaw, setSettingRaw } from '../utils/settings';
 
 const isWidgetVisible = ref(false);
 const autoStart = ref(false);
-const opacity = ref(Number(localStorage.getItem(NSD_ISLAND_OPACITY) || '100'));
+const opacity = ref(Number(getSettingRaw(NSD_ISLAND_OPACITY) || '100'));
 
-const savedTheme = localStorage.getItem(NSD_THEME_MODE) || 'light';
+const savedTheme = getSettingRaw(NSD_THEME_MODE) || 'light';
 const themeMode = ref(['light', 'dark', 'system'].includes(savedTheme) ? savedTheme : 'light');
 
 const uploadSpeed = ref('0 B/s');
@@ -381,31 +401,48 @@ const appVersion = ref('1.0.0');
 
 const isDynamicSet = computed(() => currentView.value !== 'main');
 
-// 四视图状态：'main' | 'island' | 'live' | 'personalize'
-const currentView = ref<'main' | 'island' | 'live' | 'personalize'>('main');
+// 视图注册表：下拉列表直接跳转（第 5 项为歌词配置，LyricsManager 组件交付）
+const VIEW_ITEMS = [
+    { id: 'main', label: '主控制台' },
+    { id: 'island', label: '灵动岛设置' },
+    { id: 'live', label: 'LiveActive' },
+    { id: 'personalize', label: '个性化' },
+    { id: 'lyrics', label: '歌词配置' },
+] as const;
+type ViewId = typeof VIEW_ITEMS[number]['id'];
 
-// 切换视图：主设置 → 岛设置 → LiveActive → 个性化 → 主设置
+const currentView = ref<ViewId>('main');
+const currentViewLabel = computed(() => VIEW_ITEMS.find(v => v.id === currentView.value)?.label ?? '主控制台');
+const viewDropdownOpen = ref(false);
+
+// 切换视图：下拉列表直接跳转；离开歌词配置时若存在未保存内容需先确认
+const lyricsManagerRef = ref<InstanceType<typeof LyricsManager> | null>(null);
+const switchView = async (id: ViewId) => {
+    if (id !== currentView.value && currentView.value === 'lyrics' && lyricsManagerRef.value) {
+        const allowed = await lyricsManagerRef.value.confirmLeave();
+        if (!allowed) return; // 用户选择返回，取消切页
+    }
+    currentView.value = id;
+    viewDropdownOpen.value = false;
+};
 const toggleDynamicSet = () => {
-    if (currentView.value === 'main') currentView.value = 'island';
-    else if (currentView.value === 'island') currentView.value = 'live';
-    else if (currentView.value === 'live') currentView.value = 'personalize';
-    else currentView.value = 'main';
+    viewDropdownOpen.value = !viewDropdownOpen.value;
 };
 
 const isChecking = ref(false);
 const hasNewVersion = ref(false);
-const checkBeta = ref(localStorage.getItem(NSD_CHECK_BETA) === 'true');
+const checkBeta = ref(getSettingRaw(NSD_CHECK_BETA) === 'true');
 
 // 置于任务栏状态，默认从本地存储读取
-const pinToTaskbar = ref(localStorage.getItem(NSD_PIN_TASKBAR) === 'true');
+const pinToTaskbar = ref(getSettingRaw(NSD_PIN_TASKBAR) === 'true');
 // 切换开关时保存本地并发送信号给灵动岛
 const togglePinTaskbar = async () => {
-    localStorage.setItem(NSD_PIN_TASKBAR, String(pinToTaskbar.value));
+    setSettingRaw(NSD_PIN_TASKBAR, String(pinToTaskbar.value));
     await emit('control-pin-taskbar', { enabled: pinToTaskbar.value });
 };
 
 // 灵动岛位置锁定状态，默认从本地存储读取
-const positionLocked = ref(localStorage.getItem(NSD_POSITION_LOCKED) === 'true');
+const positionLocked = ref(getSettingRaw(NSD_POSITION_LOCKED) === 'true');
 // 注意：位置解锁功能现在通过右键菜单实现，不再通过控制台按钮
 
 // 控制窗口功能
@@ -439,7 +476,6 @@ const exportRange = ref<'week' | 'month' | 'lastMonth' | 'year'>('week');
 const isExporting = ref(false);
 
 const trafficData = ref<Record<string, { up: number; down: number }>>({});
-let saveThrottleCounter = 0;
 
 // 格式化字节数为人类可读格式
 const formatBytesValue = (bytes: number) => {
@@ -534,22 +570,41 @@ const getLocalYYYYMMDD = (date: Date) => {
     return `${y}-${m}-${d}`;
 };
 
-// 加载网络流量统计
-const loadTrafficData = () => {
+// 加载网络流量统计（已下沉 Rust）：读取后端快照；localStorage 存在旧数据则一次性迁移合并后清除
+const loadTrafficData = async () => {
     try {
-        const stored = localStorage.getItem(NSD_TRAFFIC_STATS);
-        if (stored) trafficData.value = JSON.parse(stored);
+        trafficData.value = await invoke<Record<string, { up: number; down: number }>>('get_traffic_stats');
+        const legacy = localStorage.getItem(NSD_TRAFFIC_STATS);
+        if (legacy) {
+            try {
+                await invoke('merge_legacy_traffic', { legacy: JSON.parse(legacy) });
+                localStorage.removeItem(NSD_TRAFFIC_STATS);
+                // 合并取回（后端已累计数据优先，按天取大不双计）
+                trafficData.value = await invoke<Record<string, { up: number; down: number }>>('get_traffic_stats');
+            } catch { /* 迁移失败不影响快照展示 */ }
+        }
     } catch (e) {
         console.error("加载统计数据失败", e);
+        // 后端快照不可用时兜底展示 localStorage 旧数据
+        try {
+            const stored = localStorage.getItem(NSD_TRAFFIC_STATS);
+            if (stored) trafficData.value = JSON.parse(stored);
+        } catch { /* 忽略 */ }
     }
 };
 loadTrafficData();
 
+// 周期刷新快照（统计在 Rust 侧持续累计，主窗口关闭后也不中断）
+let trafficRefreshTimer: number | undefined;
+const refreshTrafficSnapshot = () => {
+    invoke<Record<string, { up: number; down: number }>>('get_traffic_stats')
+        .then(data => { trafficData.value = data; })
+        .catch(() => { /* 忽略 */ });
+};
+
 // 切换右侧面板
 const toggleRightPanel = async () => {
     rightPanel.value = rightPanel.value === 'settings' ? 'stats' : 'settings';
-    localStorage.setItem(NSD_TRAFFIC_STATS, JSON.stringify(trafficData.value));
-    saveThrottleCounter = 0;
 
     // 侧边栏布局变化会挤压左侧卡片，强制让实时走势图重新计算高宽
     await nextTick();
@@ -737,15 +792,13 @@ const onCheckBetaChange = (e: Event) => {
     const enabled = (e.target as HTMLInputElement).checked;
     const wasEnabled = checkBeta.value;
     checkBeta.value = enabled;
-    localStorage.setItem(NSD_CHECK_BETA, String(enabled));
+    setSettingRaw(NSD_CHECK_BETA, String(enabled));
     // 仅从关闭切换为开启时立即检测一次
     if (enabled && !wasEnabled) {
         checkUpdate();
     }
 };
 
-let lastRx = 0;
-let lastTx = 0;
 let systemThemeMedia: MediaQueryList;
 let unlistenMonitorStats: (() => void) | null = null;
 
@@ -754,7 +807,7 @@ const chartDataQueue = ref<number[]>(Array(15).fill(0));
 
 // --- F7 实时状态下拉：网速 / CPU / 内存 ---
 type ChartMetric = 'speed' | 'cpu' | 'ram';
-const savedMetric = localStorage.getItem(NSD_CHART_METRIC) || '';
+const savedMetric = getSettingRaw(NSD_CHART_METRIC) || '';
 const chartMetric = ref<ChartMetric>(['speed', 'cpu', 'ram'].includes(savedMetric) ? (savedMetric as ChartMetric) : 'speed');
 const metricDropdownOpen = ref(false);
 
@@ -787,7 +840,7 @@ const switchMetric = async (m: ChartMetric) => {
         return;
     }
     chartMetric.value = m;
-    localStorage.setItem(NSD_CHART_METRIC, m);
+    setSettingRaw(NSD_CHART_METRIC, m);
     // 立即清空，给用户"已切换"的视觉反馈
     chartDataQueue.value = Array(15).fill(0);
     metricDropdownOpen.value = false;
@@ -912,7 +965,7 @@ const applyTheme = () => {
 };
 
 const handleThemeChange = () => {
-    localStorage.setItem(NSD_THEME_MODE, themeMode.value);
+    setSettingRaw(NSD_THEME_MODE, themeMode.value);
     applyTheme();
 };
 
@@ -923,17 +976,17 @@ const handleSystemThemeUpdate = () => {
 };
 
 watch(opacity, async (newVal) => {
-    localStorage.setItem(NSD_ISLAND_OPACITY, newVal.toString());
+    setSettingRaw(NSD_ISLAND_OPACITY, newVal.toString());
     await emit('control-island-opacity', { opacity: newVal });
 });
 
 onMounted(async () => {
     // 告诉 Rust 上次绑定的目标是谁（直接从存储读取，避免持有整套灵动岛 UI 状态）
-    const savedTargetPlayer = localStorage.getItem(NSD_TARGET_PLAYER) || 'netease';
+    const savedTargetPlayer = getSettingRaw(NSD_TARGET_PLAYER) || 'netease';
     await invoke('set_target_player', { player: savedTargetPlayer }).catch(() => { });
 
     // 同步省内存模式设置到后端
-    const savedDestroyOnClose = localStorage.getItem(NSD_DESTROY_ON_CLOSE) === 'true';
+    const savedDestroyOnClose = getSettingRaw(NSD_DESTROY_ON_CLOSE) === 'true';
     await invoke('set_destroy_on_close', { enabled: savedDestroyOnClose }).catch(() => { });
 
     silentCheckUpdate();
@@ -946,6 +999,9 @@ onMounted(async () => {
     systemThemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
     systemThemeMedia.addEventListener('change', handleSystemThemeUpdate);
 
+    // 流量统计快照周期刷新（Rust 侧持续累计，60s 拉一次足够日粒度展示）
+    trafficRefreshTimer = window.setInterval(refreshTrafficSnapshot, 60000);
+
     // 监听后端推送的 monitor-stats 事件（硬件 + 网速统一）
     unlistenMonitorStats = await listen<any>('monitor-stats', (event) => {
         const p = event.payload;
@@ -956,27 +1012,7 @@ onMounted(async () => {
         if (typeof p.upload_speed === 'number') {
             uploadSpeed.value = formatSpeed(p.upload_speed);
         }
-        // 流量统计累计
-        if (typeof p.download_bytes === 'number' && typeof p.upload_bytes === 'number') {
-            const todayStr = getLocalYYYYMMDD(new Date());
-            if (!trafficData.value[todayStr]) {
-                trafficData.value[todayStr] = { up: 0, down: 0 };
-            }
-            // 用本次累计值 - 上次累计值 = 差值
-            if (lastRx > 0) {
-                const rxDiff = Math.max(0, p.download_bytes - lastRx);
-                const txDiff = Math.max(0, p.upload_bytes - lastTx);
-                trafficData.value[todayStr].down += rxDiff;
-                trafficData.value[todayStr].up += txDiff;
-                saveThrottleCounter++;
-                if (saveThrottleCounter >= 5) {
-                    localStorage.setItem(NSD_TRAFFIC_STATS, JSON.stringify(trafficData.value));
-                    saveThrottleCounter = 0;
-                }
-            }
-            lastRx = p.download_bytes;
-            lastTx = p.upload_bytes;
-        }
+        // 流量统计已下沉 Rust（按天累计 + 落盘），前端由独立定时器 60s 拉取快照，不再差值累计
         // 网速模式：折线图填充下载速度
         if (chartMetric.value === 'speed' && typeof p.download_speed === 'number') {
             const speedMB = p.download_speed / (1024 * 1024);
@@ -1027,6 +1063,7 @@ onMounted(async () => {
         if (currentView.value === 'main') {
             currentView.value = 'island';
         }
+        viewDropdownOpen.value = false;
 
         // 2. 唤醒并聚焦主窗口
         const appWindow = getCurrentWindow();
@@ -1060,7 +1097,7 @@ onMounted(async () => {
 onUnmounted(() => {
     systemThemeMedia?.removeEventListener('change', handleSystemThemeUpdate);
     if (unlistenMonitorStats) unlistenMonitorStats();
-    localStorage.setItem(NSD_TRAFFIC_STATS, JSON.stringify(trafficData.value));
+    if (trafficRefreshTimer !== undefined) window.clearInterval(trafficRefreshTimer);
 });
 
 const toggleWidget = async () => {
@@ -1927,6 +1964,29 @@ input:checked+.slider:before {
 .metric-menu-leave-to {
     opacity: 0;
     transform: translateY(-6px);
+}
+
+/* 顶栏视图下拉（复用 metric 体系，向左展开避免溢出窗口右缘） */
+.view-dropdown {
+    display: flex;
+    align-items: center;
+}
+
+.view-trigger {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.view-trigger .metric-chevron {
+    width: 14px;
+    height: 14px;
+}
+
+.view-menu {
+    left: auto;
+    right: 0;
+    min-width: 132px;
 }
 
 /* CPU/内存高占用警示 */

@@ -50,11 +50,6 @@ thread_local! {
 }
 
 #[tauri::command]
-pub fn get_audio_spectrum() -> [f32; 5] {
-    *SPECTRUM.lock().unwrap()
-}
-
-#[tauri::command]
 pub fn set_spectrum_active(active: bool) {
     SPECTRUM_ACTIVE.store(active, Ordering::Relaxed);
 }

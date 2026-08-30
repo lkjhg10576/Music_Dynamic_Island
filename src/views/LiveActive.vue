@@ -535,14 +535,15 @@ import {
     NSD_SYSMSG_NETWORK_RECOVERY_ENABLED,
     NSD_SYSMSG_NETWORK_LATENCY_INTERVAL,
 } from '../constants/storageKeys';
+import { getSettingRaw, setSettingRaw } from '../utils/settings';
 
 // ===== 三步设置状态 =====
 const pomoStep = ref(0); // 0=专注时间, 1=休息时间, 2=循环轮数
-const pomoFocusM = ref(Number(localStorage.getItem(NSD_POMODORO_FOCUS_SECS + '_m')) || 25);
-const pomoFocusS = ref(Number(localStorage.getItem(NSD_POMODORO_FOCUS_SECS + '_s')) || 0);
-const pomoBreakM = ref(Number(localStorage.getItem(NSD_POMODORO_BREAK_SECS + '_m')) || 5);
-const pomoBreakS = ref(Number(localStorage.getItem(NSD_POMODORO_BREAK_SECS + '_s')) || 0);
-const pomoCycles = ref(Number(localStorage.getItem(NSD_POMODORO_CYCLES)) || 4);
+const pomoFocusM = ref(Number(getSettingRaw(NSD_POMODORO_FOCUS_SECS + '_m')) || 25);
+const pomoFocusS = ref(Number(getSettingRaw(NSD_POMODORO_FOCUS_SECS + '_s')) || 0);
+const pomoBreakM = ref(Number(getSettingRaw(NSD_POMODORO_BREAK_SECS + '_m')) || 5);
+const pomoBreakS = ref(Number(getSettingRaw(NSD_POMODORO_BREAK_SECS + '_s')) || 0);
+const pomoCycles = ref(Number(getSettingRaw(NSD_POMODORO_CYCLES)) || 4);
 const pomoConfigDone = ref(false);
 
 // ===== 运行中状态（由后端事件驱动） =====
@@ -566,7 +567,7 @@ const cdPaused = ref(false);
 const cdRemainingSecs = ref(0);
 const cdTotalSecs = ref(0);
 const cdFinished = ref(false);
-const cdMinutes = ref(Number(localStorage.getItem(NSD_COUNTDOWN_SECS) || '5'));
+const cdMinutes = ref(Number(getSettingRaw(NSD_COUNTDOWN_SECS) || '5'));
 const cdSeconds = ref(0);
 
 const cdFormattedRemaining = computed(() => {
@@ -577,25 +578,25 @@ const cdFormattedRemaining = computed(() => {
 });
 
 // ===== 硬件监控配置 =====
-const hwEnabled = ref(localStorage.getItem(NSD_HW_ENABLED) === 'true');
-const hwMode = ref(localStorage.getItem(NSD_HW_MODE) || 'single');
-const hwDefaultMetric = ref(localStorage.getItem(NSD_HW_DEFAULT_METRIC) || 'cpu');
+const hwEnabled = ref(getSettingRaw(NSD_HW_ENABLED) === 'true');
+const hwMode = ref(getSettingRaw(NSD_HW_MODE) || 'single');
+const hwDefaultMetric = ref(getSettingRaw(NSD_HW_DEFAULT_METRIC) || 'cpu');
 const hwCpuPct = ref(0);
 const hwMemPct = ref(0);
 
 // ===== 健康提醒配置 =====
-const srEnabled = ref(localStorage.getItem(NSD_SITTING_REMINDER_ENABLED) === 'true');
-const srMinutes = ref(Number(localStorage.getItem(NSD_SITTING_REMINDER_SECS) || '60'));
+const srEnabled = ref(getSettingRaw(NSD_SITTING_REMINDER_ENABLED) === 'true');
+const srMinutes = ref(Number(getSettingRaw(NSD_SITTING_REMINDER_SECS) || '60'));
 const srActive = ref(false);
 const srAlerting = ref(false);
 const srRemainingSeconds = ref(0);
 const srCanSkip = ref(true);
-const wrEnabled = ref(localStorage.getItem(NSD_WATER_REMINDER_ENABLED) === 'true');
-const wrMinutes = ref(Number(localStorage.getItem(NSD_WATER_REMINDER_SECS) || '120'));
+const wrEnabled = ref(getSettingRaw(NSD_WATER_REMINDER_ENABLED) === 'true');
+const wrMinutes = ref(Number(getSettingRaw(NSD_WATER_REMINDER_SECS) || '120'));
 
 // 打印队列监控开关（默认开启，持久化）
 const printerEnabled = ref(
-    localStorage.getItem(NSD_PRINTER_MONITOR_ENABLED) !== 'false'
+    getSettingRaw(NSD_PRINTER_MONITOR_ENABLED) !== 'false'
 );
 // 打印队列实时状态（由后端 print-queue-tick 驱动，用于设置页概览）
 const printerJobCount = ref(0);
@@ -608,10 +609,10 @@ const wrCanSkip = ref(true);
 // ===== 系统动态感知（sysmsg）分类开关 =====
 // 卡片总开关已移除：各分类独立控制。未写过分类键时跟随旧总开关，避免「移除总开关后默认全开」误弹通知
 function loadSysmsgCategory(key: string): boolean {
-    const cat = localStorage.getItem(key);
+    const cat = getSettingRaw(key);
     if (cat === 'true') return true;
     if (cat === 'false') return false;
-    return localStorage.getItem(NSD_SYSMSG_ENABLED) === 'true';
+    return getSettingRaw(NSD_SYSMSG_ENABLED) === 'true';
 }
 const sysmsgVolume = ref(loadSysmsgCategory(NSD_SYSMSG_VOLUME_ENABLED));
 const sysmsgPower = ref(loadSysmsgCategory(NSD_SYSMSG_POWER_ENABLED));
@@ -623,7 +624,7 @@ const sysmsgNetworkRecovery = ref(loadSysmsgCategory(NSD_SYSMSG_NETWORK_RECOVERY
 
 /** 延迟探测间隔（秒）：1~60，默认 30 */
 function loadNetworkLatencyInterval(): number {
-    const raw = Number(localStorage.getItem(NSD_SYSMSG_NETWORK_LATENCY_INTERVAL));
+    const raw = Number(getSettingRaw(NSD_SYSMSG_NETWORK_LATENCY_INTERVAL));
     if (!Number.isFinite(raw)) return 30;
     return Math.min(60, Math.max(1, Math.round(raw)));
 }
@@ -757,10 +758,10 @@ async function skipWaterReminder() {
 }
 
 function saveHealthConfig() {
-    localStorage.setItem(NSD_SITTING_REMINDER_ENABLED, String(srEnabled.value));
-    localStorage.setItem(NSD_SITTING_REMINDER_SECS, srMinutes.value.toString());
-    localStorage.setItem(NSD_WATER_REMINDER_ENABLED, String(wrEnabled.value));
-    localStorage.setItem(NSD_WATER_REMINDER_SECS, wrMinutes.value.toString());
+    setSettingRaw(NSD_SITTING_REMINDER_ENABLED, String(srEnabled.value));
+    setSettingRaw(NSD_SITTING_REMINDER_SECS, srMinutes.value.toString());
+    setSettingRaw(NSD_WATER_REMINDER_ENABLED, String(wrEnabled.value));
+    setSettingRaw(NSD_WATER_REMINDER_SECS, wrMinutes.value.toString());
 }
 
 async function toggleSrEnabled() {
@@ -798,20 +799,15 @@ async function toggleWrEnabled() {
 }
 
 function saveHwConfig() {
-    localStorage.setItem(NSD_HW_ENABLED, String(hwEnabled.value));
-    localStorage.setItem(NSD_HW_MODE, hwMode.value);
-    localStorage.setItem(NSD_HW_DEFAULT_METRIC, hwDefaultMetric.value);
-    localStorage.setItem(NSD_HW_ROTATION, String(hwMode.value === 'rotation'));
-    localStorage.setItem(NSD_HW_DUAL_RING, String(hwMode.value === 'dual'));
+    setSettingRaw(NSD_HW_ENABLED, String(hwEnabled.value));
+    setSettingRaw(NSD_HW_MODE, hwMode.value);
+    setSettingRaw(NSD_HW_DEFAULT_METRIC, hwDefaultMetric.value);
+    setSettingRaw(NSD_HW_ROTATION, String(hwMode.value === 'rotation'));
+    setSettingRaw(NSD_HW_DUAL_RING, String(hwMode.value === 'dual'));
 }
 
 async function toggleHwEnabled() {
     saveHwConfig();
-    try {
-        await invoke('set_hardware_emit', { enabled: hwEnabled.value });
-    } catch (_e) {
-        // command 可能不存在，忽略
-    }
     // 跨窗口通知灵动岛：同步硬件监控附属图标的显示状态
     syncHwToWidget();
 }
@@ -851,14 +847,14 @@ async function applySysmsgConfig() {
     const item = activities.value.find(a => a.id === 'sysmsg');
     if (item) item.enabled = enabled;
     // 持久化
-    localStorage.setItem(NSD_SYSMSG_ENABLED, String(enabled));
-    localStorage.setItem(NSD_SYSMSG_VOLUME_ENABLED, String(sysmsgVolume.value));
-    localStorage.setItem(NSD_SYSMSG_POWER_ENABLED, String(sysmsgPower.value));
-    localStorage.setItem(NSD_SYSMSG_BATTERY_ENABLED, String(sysmsgBattery.value));
-    localStorage.setItem(NSD_SYSMSG_UNLOCK_ENABLED, String(sysmsgUnlock.value));
-    localStorage.setItem(NSD_SYSMSG_NETWORK_LATENCY_ENABLED, String(sysmsgNetworkLatency.value));
-    localStorage.setItem(NSD_SYSMSG_NETWORK_DISCONNECT_ENABLED, String(sysmsgNetworkDisconnect.value));
-    localStorage.setItem(NSD_SYSMSG_NETWORK_RECOVERY_ENABLED, String(sysmsgNetworkRecovery.value));
+    setSettingRaw(NSD_SYSMSG_ENABLED, String(enabled));
+    setSettingRaw(NSD_SYSMSG_VOLUME_ENABLED, String(sysmsgVolume.value));
+    setSettingRaw(NSD_SYSMSG_POWER_ENABLED, String(sysmsgPower.value));
+    setSettingRaw(NSD_SYSMSG_BATTERY_ENABLED, String(sysmsgBattery.value));
+    setSettingRaw(NSD_SYSMSG_UNLOCK_ENABLED, String(sysmsgUnlock.value));
+    setSettingRaw(NSD_SYSMSG_NETWORK_LATENCY_ENABLED, String(sysmsgNetworkLatency.value));
+    setSettingRaw(NSD_SYSMSG_NETWORK_DISCONNECT_ENABLED, String(sysmsgNetworkDisconnect.value));
+    setSettingRaw(NSD_SYSMSG_NETWORK_RECOVERY_ENABLED, String(sysmsgNetworkRecovery.value));
     // 下发后端过滤：七类开关全部交给后端 NetworkMonitor / start_monitor
     try {
         await invoke('set_system_event_filter', {
@@ -886,7 +882,7 @@ async function applySysmsgConfig() {
 async function applyNetworkLatencyInterval() {
     const clamped = Math.min(60, Math.max(1, Math.round(Number(sysmsgNetworkLatencyInterval.value) || 30)));
     sysmsgNetworkLatencyInterval.value = clamped;
-    localStorage.setItem(NSD_SYSMSG_NETWORK_LATENCY_INTERVAL, String(clamped));
+    setSettingRaw(NSD_SYSMSG_NETWORK_LATENCY_INTERVAL, String(clamped));
     try {
         await invoke('set_network_latency_interval', { secs: clamped });
     } catch (_e) {
@@ -895,7 +891,7 @@ async function applyNetworkLatencyInterval() {
 }
 
 function saveCdConfig() {
-    localStorage.setItem(NSD_COUNTDOWN_SECS, (cdMinutes.value * 60 + cdSeconds.value).toString());
+    setSettingRaw(NSD_COUNTDOWN_SECS, (cdMinutes.value * 60 + cdSeconds.value).toString());
 }
 
 async function handleCdStart() {
@@ -929,11 +925,11 @@ async function handleCdStop() {
 
 // ===== 持久化三步配置 =====
 function savePomoConfig() {
-    localStorage.setItem(NSD_POMODORO_FOCUS_SECS + '_m', pomoFocusM.value.toString());
-    localStorage.setItem(NSD_POMODORO_FOCUS_SECS + '_s', pomoFocusS.value.toString());
-    localStorage.setItem(NSD_POMODORO_BREAK_SECS + '_m', pomoBreakM.value.toString());
-    localStorage.setItem(NSD_POMODORO_BREAK_SECS + '_s', pomoBreakS.value.toString());
-    localStorage.setItem(NSD_POMODORO_CYCLES, pomoCycles.value.toString());
+    setSettingRaw(NSD_POMODORO_FOCUS_SECS + '_m', pomoFocusM.value.toString());
+    setSettingRaw(NSD_POMODORO_FOCUS_SECS + '_s', pomoFocusS.value.toString());
+    setSettingRaw(NSD_POMODORO_BREAK_SECS + '_m', pomoBreakM.value.toString());
+    setSettingRaw(NSD_POMODORO_BREAK_SECS + '_s', pomoBreakS.value.toString());
+    setSettingRaw(NSD_POMODORO_CYCLES, pomoCycles.value.toString());
 }
 
 function getFocusSecs(): number {
@@ -1078,7 +1074,7 @@ const focusedPriority = ref<string | null>(null);
 // 读取 NSD_ACTIVITY_PRIORITY 持久化的优先级 map
 function loadPriorityMap(): Record<string, number> {
     try {
-        const raw = localStorage.getItem(NSD_ACTIVITY_PRIORITY);
+        const raw = getSettingRaw(NSD_ACTIVITY_PRIORITY);
         if (raw) {
             const parsed = JSON.parse(raw);
             if (parsed && typeof parsed === 'object') {
@@ -1096,7 +1092,7 @@ function persistPriorityMap() {
         const item = activities.value.find(a => a.id === id);
         if (item) map[id] = item.priority;
     }
-    localStorage.setItem(NSD_ACTIVITY_PRIORITY, JSON.stringify(map));
+    setSettingRaw(NSD_ACTIVITY_PRIORITY, JSON.stringify(map));
 }
 
 // 动态构建 { id: { enabled, priority } } 配置 map
@@ -1371,7 +1367,7 @@ onMounted(async () => {
     watch(
         [isPomoRunning, cdRunning, hwEnabled, srEnabled, wrEnabled, printerEnabled],
         async () => {
-            localStorage.setItem(NSD_PRINTER_MONITOR_ENABLED, String(printerEnabled.value));
+            setSettingRaw(NSD_PRINTER_MONITOR_ENABLED, String(printerEnabled.value));
             try {
                 await invoke('set_printer_monitor_enabled', { enabled: printerEnabled.value });
             } catch (_e) {}

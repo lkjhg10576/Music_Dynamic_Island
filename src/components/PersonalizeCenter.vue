@@ -197,29 +197,30 @@ import {
     NSD_MSG_EXPANDED_WIDTH,
     NSD_APP_SCALE,
 } from '../constants/storageKeys';
+import { getSettingRaw, setSettingRaw } from '../utils/settings';
 
-const baseWidth = ref(Number(localStorage.getItem(NSD_BASE_WIDTH)) || 150);
-const musicBaseWidth = ref(Number(localStorage.getItem(NSD_MUSIC_BASE_WIDTH)) || 260);
-const musicExpandedWidth = ref(Number(localStorage.getItem(NSD_MUSIC_EXPANDED_WIDTH)) || 320);
-const msgExpandedWidth = ref(Number(localStorage.getItem(NSD_MSG_EXPANDED_WIDTH)) || 360);
-const appScale = ref(Number(localStorage.getItem(NSD_APP_SCALE)) || 1.0);
-const borderRadius = ref(Number(localStorage.getItem(NSD_BORDER_RADIUS)) || 100);
+const baseWidth = ref(Number(getSettingRaw(NSD_BASE_WIDTH)) || 150);
+const musicBaseWidth = ref(Number(getSettingRaw(NSD_MUSIC_BASE_WIDTH)) || 260);
+const musicExpandedWidth = ref(Number(getSettingRaw(NSD_MUSIC_EXPANDED_WIDTH)) || 320);
+const msgExpandedWidth = ref(Number(getSettingRaw(NSD_MSG_EXPANDED_WIDTH)) || 360);
+const appScale = ref(Number(getSettingRaw(NSD_APP_SCALE)) || 1.0);
+const borderRadius = ref(Number(getSettingRaw(NSD_BORDER_RADIUS)) || 100);
 const springStyle = ref<'stiff' | 'bouncy'>(
-    (localStorage.getItem(NSD_SPRING_STYLE) as 'stiff' | 'bouncy') || 'bouncy'
+    (getSettingRaw(NSD_SPRING_STYLE) as 'stiff' | 'bouncy') || 'bouncy'
 );
-const isAlwaysOnTop = ref(localStorage.getItem(NSD_ALWAYS_ON_TOP) !== 'false');
+const isAlwaysOnTop = ref(getSettingRaw(NSD_ALWAYS_ON_TOP) !== 'false');
 
 watch(
     [baseWidth, musicBaseWidth, musicExpandedWidth, msgExpandedWidth, borderRadius, springStyle, isAlwaysOnTop, appScale],
     async () => {
-        localStorage.setItem(NSD_BASE_WIDTH, String(baseWidth.value));
-        localStorage.setItem(NSD_MUSIC_BASE_WIDTH, String(musicBaseWidth.value));
-        localStorage.setItem(NSD_MUSIC_EXPANDED_WIDTH, String(musicExpandedWidth.value));
-        localStorage.setItem(NSD_MSG_EXPANDED_WIDTH, String(msgExpandedWidth.value));
-        localStorage.setItem(NSD_BORDER_RADIUS, String(borderRadius.value));
-        localStorage.setItem(NSD_SPRING_STYLE, springStyle.value);
-        localStorage.setItem(NSD_ALWAYS_ON_TOP, String(isAlwaysOnTop.value));
-        localStorage.setItem(NSD_APP_SCALE, String(appScale.value));
+        setSettingRaw(NSD_BASE_WIDTH, String(baseWidth.value));
+        setSettingRaw(NSD_MUSIC_BASE_WIDTH, String(musicBaseWidth.value));
+        setSettingRaw(NSD_MUSIC_EXPANDED_WIDTH, String(musicExpandedWidth.value));
+        setSettingRaw(NSD_MSG_EXPANDED_WIDTH, String(msgExpandedWidth.value));
+        setSettingRaw(NSD_BORDER_RADIUS, String(borderRadius.value));
+        setSettingRaw(NSD_SPRING_STYLE, springStyle.value);
+        setSettingRaw(NSD_ALWAYS_ON_TOP, String(isAlwaysOnTop.value));
+        setSettingRaw(NSD_APP_SCALE, String(appScale.value));
 
         await emit('sync-dynamic-settings', {
             baseWidth: baseWidth.value,

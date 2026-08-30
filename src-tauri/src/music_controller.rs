@@ -21,7 +21,7 @@ static SESSION_MANAGER: Lazy<Mutex<Option<GlobalSystemMediaTransportControlsSess
     Lazy::new(|| Mutex::new(None));
 
 /// 获取（必要时创建并缓存）SMTC SessionManager。缓存命中时零 WinRT 异步调用。
-fn get_cached_session_manager() -> Option<GlobalSystemMediaTransportControlsSessionManager> {
+pub(crate) fn get_cached_session_manager() -> Option<GlobalSystemMediaTransportControlsSessionManager> {
     {
         let guard = SESSION_MANAGER.lock().ok()?;
         if let Some(m) = guard.as_ref() {
@@ -49,13 +49,20 @@ static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
 // 给前端调用的切换接口
 #[command]
 pub fn set_target_player(player: String) {
-    if let Ok(mut target) = TARGET_PLAYER.lock() {
+    let changed = {
+        let mut target = TARGET_PLAYER.lock().unwrap_or_else(|e| e.into_inner());
+        let changed = *target != player;
         *target = player;
+        changed
+    };
+    // 目标变化后让会话绑定管理器重新选择要监听的会话（事件驱动链路）
+    if changed {
+        crate::session_binder::rebind_on_target_changed();
     }
 }
 
 // 自动匹配你选择的软件
-fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSession> {
+pub(crate) fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSession> {
     let manager = match get_cached_session_manager() {
         Some(m) => m,
         None => return None,
@@ -144,13 +151,12 @@ fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSessio
     None
 }
 
-#[command]
-pub async fn fetch_netease_music_info() -> Result<Option<(String, String, bool, String)>, String> {
-    let session = match get_target_media_session() {
-        Some(s) => s,
-        None => return Ok(None),
-    };
-
+/// 从会话提取 (歌名, 歌手, 是否播放, 来源AUMID)。
+/// None 表示该会话不产生有效音乐信息；空标题仍返回 Some（前端显示「已连接的应用名」）。
+/// 供 fetch_netease_music_info（快照/兜底轮询）与 session_binder（事件推送）共用。
+pub(crate) fn extract_music_info(
+    session: &GlobalSystemMediaTransportControlsSession,
+) -> Option<(String, String, bool, String)> {
     let is_playing = if let Ok(playback_info) = session.GetPlaybackInfo() {
         if let Ok(status) = playback_info.PlaybackStatus() {
             status == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing
@@ -161,10 +167,7 @@ pub async fn fetch_netease_music_info() -> Result<Option<(String, String, bool, 
         false
     };
 
-    let properties = session.TryGetMediaPropertiesAsync()
-        .map_err(|e| e.to_string())?
-        .get()
-        .map_err(|e| e.to_string())?;
+    let properties = session.TryGetMediaPropertiesAsync().ok()?.get().ok()?;
 
     let title = properties.Title().unwrap_or_default().to_string();
     let artist = properties.Artist().unwrap_or_default().to_string();
@@ -178,40 +181,50 @@ pub async fn fetch_netease_music_info() -> Result<Option<(String, String, bool, 
     if title.is_empty() {
         // SMTC 已连上应用但尚未提供有效标题：仍返回会话信息（空标题 + 应用包名），
         // 让前端把单行展示改为显示"已连接的应用名"，而不是"未在播放"
-        return Ok(Some((String::new(), String::new(), is_playing, app_id_str)));
+        return Some((String::new(), String::new(), is_playing, app_id_str));
     }
 
     // 识别到抖音：直接判非音乐（会话选择层已按 AUMID 过滤，此处是双保险）
     if title.contains("抖音") || title.contains("douyin") {
-        return Ok(None);
+        return None;
     }
 
     if app_id_str.contains("bilibili") { // 识别到哔哩哔哩
-        return Ok(Some((title, "bilibili".to_string(), is_playing, app_id_str)));
+        return Some((title, "bilibili".to_string(), is_playing, app_id_str));
     }
 
     if app_id_str.contains("edge") { // 识别到 Edge 浏览器
         if artist.is_empty() {
-            return Ok(Some((title, "edge".to_string(), is_playing, app_id_str)));
+            return Some((title, "edge".to_string(), is_playing, app_id_str));
         }
-        return Ok(Some((title, artist, is_playing, app_id_str)));
+        return Some((title, artist, is_playing, app_id_str));
     }
 
     if app_id_str.contains("chrome") { // 识别到 Chrome 浏览器
         if artist.is_empty() {
-            return Ok(Some((title, "chrome".to_string(), is_playing, app_id_str)));
+            return Some((title, "chrome".to_string(), is_playing, app_id_str));
         }
-        return Ok(Some((title, artist, is_playing, app_id_str)));
+        return Some((title, artist, is_playing, app_id_str));
     }
 
     if app_id_str.contains("potplayer") { // 识别到 PotPlayer
         if artist.is_empty() {
-            return Ok(Some((title, "potplayer".to_string(), is_playing, app_id_str)));
+            return Some((title, "potplayer".to_string(), is_playing, app_id_str));
         }
-        return Ok(Some((title, artist, is_playing, app_id_str)));
+        return Some((title, artist, is_playing, app_id_str));
     }
 
-    Ok(Some((title, artist, is_playing, app_id_str)))
+    Some((title, artist, is_playing, app_id_str))
+}
+
+#[command]
+pub async fn fetch_netease_music_info() -> Result<Option<(String, String, bool, String)>, String> {
+    let session = match get_target_media_session() {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+
+    Ok(extract_music_info(&session))
 }
 
 #[command]
@@ -446,11 +459,28 @@ pub async fn seek_music(position_ms: u64) -> Result<(), String> {
 // ===== 网络歌词：QQ 音乐引擎优先，网易云兜底 =====
 
 #[command]
+/// QQ 歌词 API 返回的 HTML 实体解码
+fn decode_qq_lyric(lyric_text: &str) -> String {
+    lyric_text
+        .replace("&#10;", "\n")
+        .replace("&#13;", "\r")
+        .replace("&#32;", " ")
+        .replace("&#45;", "-")
+        .replace("&#40;", "(")
+        .replace("&#41;", ")")
+}
+
 pub async fn fetch_netease_lyrics(
+    app: tauri::AppHandle,
     song_name: String,
     artist_name: String,
     duration_ms: i64,
 ) -> Result<String, String> {
+    // 6a：本地缓存优先（key = 规范化(歌名)+规范化(歌手)+时长，±2s 容差），命中直接用
+    if let Some(cached) = crate::lyrics_cache::lookup(&song_name, &artist_name, duration_ms, &app) {
+        return Ok(cached);
+    }
+
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(4))
         .build()
@@ -530,15 +560,11 @@ pub async fn fetch_netease_lyrics(
                             if let Some(lyric_text) =
                                 lyric_json.get("lyric").and_then(|v| v.as_str())
                             {
-                                let decoded = lyric_text
-                                    .replace("&#10;", "\n")
-                                    .replace("&#13;", "\r")
-                                    .replace("&#32;", " ")
-                                    .replace("&#45;", "-")
-                                    .replace("&#40;", "(")
-                                    .replace("&#41;", ")");
+                                let decoded = decode_qq_lyric(&lyric_text);
                                 if !decoded.is_empty() {
                                     println!("[网络歌词调试] 命中 QQ音乐 API (已通过双重校验)");
+                                    // 6a：命中即落盘（自动缓存）
+                                    let _ = crate::lyrics_cache::save(&app, &song_name, &artist_name, duration_ms, &decoded, "auto");
                                     return Ok(decoded);
                                 }
                             }
@@ -647,6 +673,8 @@ pub async fn fetch_netease_lyrics(
                                 lyric_json.pointer("/lrc/lyric").and_then(|v| v.as_str())
                             {
                                 println!("[网络歌词调试] 命中网易云 API 兜底 (已通过双重校验)");
+                                // 6a：命中即落盘（自动缓存）
+                                let _ = crate::lyrics_cache::save(&app, &song_name, &artist_name, duration_ms, lyric_text, "auto");
                                 return Ok(lyric_text.to_string());
                             }
                         }
@@ -658,4 +686,256 @@ pub async fn fetch_netease_lyrics(
 
     println!("[网络歌词调试] 失败：所有网络接口均未找到匹配歌词，或未通过双重校验");
     Ok("".to_string())
+}
+
+// ===== 歌词管理界面（6b）后端 command =====
+
+/// 当前播放曲目聚合信息（SMTC），未检测到播放返回 None
+#[derive(serde::Serialize)]
+pub struct CurrentTrack {
+    pub song: String,
+    pub artist: String,
+    pub duration_ms: i64,
+    pub app_id: String,
+}
+
+#[command]
+pub async fn import_current_track() -> Result<Option<CurrentTrack>, String> {
+    let Some(session) = get_target_media_session() else {
+        return Ok(None);
+    };
+    let Some((song, artist, _playing, app_id)) = extract_music_info(&session) else {
+        return Ok(None);
+    };
+    if song.is_empty() {
+        return Ok(None);
+    }
+    let duration_ms = read_timeline_bounds(&session)
+        .ok()
+        .flatten()
+        .map(|b| (b.end_ms - b.start_ms) as i64)
+        .unwrap_or(0);
+    Ok(Some(CurrentTrack {
+        song,
+        artist,
+        duration_ms,
+        app_id,
+    }))
+}
+
+/// 歌词搜索候选（双源聚合：QQ 10 条 + 网易 10 条，无自动匹配，由用户选择）
+#[derive(serde::Serialize)]
+pub struct LyricCandidate {
+    /// "qq" | "netease"
+    pub source: String,
+    /// QQ songmid 或 网易 song id
+    pub id: String,
+    pub song: String,
+    pub artist: String,
+    pub album: String,
+    pub duration_ms: i64,
+}
+
+#[command]
+pub async fn search_lyrics_candidates(
+    song_name: String,
+    artist_name: String,
+) -> Result<Vec<LyricCandidate>, String> {
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+    let query = if artist_name.is_empty() {
+        song_name.clone()
+    } else {
+        format!("{} {}", song_name, artist_name)
+    };
+    let mut candidates: Vec<LyricCandidate> = Vec::new();
+
+    // QQ 音乐搜索（10 条）
+    let qq_search_url = format!(
+        "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={}&n=10&format=json",
+        urlencoding::encode(&query)
+    );
+    if let Ok(resp) = client.get(&qq_search_url).header("User-Agent", ua).send().await {
+        if let Ok(json) = resp.json::<serde_json::Value>().await {
+            if let Some(songs) = json.pointer("/data/song/list").and_then(|v| v.as_array()) {
+                for song in songs {
+                    let Some(id) = song.get("songmid").and_then(|v| v.as_str()) else {
+                        continue;
+                    };
+                    let name = song.get("songname").and_then(|v| v.as_str()).unwrap_or("");
+                    let album = song
+                        .get("albumname")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let artist = song
+                        .get("singer")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|s| s.get("name").and_then(|v| v.as_str()))
+                                .collect::<Vec<_>>()
+                                .join("/")
+                        })
+                        .unwrap_or_default();
+                    let duration_ms = song
+                        .get("interval")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0)
+                        * 1000;
+                    candidates.push(LyricCandidate {
+                        source: "qq".into(),
+                        id: id.to_string(),
+                        song: name.to_string(),
+                        artist,
+                        album,
+                        duration_ms,
+                    });
+                }
+            }
+        }
+    }
+
+    // 网易云搜索（10 条，伪造随机 IP 避免风控，与播放链路一致）
+    let fake_ip = {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        format!(
+            "{}.{}.{}.{}",
+            rng.gen_range(11..250),
+            rng.gen_range(11..250),
+            rng.gen_range(11..250),
+            rng.gen_range(11..250)
+        )
+    };
+    if let Ok(resp) = client
+        .post("https://music.163.com/api/search/get/web")
+        .header("Referer", "https://music.163.com")
+        .header("User-Agent", ua)
+        .header("X-Real-IP", &fake_ip)
+        .form(&[
+            ("s", query.as_str()),
+            ("type", "1"),
+            ("limit", "10"),
+            ("offset", "0"),
+        ])
+        .send()
+        .await
+    {
+        if let Ok(json) = resp.json::<serde_json::Value>().await {
+            if let Some(songs) = json.pointer("/result/songs").and_then(|v| v.as_array()) {
+                for song in songs {
+                    let Some(id) = song.get("id").and_then(|v| v.as_i64()) else {
+                        continue;
+                    };
+                    let name = song.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let artist = song
+                        .get("artists")
+                        .or(song.get("ar"))
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|s| s.get("name").and_then(|v| v.as_str()))
+                                .collect::<Vec<_>>()
+                                .join("/")
+                        })
+                        .unwrap_or_default();
+                    let album = song
+                        .get("album")
+                        .and_then(|v| v.get("name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let duration_ms = song
+                        .get("duration")
+                        .or(song.get("dt"))
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    candidates.push(LyricCandidate {
+                        source: "netease".into(),
+                        id: id.to_string(),
+                        song: name.to_string(),
+                        artist,
+                        album,
+                        duration_ms,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(candidates)
+}
+
+/// 按候选拉取完整 LRC 原文（时间轴全保留）
+#[command]
+pub async fn get_lyrics_by_candidate(source: String, id: String) -> Result<String, String> {
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
+    if source == "qq" {
+        let url = format!(
+            "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={}&format=json&nobase64=1",
+            urlencoding::encode(&id)
+        );
+        let resp = client
+            .get(&url)
+            .header("Referer", "https://y.qq.com/")
+            .header("User-Agent", ua)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        let lyric = json
+            .get("lyric")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let decoded = decode_qq_lyric(lyric);
+        if decoded.trim().is_empty() {
+            return Err("该候选未提供歌词".into());
+        }
+        return Ok(decoded);
+    }
+
+    if source == "netease" {
+        let url = format!(
+            "https://music.163.com/api/song/lyric?id={}&lv=-1&kv=-1&tv=-1",
+            urlencoding::encode(&id)
+        );
+        let fake_ip = {
+            use rand::Rng;
+            let mut rng = rand::thread_rng();
+            format!(
+                "{}.{}.{}.{}",
+                rng.gen_range(11..250),
+                rng.gen_range(11..250),
+                rng.gen_range(11..250),
+                rng.gen_range(11..250)
+            )
+        };
+        let resp = client
+            .get(&url)
+            .header("User-Agent", ua)
+            .header("X-Real-IP", &fake_ip)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        let lyric = json
+            .pointer("/lrc/lyric")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if lyric.trim().is_empty() {
+            return Err("该候选未提供歌词".into());
+        }
+        return Ok(lyric.to_string());
+    }
+
+    Err("未知歌词来源".into())
 }

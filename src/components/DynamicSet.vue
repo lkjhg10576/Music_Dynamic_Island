@@ -268,6 +268,7 @@ import {
     NSD_SPECTRUM_COLOR_MODE, NSD_SPECTRUM_CUSTOM_COLOR,
     NSD_LYRIC_DELAY,
 } from '../constants/storageKeys';
+import { getSettingRaw, setSettingRaw } from '../utils/settings';
 
 defineProps<{
     pinToTaskbar: boolean;
@@ -275,11 +276,11 @@ defineProps<{
 }>();
 
 // --- 音乐控制平台切换功能 ---
-const targetPlayer = ref(localStorage.getItem(NSD_TARGET_PLAYER) || 'netease');
+const targetPlayer = ref(getSettingRaw(NSD_TARGET_PLAYER) || 'netease');
 
 const setTargetPlayer = async (player: string) => {
     targetPlayer.value = player;
-    localStorage.setItem(NSD_TARGET_PLAYER, player); // 本地记忆化
+    setSettingRaw(NSD_TARGET_PLAYER, player); // 本地记忆化
     try {
         await invoke('set_target_player', { player }); // 秒发给 Rust 立即生效
     } catch (e) {
@@ -288,41 +289,41 @@ const setTargetPlayer = async (player: string) => {
 };
 
 // 灵动岛设置相关的 UI 状态绑定
-const islandTheme = ref(localStorage.getItem(NSD_ISLAND_THEME) || 'black');
-const enableMusicCtrl = ref(localStorage.getItem(NSD_MUSIC_CTRL) === 'true');
-const spectrumColorMode = ref(localStorage.getItem(NSD_SPECTRUM_COLOR_MODE) || 'album');
-const spectrumCustomColor = ref(localStorage.getItem(NSD_SPECTRUM_CUSTOM_COLOR) || '#b6e0ee');
-const enableMsgNotify = ref(localStorage.getItem(NSD_MSG_NOTIFY) === 'true');
+const islandTheme = ref(getSettingRaw(NSD_ISLAND_THEME) || 'black');
+const enableMusicCtrl = ref(getSettingRaw(NSD_MUSIC_CTRL) === 'true');
+const spectrumColorMode = ref(getSettingRaw(NSD_SPECTRUM_COLOR_MODE) || 'album');
+const spectrumCustomColor = ref(getSettingRaw(NSD_SPECTRUM_CUSTOM_COLOR) || '#b6e0ee');
+const enableMsgNotify = ref(getSettingRaw(NSD_MSG_NOTIFY) === 'true');
 
 // 通知访问权限未授予时的警示条（'ok' 时隐藏）
 type AccessStatus = 'ok' | 'denied' | 'unavailable';
 const notifAccessDenied = ref(false);
-const msgModeEnabled = ref(localStorage.getItem(NSD_MSG_MODE) === 'true');
-const enableRotation = ref(localStorage.getItem(NSD_ROTATION_MODE) === 'true');
+const msgModeEnabled = ref(getSettingRaw(NSD_MSG_MODE) === 'true');
+const enableRotation = ref(getSettingRaw(NSD_ROTATION_MODE) === 'true');
 
 // 省内存模式：关闭控制台时彻底销毁主窗口 WebView，释放 50-120MB 内存（B1 方案）
-const destroyOnClose = ref(localStorage.getItem(NSD_DESTROY_ON_CLOSE) === 'true');
+const destroyOnClose = ref(getSettingRaw(NSD_DESTROY_ON_CLOSE) === 'true');
 
 // 自动隐藏相关变量
-const autoHideEnabled = ref(localStorage.getItem(NSD_AUTO_HIDE_ENABLED) === 'true');
-const autoHideDelay = ref(Number(localStorage.getItem(NSD_AUTO_HIDE_DELAY) || '2000')); // 默认2秒
+const autoHideEnabled = ref(getSettingRaw(NSD_AUTO_HIDE_ENABLED) === 'true');
+const autoHideDelay = ref(Number(getSettingRaw(NSD_AUTO_HIDE_DELAY) || '2000')); // 默认2秒
 
 // 自动折叠相关变量（灵动岛展开后，鼠标离开自动折叠回小岛状态）
-const autoCollapseEnabled = ref(localStorage.getItem(NSD_AUTO_COLLAPSE_ENABLED) === 'true');
-const autoCollapseDelay = ref(Number(localStorage.getItem(NSD_AUTO_COLLAPSE_DELAY) || '2000')); // 默认2秒
+const autoCollapseEnabled = ref(getSettingRaw(NSD_AUTO_COLLAPSE_ENABLED) === 'true');
+const autoCollapseDelay = ref(Number(getSettingRaw(NSD_AUTO_COLLAPSE_DELAY) || '2000')); // 默认2秒
 
 // 切换消息模式
 const toggleMsgMode = async () => {
     // 如果开启静默模式，则强制开启消息通知并同步本地存储
     if (msgModeEnabled.value) { enableMsgNotify.value = true; toggleMsgNotify(); }
 
-    localStorage.setItem(NSD_MSG_MODE, String(msgModeEnabled.value));
+    setSettingRaw(NSD_MSG_MODE, String(msgModeEnabled.value));
     await emit('control-msg-mode', { enabled: msgModeEnabled.value });
 };
 
 // 新增切换保存方法（同步启停后端监听 + 权限检测）
 const toggleMsgNotify = async () => {
-    localStorage.setItem(NSD_MSG_NOTIFY, String(enableMsgNotify.value));
+    setSettingRaw(NSD_MSG_NOTIFY, String(enableMsgNotify.value));
     // 同步启停后端事件监听
     invoke('set_notification_listening', { enabled: enableMsgNotify.value }).catch(() => {});
 
@@ -354,8 +355,8 @@ const recheckNotifAccess = async () => {
 
 // 切换自动隐藏设置
 const toggleAutoHide = async () => {
-    localStorage.setItem(NSD_AUTO_HIDE_ENABLED, String(autoHideEnabled.value));
-    localStorage.setItem(NSD_AUTO_HIDE_DELAY, String(autoHideDelay.value));
+    setSettingRaw(NSD_AUTO_HIDE_ENABLED, String(autoHideEnabled.value));
+    setSettingRaw(NSD_AUTO_HIDE_DELAY, String(autoHideDelay.value));
     await emit('control-auto-hide', { enabled: autoHideEnabled.value, delay: autoHideDelay.value });
 };
 
@@ -363,14 +364,14 @@ const toggleAutoHide = async () => {
 const updateAutoHideDelay = async () => {
     // 确保延迟时间在合理范围内（100ms到10秒）
     autoHideDelay.value = Math.max(100, Math.min(10000, autoHideDelay.value));
-    localStorage.setItem(NSD_AUTO_HIDE_DELAY, String(autoHideDelay.value));
+    setSettingRaw(NSD_AUTO_HIDE_DELAY, String(autoHideDelay.value));
     await emit('control-auto-hide', { enabled: autoHideEnabled.value, delay: autoHideDelay.value });
 };
 
 // 切换自动折叠设置
 const toggleAutoCollapse = async () => {
-    localStorage.setItem(NSD_AUTO_COLLAPSE_ENABLED, String(autoCollapseEnabled.value));
-    localStorage.setItem(NSD_AUTO_COLLAPSE_DELAY, String(autoCollapseDelay.value));
+    setSettingRaw(NSD_AUTO_COLLAPSE_ENABLED, String(autoCollapseEnabled.value));
+    setSettingRaw(NSD_AUTO_COLLAPSE_DELAY, String(autoCollapseDelay.value));
     await emit('control-auto-collapse', { enabled: autoCollapseEnabled.value, delay: autoCollapseDelay.value });
 };
 
@@ -378,20 +379,20 @@ const toggleAutoCollapse = async () => {
 const updateAutoCollapseDelay = async () => {
     // 确保延迟时间在合理范围内（100ms到10秒）
     autoCollapseDelay.value = Math.max(100, Math.min(10000, autoCollapseDelay.value));
-    localStorage.setItem(NSD_AUTO_COLLAPSE_DELAY, String(autoCollapseDelay.value));
+    setSettingRaw(NSD_AUTO_COLLAPSE_DELAY, String(autoCollapseDelay.value));
     await emit('control-auto-collapse', { enabled: autoCollapseEnabled.value, delay: autoCollapseDelay.value });
 };
 
 // 全屏自动隐藏开关
-const autoHideFullscreen = ref(localStorage.getItem(NSD_AUTO_HIDE_FS) === 'true');
+const autoHideFullscreen = ref(getSettingRaw(NSD_AUTO_HIDE_FS) === 'true');
 const toggleAutoHideFS = async () => {
-    localStorage.setItem(NSD_AUTO_HIDE_FS, String(autoHideFullscreen.value));
+    setSettingRaw(NSD_AUTO_HIDE_FS, String(autoHideFullscreen.value));
     await emit('control-autohide-fs', { enabled: autoHideFullscreen.value });
 };
 
 // 切换省内存模式
 const toggleDestroyOnClose = async () => {
-    localStorage.setItem(NSD_DESTROY_ON_CLOSE, String(destroyOnClose.value));
+    setSettingRaw(NSD_DESTROY_ON_CLOSE, String(destroyOnClose.value));
     try {
         await invoke('set_destroy_on_close', { enabled: destroyOnClose.value });
     } catch (e) {
@@ -433,7 +434,7 @@ const clearCoverCache = async () => {
 // 切换灵动岛轮换模式
 const toggleRotation = async () => {
     // 1. 保存并发送轮换功能的开关状态
-    localStorage.setItem(NSD_ROTATION_MODE, String(enableRotation.value));
+    setSettingRaw(NSD_ROTATION_MODE, String(enableRotation.value));
     await emit('control-rotation-mode', { enabled: enableRotation.value });
 
     // ✨ 新增限制逻辑：如果用户【开启】了轮换功能
@@ -441,29 +442,29 @@ const toggleRotation = async () => {
         // 强行将静默消息模式设为关闭（false）
         msgModeEnabled.value = false;
         // 同步更新本地电脑的记忆状态
-        localStorage.setItem(NSD_MSG_MODE, 'false');
+        setSettingRaw(NSD_MSG_MODE, 'false');
         // 发送信号通知灵动岛浮窗：静默模式已关闭，请立刻现身
         await emit('control-msg-mode', { enabled: false });
     }
 };
 
 watch(islandTheme, async (newVal) => {
-    localStorage.setItem(NSD_ISLAND_THEME, newVal);
+    setSettingRaw(NSD_ISLAND_THEME, newVal);
     await emit('control-island-theme', { theme: newVal });
     console.log('灵动岛颜色切换为:', newVal);
 });
 
 // 添加监听器，将状态同步给灵动岛
 watch(enableMusicCtrl, async (newVal) => {
-    localStorage.setItem(NSD_MUSIC_CTRL, newVal.toString());
+    setSettingRaw(NSD_MUSIC_CTRL, newVal.toString());
     await emit('control-music-ctl', { enabled: newVal });
     console.log('音乐控制器状态切换为:', newVal);
 });
 
 // 频谱颜色模式 / 自定义色 → 写存储并同步到灵动岛
 const syncSpectrumColor = async () => {
-    localStorage.setItem(NSD_SPECTRUM_COLOR_MODE, spectrumColorMode.value);
-    localStorage.setItem(NSD_SPECTRUM_CUSTOM_COLOR, spectrumCustomColor.value);
+    setSettingRaw(NSD_SPECTRUM_COLOR_MODE, spectrumColorMode.value);
+    setSettingRaw(NSD_SPECTRUM_CUSTOM_COLOR, spectrumCustomColor.value);
     await emit('control-spectrum-color', {
         mode: spectrumColorMode.value,
         color: spectrumCustomColor.value,
@@ -473,7 +474,7 @@ watch(spectrumColorMode, syncSpectrumColor);
 watch(spectrumCustomColor, syncSpectrumColor);
 
 // 歌词延迟（秒）：正值表示歌词整体延后显示，步长 0.25s，范围 ±5s
-const lyricDelay = ref(Number(localStorage.getItem(NSD_LYRIC_DELAY)) || 0);
+const lyricDelay = ref(Number(getSettingRaw(NSD_LYRIC_DELAY)) || 0);
 
 const clampLyricDelay = () => {
     if (!Number.isFinite(lyricDelay.value)) lyricDelay.value = 0;
@@ -482,7 +483,7 @@ const clampLyricDelay = () => {
 
 const syncLyricDelay = async () => {
     clampLyricDelay();
-    localStorage.setItem(NSD_LYRIC_DELAY, String(lyricDelay.value));
+    setSettingRaw(NSD_LYRIC_DELAY, String(lyricDelay.value));
     await emit('control-lyric-delay', { delay: lyricDelay.value });
 };
 

@@ -194,12 +194,6 @@ pub fn set_notification_listening(app: tauri::AppHandle, enabled: bool) -> Resul
     Ok(())
 }
 
-// (D) 增量拉取（保留为命令，便于前端按需/调试拉取；主路径由后端事件线程主动 emit）
-#[tauri::command]
-pub async fn fetch_notifications() -> Result<NotificationBatch, String> {
-    fetch_incremental(false)
-}
-
 // ===== 常驻监听线程 + 状态机 + COM + 事件注册 + 轮询兜底 =====
 
 fn start_listener_thread(rx: Receiver<Ctrl>, ctrl_tx: SyncSender<Ctrl>, app: tauri::AppHandle) {

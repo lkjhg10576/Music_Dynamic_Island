@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  typecheck:
     runs-on: windows-latest
 
     strategy:
@@ -29,13 +29,3 @@ jobs:
 
     - name: Type check
       run: npx vue-tsc --noEmit
-
-    - name: Build
-      run: npm run build
-
-    - name: Upload Node.js build artifacts
-      uses: actions/upload-artifact@v6
-      with:
-        name: node-build
-        path: dist/
-        retention-days: 5
