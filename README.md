@@ -11,7 +11,7 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-blue?logo=tauri)](https://tauri.app)
 [![Vue 3](https://img.shields.io/badge/Vue-3.x-green?logo=vue.js)](https://vuejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?logo=typescript)](https://www.typescriptlang.org)
-[![Version](https://img.shields.io/badge/version-0.5.0-4-blue)](https://github.com/lkjhg10576/Music_Dynamic_Island)
+[![Version](https://img.shields.io/badge/version-0.6.0--2-4-blue)](https://github.com/lkjhg10576/Music_Dynamic_Island)
 
 </div>
 
