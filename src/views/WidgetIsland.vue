@@ -187,16 +187,37 @@
                                     </div>
                                 </div>
                                 <div class="music-info-mask-box" ref="maskBoxRef">
-                                    <div class="music-info-text single-line" :class="{ 'fade-out': isMusicExpanded }">
-                                        <span class="scroll-inner" ref="textInnerRef"
-                                            :class="{ 'is-scrolling': scrollDist > 0 }"
-                                            :style="scrollDist > 0 ? { '--scroll-dist': scrollDist + 'px', '--scroll-duration': scrollDuration } : {}">
-                                            {{ currentLyricText || collapsedTrackText }}
-                                        </span>
+                                    <div class="music-info-text single-line" :class="{ 'fade-out': isMusicExpanded }"
+                                        style="position: relative; width: 100%; height: 100%;">
+                                        <transition name="lyric-fade">
+                                            <span class="lyric-render-text" :key="currentLyricText || collapsedTrackText">
+                                                <span class="scroll-inner" ref="textInnerRef"
+                                                    :class="{ 'is-scrolling': scrollDist > 0 }"
+                                                    :style="scrollDist > 0 ? { '--scroll-dist': scrollDist + 'px', '--scroll-duration': scrollDuration } : {}">
+                                                    {{ currentLyricText || collapsedTrackText }}
+                                                </span>
+                                            </span>
+                                        </transition>
                                     </div>
                                     <div class="music-info-text double-line" :class="{ 'fade-in': isMusicExpanded }">
-                                        <div class="song-title">{{ currentSongName }}</div>
-                                        <div class="song-artist" v-show="!isVideoLikeSource">{{ currentArtistName }}</div>
+                                        <div class="song-title" ref="expandedLyricBoxRef">
+                                            <transition name="lyric-fade">
+                                                <span class="lyric-render-text" :key="expandedLyricText">
+                                                    <span class="scroll-inner" ref="expandedLyricRef"
+                                                        :class="{ 'is-scrolling': expandedLyricScrollDist > 0 }"
+                                                        :style="expandedLyricScrollDist > 0 ? { '--scroll-dist': expandedLyricScrollDist + 'px', '--scroll-duration': expandedLyricScrollDuration } : {}">
+                                                        {{ expandedLyricText }}
+                                                    </span>
+                                                </span>
+                                            </transition>
+                                        </div>
+                                        <div class="song-artist" ref="expandedArtistBoxRef" v-show="!isVideoLikeSource">
+                                            <span class="scroll-inner" ref="expandedArtistInnerRef"
+                                                :class="{ 'is-scrolling': expandedArtistScrollDist > 0 }"
+                                                :style="expandedArtistScrollDist > 0 ? { '--scroll-dist': expandedArtistScrollDist + 'px', '--scroll-duration': expandedArtistScrollDuration } : {}">
+                                                {{ expandedSubText }}
+                                            </span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -368,11 +389,15 @@
                     <div class="right-circle rt-chip"
                         v-if="showRtChip"
                         @click.stop="clickRtChip()"
-                        :style="{ ...coreContentStyle, color: rtActivities[currentRtIndex]?.accent || '#ffffff', cursor: 'pointer' }"
+                        :style="{ ...coreContentStyle, cursor: 'pointer' }"
                         :title="rtActivities[currentRtIndex] ? ('点击展开：' + rtActivities[currentRtIndex].id) : ''">
-                        <!-- 硬件监控：显示动态小圆环 -->
-                        <template v-if="rtActivities[currentRtIndex]?.id === 'hardware'">
-                            <svg viewBox="0 0 36 36" class="rt-chip-hw-ring">
+                        <!-- 预览活动变化时（新活动加入/轮换/优先级重排）做缩小+淡入过渡，避免图标瞬间替换 -->
+                        <transition name="rt-swap" mode="out-in">
+                            <span v-if="rtActivities[currentRtIndex]" class="rt-chip-inner"
+                                :key="rtActivities[currentRtIndex].id"
+                                :style="{ color: rtActivities[currentRtIndex].accent || '#ffffff' }">
+                                <!-- 硬件监控：显示动态小圆环 -->
+                                <svg v-if="rtActivities[currentRtIndex].id === 'hardware'" viewBox="0 0 36 36" class="rt-chip-hw-ring">
                                 <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="3" />
                                 <template v-if="hwMode === 'dual'">
                                     <circle cx="18" cy="18" r="14" fill="none"
@@ -394,10 +419,11 @@
                                         stroke-linecap="round" transform="rotate(-90 18 18)"
                                         style="transition: stroke-dasharray 0.5s ease;" />
                                 </template>
-                            </svg>
-                        </template>
-                        <!-- 其他实时活动：保留原有静态图标 -->
-                        <span v-else class="rt-chip-icon" v-html="rtActivities[currentRtIndex]?.icon || ''"></span>
+                                </svg>
+                                <!-- 其他实时活动：保留原有静态图标 -->
+                                <span v-else class="rt-chip-icon" v-html="rtActivities[currentRtIndex]?.icon || ''"></span>
+                            </span>
+                        </transition>
                     </div>
                 </transition>
             </div>
@@ -649,12 +675,13 @@ function clickRtChip(targetId?: string) {
         expandHardware();
     } else if (target.id === 'pomodoro') {
         isPomodoroExpanded.value = true;
-        const { w, h } = getBaseSize();
-        animateIslandSize(w + 80, h);
+        // 展开时宽度不低于最小展开宽度（过窄时临时回调），只按需调整高度，避免岛宽被缩窄
+        const { h } = getBaseSize();
+        animateIslandSize(getExpandTargetWidth(), h);
     } else if (target.id === 'countdown') {
         isCountdownExpanded.value = true;
-        const { w, h } = getBaseSize();
-        animateIslandSize(w + 80, h);
+        const { h } = getBaseSize();
+        animateIslandSize(getExpandTargetWidth(), h);
     } else if (target.id === 'printer') {
         expandPrintQueue();
     }
@@ -663,6 +690,9 @@ function clickRtChip(targetId?: string) {
 
 function revertRealtime() {
     expandedRtId.value = null;
+    // 关闭/回退后把小图标重新指向最高优先级候选（rtActivities 按优先级升序，下标 0 即最高），
+    // 否则展开期间轮换上来的低优先级活动会一直占据小图标位，顺序设置形同虚设
+    currentRtIndex.value = 0;
     // previousContext 决定还原到音乐岛或独立小图标态（chip 由 showRtChip 自然恢复）
     // 维持现有自动隐藏行为
     scheduleAutoHide();
@@ -676,6 +706,11 @@ watch(rtActivities, (list) => {
     // currentRtIndex 越界保护
     if (list.length > 0 && currentRtIndex.value >= list.length) {
         currentRtIndex.value = currentRtIndex.value % list.length;
+    }
+    // 列表变化（新活动加入/离开、优先级重排）后，若预览恰好指向正在展开的活动，
+    // showRtChip 会把小图标整体隐藏；这里推进一位让小图标保持可见
+    if (expandedRtId.value && list.length > 0 && list[currentRtIndex.value]?.id === expandedRtId.value) {
+        currentRtIndex.value = (currentRtIndex.value + 1) % list.length;
     }
 });
 
@@ -1327,9 +1362,9 @@ const expandHardware = () => {
     isHardwareExpanded.value = true;
     // 标记 hardware 为当前展开活动（previousContext 与 currentRtIndex 推进由 clickRtChip 统一处理）
     expandedRtId.value = 'hardware';
-    const { w, h } = getBaseSize();
-    // 展开时增加宽度以容纳 CPU/RAM 详情
-    animateIslandSize(w + 80, h);
+    // 展开时宽度不低于最小展开宽度（过窄时临时回调），只按需调整高度，避免岛宽被缩窄
+    const { h } = getBaseSize();
+    animateIslandSize(getExpandTargetWidth(), h);
     setTimeout(() => { suppressContentWatch = false; }, 600);
 };
 
@@ -1339,6 +1374,8 @@ const collapseHardware = () => {
     isHardwareExpanded.value = false;
     // 同步多活动并行状态：清除 expandedRtId（统一回退路径）
     expandedRtId.value = null;
+    // 与 revertRealtime 一致：小图标回到最高优先级候选，保证顺序设置生效
+    currentRtIndex.value = 0;
     const { h } = getBaseSize();
     const savedWidth = restoreIslandWidth();
     const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
@@ -1370,6 +1407,8 @@ const collapsePrintQueue = (restore = true) => {
     isPrintQueueExpanded.value = false;
     if (expandedRtId.value === 'printer') {
         expandedRtId.value = null;
+        // 与 revertRealtime 一致：小图标回到最高优先级候选，保证顺序设置生效
+        currentRtIndex.value = 0;
     }
     if (restore) {
         const { h } = getBaseSize();
@@ -2229,6 +2268,11 @@ let lyricRequested = false;
 // 歌词请求序号：切歌时递增，丢弃过期请求的结果
 let lyricReqSeq = 0;
 
+// 展开态标题位：优先显示歌词，无歌词（纯音乐/视频类/未拉到）时回退歌名
+const expandedLyricText = computed(() => currentLyricText.value || currentSongName.value);
+// 展开态副标题位："歌手 - 歌名"
+const expandedSubText = computed(() => `${currentArtistName.value} - ${currentSongName.value}`);
+
 // 简单的 LRC 解析器
 const parseLrc = (lrcStr: string) => {
     const lines = lrcStr.split('\n');
@@ -2446,11 +2490,10 @@ watch(isVideoLikeSource, (now, prev) => {
 });
 
 // ===== 沉浸模式（coverglass）：显示条件与背景层样式 =====
-// 只要媒体活跃且没被消息弹窗霸占，背景就一直存在
+// 只要媒体活跃，背景就一直存在；消息通知期间也保持，避免临时回落成黑色
 const showCoverglassBg = computed(() =>
     islandTheme.value === 'coverglass' &&
     isMusicCtlEnabled.value &&
-    !isMsgActive.value &&
     !!blurredCoverUrl.value
 );
 
@@ -2474,35 +2517,77 @@ const textInnerRef = ref<HTMLElement | null>(null);
 const scrollDist = ref(0);
 const scrollDuration = ref('0s');
 
-// 核心计算函数：判断文本是否超出容器，并动态调整滚动速度和时�?
-const calculateScroll = () => {
-    if (!textInnerRef.value || !maskBoxRef.value) return;
+// 展开态双行滚动：标题位（歌词）与副标题位（歌手 - 歌名）
+const expandedLyricBoxRef = ref<HTMLElement | null>(null);
+const expandedLyricRef = ref<HTMLElement | null>(null);
+const expandedLyricScrollDist = ref(0);
+const expandedLyricScrollDuration = ref('0s');
+const expandedArtistBoxRef = ref<HTMLElement | null>(null);
+const expandedArtistInnerRef = ref<HTMLElement | null>(null);
+const expandedArtistScrollDist = ref(0);
+const expandedArtistScrollDuration = ref('0s');
 
-    // 展开状态下不执行滚�?
+// 共用测量：文本超出容器时给出滚动距离与时长（按 30px/s 阅读速度，首尾停留融入总时长）
+const measureOverflowScroll = (textEl: HTMLElement, boxEl: HTMLElement) => {
+    // 使用 getBoundingClientRect() 获取无视父级限制的真实渲染宽度
+    const textWidth = textEl.getBoundingClientRect().width;
+    const containerWidth = boxEl.clientWidth;
+
+    if (textWidth <= containerWidth) {
+        return { dist: 0, duration: '0s' };
+    }
+
+    // Math.ceil() 强制取整，绝对不允许出现小数像素
+    const dist = Math.ceil(textWidth - containerWidth + 20);
+
+    // 按照 30px/s 的速度阅读，计算纯移动时间；按 60% 占比融入首尾停留，确保匀速
+    const totalDuration = (dist / 30) / 0.6;
+
+    return { dist, duration: `${Math.max(totalDuration, 4.5)}s` };
+};
+
+// 折叠态单行歌词滚动计算
+const calculateScroll = () => {
+    // 展开状态下不执行滚动
     if (isMusicExpanded.value) {
         scrollDist.value = 0;
         return;
     }
+    if (!textInnerRef.value || !maskBoxRef.value) return;
 
-    // 核心修复 1：使�?getBoundingClientRect() 获取无视父级限制的真实渲染宽�?
-    const textWidth = textInnerRef.value.getBoundingClientRect().width;
-    const containerWidth = maskBoxRef.value.clientWidth;
+    const result = measureOverflowScroll(textInnerRef.value, maskBoxRef.value);
+    scrollDist.value = result.dist;
+    scrollDuration.value = result.duration;
+};
 
-    if (textWidth > containerWidth) {
-        // 核心修复 1：使�?Math.ceil() 强制取整，绝对不允许出现小数像素�?
-        scrollDist.value = Math.ceil(textWidth - containerWidth + 20);
-
-        // 按照 30px/s 的速度阅读，计算纯移动时间
-        const timeToMove = scrollDist.value / 30;
-
-        // 将首尾各停留�?1s 左右（基�?0%占比计算）融入总时长中，确保匀�?
-        const totalDuration = timeToMove / 0.6;
-
-        scrollDuration.value = `${Math.max(totalDuration, 4.5)}s`;
-    } else {
-        scrollDist.value = 0;
+// 展开态双行滚动计算：歌词位 + "歌手 - 歌名"位
+const calculateExpandedScrolls = () => {
+    if (expandedLyricRef.value && expandedLyricBoxRef.value) {
+        const lyric = measureOverflowScroll(expandedLyricRef.value, expandedLyricBoxRef.value);
+        expandedLyricScrollDist.value = lyric.dist;
+        expandedLyricScrollDuration.value = lyric.duration;
+    }
+    if (expandedArtistInnerRef.value && expandedArtistBoxRef.value) {
+        const artist = measureOverflowScroll(expandedArtistInnerRef.value, expandedArtistBoxRef.value);
+        expandedArtistScrollDist.value = artist.dist;
+        expandedArtistScrollDuration.value = artist.duration;
     }
 };
+
+// 展开态文本/状态变化时重算双行滚动：先立即算一次让文字马上开始滚动，
+// 等 500ms 弹簧展开动画彻底结束后再量一次，用稳定后的宽度修正滚动距离
+watch([expandedLyricText, expandedSubText, isMusicExpanded, isVideoLikeSource], async () => {
+    await nextTick();
+    if (isMusicExpanded.value) {
+        calculateExpandedScrolls();
+        setTimeout(() => {
+            if (isMusicExpanded.value) calculateExpandedScrolls();
+        }, 500);
+    } else {
+        expandedLyricScrollDist.value = 0;
+        expandedArtistScrollDist.value = 0;
+    }
+});
 
 // 核心修复 2：监听数组必须带�?displayMusic，并�?nextTick 后加上微小延迟，防止 v-else-if 导致宽度拿到 0
 watch([currentTrackInfo, currentLyricText, collapsedTrackText, displayMusic, isMusicExpanded], async () => {
@@ -2742,6 +2827,18 @@ const restoreIslandWidth = () => {
     }
     return null;
 };
+
+// 用户当前设定宽度：拖拽保存值优先，其次当前实际宽度。
+// 收起/恢复岛宽时都用它，避免用 getBaseSize().w（写死的默认基准）覆盖用户的设定
+const getUserIslandWidth = () => restoreIslandWidth() ?? currentWidth.value;
+
+// 展开实时活动的最小宽度：低于该值时 CPU/RAM 详情、关闭按钮等信息会被压缩，影响观感
+const MIN_EXPAND_WIDTH = 200;
+
+// 展开实时活动的目标宽度：用户宽度充足（> 200px）时保持当前设定宽度不变；
+// 过窄（≤ 200px）时临时回调到最小展开宽度，关闭后仍恢复用户原宽度。
+// 打印队列详情需要额外宽度，走自己的按需加宽逻辑，不在此列
+const getExpandTargetWidth = () => Math.max(getUserIslandWidth(), MIN_EXPAND_WIDTH);
 
 // 检测鼠标是否在灵动岛边缘（用于显示调整光标�?
 const isNearEdge = (event: MouseEvent, side: 'left' | 'right'): boolean => {
@@ -4884,12 +4981,14 @@ onUnmounted(() => {
 }
 
 .song-title {
+    position: relative;
+    /* 固定高度 = 15px × 1.2 行高：内部歌词层是绝对定位，需要确定的盒子高度 */
+    height: 18px;
     font-size: 15px;
     font-weight: 700;
     margin-bottom: 2px;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
     line-height: 1.2;
     width: 100%;
     text-align: left !important;
@@ -4900,7 +4999,6 @@ onUnmounted(() => {
     opacity: 0.65;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
     line-height: 1.2;
     width: 100%;
     text-align: left !important;
@@ -5038,6 +5136,46 @@ onUnmounted(() => {
     overflow: visible !important;
     align-items: flex-start !important;
     text-align: left !important;
+}
+
+/* 歌词渲染单句定位：绝对定位叠层，换句时新旧两层原位重叠，才能做交叉叠化 */
+.lyric-render-text {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    white-space: nowrap;
+    overflow: hidden;
+    text-align: left !important;
+    display: inline-block;
+    will-change: opacity, filter;
+}
+
+/* 歌词换句过渡：新句从模糊透明渐入，旧句同步在原地模糊淡出（总时长约 220ms） */
+.lyric-fade-enter-active,
+.lyric-fade-leave-active {
+    transition: opacity 0.2s ease, filter 0.22s ease;
+}
+
+.lyric-fade-enter-from {
+    opacity: 0;
+    filter: blur(8px);
+}
+
+.lyric-fade-enter-to {
+    opacity: 1;
+    filter: blur(0px);
+}
+
+.lyric-fade-leave-from {
+    opacity: 1;
+    filter: blur(0px);
+}
+
+.lyric-fade-leave-to {
+    opacity: 0;
+    filter: blur(8px);
 }
 
 /* 滚动的内部容�?*/
@@ -5268,6 +5406,30 @@ onUnmounted(() => {
     width: 24px;
     height: 24px;
     display: block;
+}
+
+/* 小图标内容包裹层：占满圆形区域并居中，accent 颜色随预览活动一起过渡 */
+.rt-chip-inner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+}
+
+/* 预览活动切换过渡（新活动加入/轮换/优先级重排）：缩小淡出 → 弹性放大淡入 */
+.rt-swap-enter-active {
+    transition: opacity 0.24s ease, transform 0.24s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.rt-swap-leave-active {
+    transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.rt-swap-enter-from,
+.rt-swap-leave-to {
+    opacity: 0;
+    transform: scale(0.4);
 }
 
 /* 音乐展开态下小图标右移避让（避免与频谱/进度条重叠） */
