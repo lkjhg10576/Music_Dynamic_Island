@@ -62,6 +62,8 @@
                     @click="islandTheme = 'black'">暗色</div>
                 <div class="capsule-btn" :class="{ 'is-active': islandTheme === 'white' }"
                     @click="islandTheme = 'white'">亮色</div>
+                <div class="capsule-btn coverglass-btn" :class="{ 'is-active': islandTheme === 'coverglass' }"
+                    @click="islandTheme = 'coverglass'">沉浸模式</div>
             </div>
         </div>
 
@@ -97,6 +99,19 @@
                     v-model="spectrumCustomColor"
                     title="自定义频谱颜色"
                 />
+            </div>
+        </div>
+
+        <div class="set-item">
+            <div class="set-item-meta">
+                <span class="set-item-title">歌词延迟</span>
+                <span class="set-item-desc">网络歌词整体偏移 ({{ lyricDelay > 0 ? '+' : '' }}{{ lyricDelay.toFixed(2) }}秒)</span>
+            </div>
+            <div class="delay-input-container">
+                <button class="delay-btn" @click="adjustLyricDelay(-0.25)">-</button>
+                <input type="number" v-model.number="lyricDelay" @change="updateLyricDelay"
+                    class="delay-input" min="-5" max="5" step="0.25">
+                <button class="delay-btn" @click="adjustLyricDelay(0.25)">+</button>
             </div>
         </div>
 
@@ -251,6 +266,7 @@ import {
     NSD_AUTO_COLLAPSE_ENABLED, NSD_AUTO_COLLAPSE_DELAY,
     NSD_TARGET_PLAYER, NSD_AUTO_HIDE_FS,
     NSD_SPECTRUM_COLOR_MODE, NSD_SPECTRUM_CUSTOM_COLOR,
+    NSD_LYRIC_DELAY,
 } from '../constants/storageKeys';
 
 defineProps<{
@@ -455,6 +471,29 @@ const syncSpectrumColor = async () => {
 };
 watch(spectrumColorMode, syncSpectrumColor);
 watch(spectrumCustomColor, syncSpectrumColor);
+
+// 歌词延迟（秒）：正值表示歌词整体延后显示，步长 0.25s，范围 ±5s
+const lyricDelay = ref(Number(localStorage.getItem(NSD_LYRIC_DELAY)) || 0);
+
+const clampLyricDelay = () => {
+    if (!Number.isFinite(lyricDelay.value)) lyricDelay.value = 0;
+    lyricDelay.value = Math.round(Math.max(-5, Math.min(5, lyricDelay.value)) * 100) / 100;
+};
+
+const syncLyricDelay = async () => {
+    clampLyricDelay();
+    localStorage.setItem(NSD_LYRIC_DELAY, String(lyricDelay.value));
+    await emit('control-lyric-delay', { delay: lyricDelay.value });
+};
+
+const adjustLyricDelay = (delta: number) => {
+    lyricDelay.value += delta;
+    syncLyricDelay();
+};
+
+const updateLyricDelay = () => {
+    syncLyricDelay();
+};
 </script>
 
 <style scoped>
@@ -669,6 +708,18 @@ watch(spectrumCustomColor, syncSpectrumColor);
     background: var(--card-bg);
     color: var(--item-title-color);
     box-shadow: 0 1px 4px var(--card-shadow-hover);
+    opacity: 1;
+}
+
+/* 沉浸模式选项：渐变色块（对齐上游 coverglass 主题按钮） */
+.capsule-btn.coverglass-btn {
+    background: linear-gradient(135deg, #2c3e50 0%, #000000 100%);
+    color: #ffffff;
+}
+
+.capsule-btn.coverglass-btn.is-active {
+    background: linear-gradient(135deg, #2c3e50 0%, #000000 100%);
+    color: #ffffff;
     opacity: 1;
 }
 

@@ -7,6 +7,13 @@
 
             <div class="rainbow-border-glow" v-if="isGlowBorderEnabled" :style="{ opacity: glowOpacity }"></div>
 
+            <!-- 沉浸模式背景层：当前专辑封面的大幅模糊图 + 噪点 + 黑色遮罩 -->
+            <div v-if="showCoverglassBg" class="coverglass-bg-container" :style="coverglassStyle">
+                <div class="coverglass-bg-image" :style="{ backgroundImage: `url(${blurredCoverUrl})` }"></div>
+                <div class="coverglass-noise-layer"></div>
+                <div class="coverglass-mask-layer"></div>
+            </div>
+
             <!-- 左侧宽度调整手柄 -->
             <div class="resize-handle left"
                 v-if="!isPositionLocked && !isMusicExpanded && !isMusicExpanding && !isMsgActive && !displaySysToast"
@@ -176,7 +183,7 @@
                             <div class="music-top-row">
                                 <div class="album-cover" :class="{ 'is-playing': isPlaying }">
                                     <div class="cover-inner"
-                                        :style="coverUrl ? { backgroundImage: `url(${coverUrl})`, backgroundSize: 'cover' } : {}">
+                                        :style="displayCoverUrl ? { backgroundImage: `url(${displayCoverUrl})`, backgroundSize: 'cover' } : {}">
                                     </div>
                                 </div>
                                 <div class="music-info-mask-box" ref="maskBoxRef">
@@ -184,12 +191,12 @@
                                         <span class="scroll-inner" ref="textInnerRef"
                                             :class="{ 'is-scrolling': scrollDist > 0 }"
                                             :style="scrollDist > 0 ? { '--scroll-dist': scrollDist + 'px', '--scroll-duration': scrollDuration } : {}">
-                                            {{ currentTrackInfo }}
+                                            {{ currentLyricText || collapsedTrackText }}
                                         </span>
                                     </div>
                                     <div class="music-info-text double-line" :class="{ 'fade-in': isMusicExpanded }">
                                         <div class="song-title">{{ currentSongName }}</div>
-                                        <div class="song-artist">{{ currentArtistName }}</div>
+                                        <div class="song-artist" v-show="!isVideoLikeSource">{{ currentArtistName }}</div>
                                     </div>
                                 </div>
                             </div>
@@ -436,6 +443,7 @@ import {
     NSD_MUSIC_EXPANDED_WIDTH,
     NSD_MSG_EXPANDED_WIDTH,
     NSD_APP_SCALE,
+    NSD_LYRIC_DELAY,
 } from '../constants/storageKeys';
 
 const isIslandVisible = ref(false);
@@ -1208,35 +1216,46 @@ const isExpandedSize = computed(() => isMusicExpanded.value || isMsgActive.value
 const islandStyle = computed<CSSProperties>(() => {
     const linear = islandOpacity.value / 100;
     const alpha = Math.pow(linear, 1 / 2.2);
-    const baseStyle = islandTheme.value === 'white' ? {
-        backgroundColor: `rgba(255, 255, 255, ${alpha})`,
-        color: '#000000'
-    } : {
-        backgroundColor: `rgba(0, 0, 0, ${alpha})`,
-        color: '#ffffff'
-    };
+    let bg = `rgba(0, 0, 0, ${alpha})`;
+    let color = '#ffffff';
+
+    if (islandTheme.value === 'white') {
+        bg = `rgba(255, 255, 255, ${alpha})`;
+        color = '#000000';
+    } else if (showCoverglassBg.value) {
+        // 沉浸模式：岛本体保持暗色底，模糊封面作为叠加层铺在上面
+        bg = `rgba(20, 20, 20, ${alpha})`;
+    }
 
     return {
-        ...baseStyle,
+        backgroundColor: bg,
+        color: color,
         width: '100vw',
         height: '100vh',
-        // 只要展开就是 24px，收起就�?100px
+        // 只要展开就是 24px，收起就是 100px
         borderRadius: isExpandedSize.value ? '24px' : (borderRadius.value === 12 ? '12px' : '100px'),
         position: 'relative',
     };
 });
 
-// 3. 内层核心：永远比外层�?2px
+// 3. 内层核心：永远比外层小 2px
 const coreContentStyle = computed(() => {
     const linear = islandOpacity.value / 100;
     const alpha = Math.pow(linear, 1 / 2.2);
 
-    // 展开 22px，收�?98px
+    // 展开 22px，收起 98px
     const innerRadius = isExpandedSize.value ? '22px' : (borderRadius.value === 12 ? '10px' : '98px');
 
     if (islandTheme.value === 'white') {
         return {
             backgroundColor: `rgba(255, 255, 255, ${alpha})`,
+            borderRadius: innerRadius
+        };
+    }
+    if (showCoverglassBg.value) {
+        // 沉浸模式：内层透出外层暗色底与模糊封面叠加层
+        return {
+            backgroundColor: `transparent`,
             borderRadius: innerRadius
         };
     }
@@ -1522,6 +1541,62 @@ const coverCache = new Map<string, string>();
 // 封面请求版本号：清理缓存或切歌时递增，防止过期异步结果回写
 let coverFetchVersion = 0;
 
+// 沉浸模式专属的模糊封面（按曲目缓存，与 coverCache 同步淘汰）
+const blurredCoverUrl = ref('');
+const blurredCoverCache = new Map<string, string>();
+
+// 当前 SMTC 来源应用的包名（小写，用于视频类来源判定与应用 logo 展示）
+const currentAppIdStr = ref('');
+// 当前播放器是否为浏览器（edge/chrome）
+const currentIsBrowser = ref(false);
+// 浏览器是否成功获取到封面/歌词（成功即视为播放音乐，而非视频）
+const isBrowserMusic = ref(false);
+
+// 从 MainPanel 抄过来的 CPU 静态模糊烘焙机
+const bakeBlurImage = (url: string): Promise<string> => {
+    return new Promise((resolve) => {
+        const img = new Image();
+        if (url.startsWith('http')) img.crossOrigin = 'anonymous';
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 120; // 降低物理分辨率榨干性能
+            canvas.height = 120;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return resolve(url);
+            ctx.filter = 'blur(10px)';
+            ctx.drawImage(img, -10, -10, 140, 140);
+            try { resolve(canvas.toDataURL('image/jpeg', 0.6)); }
+            catch (e) { resolve(url); }
+        };
+        img.onerror = () => resolve(url);
+        img.src = url;
+    });
+};
+
+// 烘焙并缓存沉浸模式模糊封面
+const bakeAndStoreBlur = async (trackInfo: string, url: string) => {
+    const baked = await bakeBlurImage(url);
+    blurredCoverCache.set(trackInfo, baked);
+    // 烘焙期间已切歌：只入缓存，不覆盖当前的沉浸背景
+    if (currentTrackInfo.value === trackInfo) {
+        blurredCoverUrl.value = baked;
+    }
+};
+
+// 视频类/浏览器来源的应用 logo（coverUrl 为空时作为圆形封面兜底）
+const appLogoFallback = computed(() => {
+    const artist = currentArtistName.value;
+    const id = currentAppIdStr.value;
+    if (artist === 'bilibili' || id.includes('bilibili')) return bilibiliLogo;
+    if (artist === 'edge' || id.includes('edge')) return edgeLogo;
+    if (artist === 'chrome' || id.includes('chrome')) return chromeLogo;
+    if (artist === 'potplayer' || id.includes('potplayer')) return potplayerLogo;
+    return '';
+});
+
+// 圆形封面实际展示地址：网络/SMTC 封面优先，拿不到时回退应用 logo
+const displayCoverUrl = computed(() => coverUrl.value || appLogoFallback.value);
+
 // 封面变化时，若处于 album 模式则将当前频谱颜色平滑过渡到新的取色结果
 watch(coverUrl, async (url) => {
     const extractionVersion = ++albumColorExtractionVersion;
@@ -1747,12 +1822,34 @@ const syncMusicStatus = async () => {
     // 捕获本次调用起始版本；清理缓存会递增版本，避免过期封面回写
     const fetchVersion = coverFetchVersion;
     try {
-        // 1. 调用 Rust 提取网易云信息 [歌名, 歌手, 是否在播放]
-        const res = await invoke<[string, string, boolean] | null>('fetch_netease_music_info');
+        // 1. 调用 Rust 提取媒体信息 [歌名, 歌手, 是否在播放, 来源应用包名]
+        const res = await invoke<[string, string, boolean, string] | null>('fetch_netease_music_info');
         if (fetchVersion !== coverFetchVersion) return;
 
         if (res) {
-            const [song, artist, playing] = res;
+            const [song, artist, playing, appId] = res;
+
+            // 记录当前 SMTC 来源应用包名，并判定是否为浏览器类应用（edge/chrome）
+            currentAppIdStr.value = appId;
+            currentIsBrowser.value = appId.includes('edge') || appId.includes('chrome');
+
+            // SMTC 已连上应用但还没有有效标题：单行展示改为显示"已连接的应用名"（而不是"未在播放"）
+            if (!song) {
+                const connectedName = getConnectedAppName(appId);
+                currentSongName.value = connectedName;
+                currentArtistName.value = '';
+                if (currentTrackInfo.value !== connectedName) {
+                    resetLyricState();
+                    currentTrackInfo.value = connectedName;
+                }
+                isPlaying.value = playing;
+                coverUrl.value = '';
+                blurredCoverUrl.value = '';
+                if (!playing && isIslandVisible.value && !isMouseOver.value) {
+                    scheduleAutoHide();
+                }
+                return;
+            }
 
             // 新增这两行为了展开后的双行显示分别赋值
             currentSongName.value = song;
@@ -1762,42 +1859,74 @@ const syncMusicStatus = async () => {
             const newTrackInfo = artist ? `${song} - ${artist}` : song;
 
             if (currentTrackInfo.value !== newTrackInfo) {
+                // 切歌：重置浏览器音乐判定与歌词状态，等封面/歌词结果再确认是音乐还是视频
+                isBrowserMusic.value = false;
+                resetLyricState();
                 currentTrackInfo.value = newTrackInfo;
+                // 防止上一首歌的封面与沉浸模糊背景残留
+                coverUrl.value = '';
+                blurredCoverUrl.value = '';
 
-                // 优先读取缓存（LRU：命中时刷新插入顺序，超限时淘汰最旧条目）
-                if (coverCache.has(newTrackInfo)) {
-                    // 命中：先删再设，将该条目移到 Map 末尾（最新）
-                    const cached = coverCache.get(newTrackInfo)!;
-                    coverCache.delete(newTrackInfo);
-                    coverCache.set(newTrackInfo, cached);
-                    coverUrl.value = cached;
-                } else {
-                    try {
-                        const realCoverUrl = await invoke<string>('get_random_cover_url', {
-                            songName: song,
-                            artistName: artist
-                        });
-                        // 清理缓存或切歌后，丢弃过期封面结果
-                        if (fetchVersion !== coverFetchVersion
-                            || currentTrackInfo.value !== newTrackInfo) {
-                            return;
+                if (currentIsBrowser.value) {
+                    // 浏览器只认 SMTC 本地封面，绝不走网络兜底（避免视频标题在网络搜图时串错封面）
+                    fetchBrowserCover(newTrackInfo);
+                } else if (!appId.includes('bilibili') && artist !== 'potplayer') {
+                    // 优先读取缓存（LRU：命中时刷新插入顺序，超限时淘汰最旧条目）
+                    if (coverCache.has(newTrackInfo)) {
+                        // 命中：先删再设，将该条目移到 Map 末尾（最新）
+                        const cached = coverCache.get(newTrackInfo)!;
+                        coverCache.delete(newTrackInfo);
+                        coverCache.set(newTrackInfo, cached);
+                        coverUrl.value = cached;
+                        const cachedBlur = blurredCoverCache.get(newTrackInfo);
+                        if (cachedBlur !== undefined) {
+                            blurredCoverCache.delete(newTrackInfo);
+                            blurredCoverCache.set(newTrackInfo, cachedBlur);
+                            blurredCoverUrl.value = cachedBlur;
+                        } else {
+                            bakeAndStoreBlur(newTrackInfo, cached);
                         }
-                        coverUrl.value = realCoverUrl;
-                        // 写入缓存，超限逐条淘汰最旧条目（LRU）
-                        while (coverCache.size >= 50) {
-                            const oldest = coverCache.keys().next().value;
-                            if (oldest !== undefined) coverCache.delete(oldest);
+                    } else {
+                        try {
+                            const realCoverUrl = await invoke<string>('get_random_cover_url', {
+                                songName: song,
+                                artistName: artist
+                            });
+                            // 清理缓存或切歌后，丢弃过期封面结果
+                            if (fetchVersion !== coverFetchVersion
+                                || currentTrackInfo.value !== newTrackInfo) {
+                                return;
+                            }
+                            coverUrl.value = realCoverUrl;
+                            // 写入缓存，超限逐条淘汰最旧条目（LRU）
+                            while (coverCache.size >= 50) {
+                                const oldest = coverCache.keys().next().value;
+                                if (oldest !== undefined) {
+                                    coverCache.delete(oldest);
+                                    blurredCoverCache.delete(oldest);
+                                }
+                            }
+                            coverCache.set(newTrackInfo, realCoverUrl);
+                            // 烘焙沉浸模式模糊封面（只烘焙一次并按曲目缓存）
+                            await bakeAndStoreBlur(newTrackInfo, realCoverUrl);
+                        } catch (coverErr) {
+                            if (fetchVersion !== coverFetchVersion
+                                || currentTrackInfo.value !== newTrackInfo) {
+                                return;
+                            }
+                            console.error('所有封面源均获取失败', coverErr);
+                            // 使用本地图标或纯色背景，不要再用外部 URL 作为错误兜底
+                            coverUrl.value = '';
                         }
-                        coverCache.set(newTrackInfo, realCoverUrl);
-                    } catch (coverErr) {
-                        if (fetchVersion !== coverFetchVersion
-                            || currentTrackInfo.value !== newTrackInfo) {
-                            return;
-                        }
-                        console.error('所有封面源均获取失败', coverErr);
-                        // 使用本地图标或纯色背景，不要再用外部 URL 作为错误兜底
-                        coverUrl.value = '';
                     }
+                } else {
+                    // B站 / PotPlayer 视频模式：不取封面，圆形封面回退应用 logo
+                    coverUrl.value = '';
+                }
+
+                // 非视频类来源：发起网络歌词请求（浏览器源由封面/歌词就绪后的判定翻转触发）
+                if (!isVideoLikeSource.value) {
+                    fetchLyricsForCurrentTrack(song, artist);
                 }
             }
 
@@ -1818,8 +1947,12 @@ const syncMusicStatus = async () => {
         } else {
             // 没检测到播放时，清空状态
             currentTrackInfo.value = `未在播放歌曲 - ${getPlayerName()}`;
+            currentSongName.value = '未在播放歌曲';
+            currentArtistName.value = getPlayerName();
             isPlaying.value = false;
             coverUrl.value = ''; // 没歌时清空，显示默认的优美渐变色
+            blurredCoverUrl.value = ''; // 同步清空沉浸背景，避免残留上一首歌的模糊封面
+            resetLyricState();
 
             // 音乐播放器模式：音乐停止时隐藏灵动岛
             if (isIslandVisible.value && !isMouseOver.value) {
@@ -1836,7 +1969,9 @@ const syncMusicStatus = async () => {
 const clearCoverCacheAndRefresh = async () => {
     coverFetchVersion++;
     coverCache.clear();
+    blurredCoverCache.clear();
     coverUrl.value = '';
+    blurredCoverUrl.value = '';
     // 重置当前歌曲标识，确保 syncMusicStatus 会重新走封面获取逻辑
     currentTrackInfo.value = '';
     await syncMusicStatus();
@@ -1846,17 +1981,38 @@ const showInfo = ref(false);
 // 默认显示内容动态从本地缓存读取
 const getPlayerName = () => {
     const key = localStorage.getItem(NSD_TARGET_PLAYER) || 'netease';
-    const map: Record<string, string> = { 
-        'netease': '网易云音乐', 
-        'spotify': 'Spotify', 
-        'apple': 'Apple Music', 
-        'qqmusic': 'QQ音乐', 
-        'kugou': '酷狗音乐', 
+    const map: Record<string, string> = {
+        'netease': '网易云音乐',
+        'spotify': 'Spotify',
+        'apple': 'Apple Music',
+        'qqmusic': 'QQ音乐',
+        'kugou': '酷狗音乐',
         'echo': 'Echo Music',
         'lx-music': '洛雪音乐',
         'smtc': 'SMTC',
+        'bilibili': '哔哩哔哩',
+        'edge': 'Microsoft Edge',
+        'chrome': 'Google Chrome',
+        'potplayer': 'PotPlayer',
+        'justsolo': 'JustSolo',
     };
     return map[key] || '未知平台';
+};
+
+// SMTC 连上应用但没有有效标题时，把应用包名转成可读的应用名
+const getConnectedAppName = (appId: string) => {
+    const id = (appId || '').toLowerCase();
+    if (id.includes('edge')) return 'Microsoft Edge';
+    if (id.includes('chrome')) return 'Google Chrome';
+    if (id.includes('bilibili')) return '哔哩哔哩';
+    if (id.includes('cloudmusic') || id.includes('netease')) return '网易云音乐';
+    if (id.includes('spotify')) return 'Spotify';
+    if (id.includes('qqmusic')) return 'QQ音乐';
+    if (id.includes('kugou')) return '酷狗音乐';
+    if (id.includes('justsolo')) return 'JustSolo';
+    if (id.includes('potplayer')) return 'PotPlayer';
+    // 兜底：去掉 .exe 后缀后直接展示包名
+    return id.replace(/\.exe$/i, '') || '未知应用';
 };
 
 // 定义一个用于强制刷新的 key
@@ -1925,6 +2081,10 @@ const fetchTimeline = async () => {
             timelineClock.value = now;
             timelineMissCount = 0;
             timelineStatus.value = 'available';
+            // 同步 歌词同步时钟（拖动定位后歌词立即跟进，无需等下一个轮询周期）
+            lyricTimelinePos.value = res.position_ms;
+            lyricTimelineEnd.value = res.end_ms;
+            lyricSyncedAt.value = now;
         } else {
             // SMTC 偶尔会在切歌时短暂返回空 Timeline，连续失败后才判定不可用�?
             timelineMissCount++;
@@ -2037,6 +2197,277 @@ watch(currentTrackInfo, () => {
     fetchTimeline();
 });
 
+// ===== 来源判定：视频类来源（B站/浏览器视频/PotPlayer视频）只显示标题、不拉歌词 =====
+// PotPlayer 无歌手元数据时，后端会把歌手占位为 "potplayer"：此时不做歌词匹配，标题常驻显示
+const isPotplayerSource = computed(() => currentArtistName.value === 'potplayer');
+
+// 视频类播放源：B站/PotPlayer 恒为视频类；浏览器拿到封面或歌词才算音乐，否则视为视频
+const isVideoLikeSource = computed(() => {
+    if (isPotplayerSource.value) return true;
+    if (currentAppIdStr.value.includes('bilibili')) return true;
+    if (currentIsBrowser.value) return !isBrowserMusic.value;
+    return false;
+});
+
+// 折叠态兜底文本：音乐显示"标题 - 歌手"，视频类只显示标题
+const collapsedTrackText = computed(() =>
+    isVideoLikeSource.value ? currentSongName.value : currentTrackInfo.value
+);
+
+// ===== 网络歌词：LRC 解析 + 同步显示（折叠态单行） =====
+// 歌词延迟（秒）：正值表示歌词整体延后显示
+const nsdLyricDelay = ref(Number(localStorage.getItem(NSD_LYRIC_DELAY) || '0'));
+
+const parsedLyrics = ref<{ time: number; text: string }[]>([]);
+const currentLyricText = ref('');
+// 歌词防吞字队列：极快节奏的短句排队展示，避免渲染过渡打架
+const lyricQueue = ref<string[]>([]);
+let lastLyricChangeTime = 0;
+let currentMatchedIndex = -1;
+// 当前曲目是否已发起过歌词请求（浏览器源判定翻转后补拉时防重复）
+let lyricRequested = false;
+// 歌词请求序号：切歌时递增，丢弃过期请求的结果
+let lyricReqSeq = 0;
+
+// 简单的 LRC 解析器
+const parseLrc = (lrcStr: string) => {
+    const lines = lrcStr.split('\n');
+    const result: { time: number; text: string }[] = [];
+    const timeReg = /\[(\d{2}):(\d{2})\.(\d{2,3})\]/;
+
+    for (const line of lines) {
+        const match = timeReg.exec(line);
+        if (match) {
+            const min = parseInt(match[1]);
+            const sec = parseInt(match[2]);
+            const msStr = match[3].length === 2 ? match[3] + '0' : match[3];
+            const ms = parseInt(msStr);
+            const time = min * 60000 + sec * 1000 + ms;
+            const text = line.replace(timeReg, '').trim();
+
+            // 过滤掉只有全角空格、零宽字符的"幽灵歌词"
+            const realText = text.replace(/[\s\u200B-\u200D\uFEFF\u3000]/g, '');
+
+            if (realText.length > 0 && !text.includes('纯音乐') && text !== 'lrc' && text !== '//') {
+                result.push({ time, text });
+            }
+        }
+    }
+    return result.sort((a, b) => a.time - b.time);
+};
+
+// 歌词同步时钟：1s 轮询 get_music_timeline 校准 + 本地时钟平滑推进
+const lyricTimelinePos = ref(0);
+const lyricTimelineEnd = ref(0);
+const lyricSyncedAt = ref(Date.now());
+let lyricTimelineTimer: number | null = null;
+let lyricMatcherTimer: number | null = null;
+
+const fetchLyricTimeline = async () => {
+    try {
+        const res = await invoke<MusicTimelineResponse | null>('get_music_timeline');
+        if (res && res.end_ms > 0) {
+            lyricTimelinePos.value = res.position_ms;
+            lyricTimelineEnd.value = res.end_ms;
+            lyricSyncedAt.value = Date.now();
+        }
+    } catch (_) { /* 进度不可用时保持上一状态，匹配器静默等待 */ }
+};
+
+// 50ms 高频比对：线性找当前句；歌词未变化不触发重渲染
+const matchLyricLine = () => {
+    if (parsedLyrics.value.length === 0 || isVideoLikeSource.value) return;
+    const end = lyricTimelineEnd.value;
+    if (end <= 0) return; // 尚未拿到播放进度
+
+    // 播放中按本地时钟推进，暂停时冻结
+    const elapsed = isPlaying.value ? Math.max(0, Date.now() - lyricSyncedAt.value) : 0;
+    const position = Math.min(end, lyricTimelinePos.value + elapsed);
+
+    // 正值延迟 = 歌词延后显示；抢跑 150ms 抵消渲染链路延迟
+    const target = position + 150 - nsdLyricDelay.value * 1000;
+    let matchedIndex = -1;
+    for (let i = 0; i < parsedLyrics.value.length; i++) {
+        if (parsedLyrics.value[i].time <= target) matchedIndex = i;
+        else break;
+    }
+
+    if (matchedIndex > currentMatchedIndex) {
+        if (currentMatchedIndex === -1 || matchedIndex - currentMatchedIndex > 2) {
+            // 首次匹配或大幅快进：直接跳到目标句
+            lyricQueue.value = [parsedLyrics.value[matchedIndex].text];
+        } else {
+            // 正常连续推进：把期间极快节奏的短句全部推入队列排队
+            for (let i = currentMatchedIndex + 1; i <= matchedIndex; i++) {
+                lyricQueue.value.push(parsedLyrics.value[i].text);
+            }
+        }
+        currentMatchedIndex = matchedIndex;
+    } else if (matchedIndex !== -1 && matchedIndex < currentMatchedIndex) {
+        // 用户回退了进度
+        lyricQueue.value = [parsedLyrics.value[matchedIndex].text];
+        currentMatchedIndex = matchedIndex;
+    }
+
+    // 消费队列：每句歌词至少稳定停留 800ms，避免闪烁
+    if (lyricQueue.value.length > 0) {
+        const now = performance.now();
+        if (now - lastLyricChangeTime >= 800) {
+            const nextLyric = lyricQueue.value.shift();
+            if (nextLyric && nextLyric !== currentLyricText.value) {
+                currentLyricText.value = nextLyric;
+                lastLyricChangeTime = now;
+            }
+        }
+    }
+};
+
+const startLyricClock = () => {
+    stopLyricClock();
+    fetchLyricTimeline();
+    lyricTimelineTimer = window.setInterval(() => {
+        // 展开态已有进度条轮询在拉 timeline，避免重复 IPC
+        if (!isMusicExpanded.value) fetchLyricTimeline();
+    }, 1000);
+    lyricMatcherTimer = window.setInterval(matchLyricLine, 50);
+};
+
+const stopLyricClock = () => {
+    if (lyricTimelineTimer) {
+        clearInterval(lyricTimelineTimer);
+        lyricTimelineTimer = null;
+    }
+    if (lyricMatcherTimer) {
+        clearInterval(lyricMatcherTimer);
+        lyricMatcherTimer = null;
+    }
+};
+
+// 歌词可用时启动同步时钟，不可用/切换内容时停止
+watch([parsedLyrics, displayMusic, isVideoLikeSource], () => {
+    if (displayMusic.value && parsedLyrics.value.length > 0 && !isVideoLikeSource.value) {
+        startLyricClock();
+    } else {
+        stopLyricClock();
+    }
+});
+
+// 暂停/恢复时冻结/重启本地时钟，避免暂停时长被计入播放进度
+watch(isPlaying, (now, prev) => {
+    if (now === prev) return;
+    if (prev && !now) {
+        // 暂停：把已推进的进度固化到基准值
+        const elapsed = Math.max(0, Date.now() - lyricSyncedAt.value);
+        lyricTimelinePos.value = lyricTimelinePos.value + elapsed;
+    }
+    // 恢复：从现在重新起算
+    lyricSyncedAt.value = Date.now();
+});
+
+// 拉取网络歌词（QQ→网易双引擎在 Rust 侧），失败/未命中静默回退显示歌名
+const fetchLyricsForCurrentTrack = async (song: string, artist: string) => {
+    const mySeq = ++lyricReqSeq;
+    lyricRequested = true;
+    // 时长用于歌词三重校验；折叠态下进度条未轮询，这里单独取一次
+    let durationMs = 0;
+    try {
+        const tl = await invoke<MusicTimelineResponse | null>('get_music_timeline');
+        if (tl && tl.end_ms > 0) durationMs = tl.end_ms;
+    } catch (_) { /* 拿不到时长就按 0 走纯名称匹配 */ }
+    try {
+        const lrc = await invoke<string>('fetch_netease_lyrics', { songName: song, artistName: artist, durationMs });
+        if (mySeq !== lyricReqSeq) return; // 已切歌，丢弃过期结果
+        if (lrc) {
+            parsedLyrics.value = parseLrc(lrc);
+            // 浏览器拉到歌词 → 判定为播放音乐（而非视频）
+            if (currentIsBrowser.value) isBrowserMusic.value = true;
+            currentMatchedIndex = -1;
+            lyricQueue.value = [];
+            lastLyricChangeTime = 0;
+        }
+    } catch (_) { /* 静默失败：回退显示歌名 */ }
+};
+
+// 重置歌词相关状态（切歌/停止播放/无标题时调用）
+const resetLyricState = () => {
+    lyricReqSeq++; // 使在途请求失效
+    lyricRequested = false;
+    parsedLyrics.value = [];
+    lyricQueue.value = [];
+    currentMatchedIndex = -1;
+    currentLyricText.value = '';
+    lastLyricChangeTime = 0;
+    lyricTimelinePos.value = 0;
+    lyricTimelineEnd.value = 0;
+    lyricSyncedAt.value = Date.now();
+};
+
+// 浏览器专用封面：只认 SMTC 本地封面，拿不到就保留应用 logo（绝不走网络兜底）
+const fetchBrowserCover = async (trackInfo: string) => {
+    if (coverCache.has(trackInfo)) {
+        const cached = coverCache.get(trackInfo)!;
+        coverUrl.value = cached;
+        const cachedBlur = blurredCoverCache.get(trackInfo);
+        if (cachedBlur !== undefined) {
+            blurredCoverUrl.value = cachedBlur;
+        } else {
+            bakeAndStoreBlur(trackInfo, cached);
+        }
+        isBrowserMusic.value = true;
+        return;
+    }
+    try {
+        const smtcCover = await invoke<string | null>('get_smtc_cover');
+        if (currentTrackInfo.value !== trackInfo) return; // 期间已切歌，丢弃过期结果
+        if (smtcCover) {
+            isBrowserMusic.value = true;
+            coverUrl.value = smtcCover;
+            while (coverCache.size >= 50) {
+                const oldest = coverCache.keys().next().value;
+                if (oldest !== undefined) {
+                    coverCache.delete(oldest);
+                    blurredCoverCache.delete(oldest);
+                }
+            }
+            coverCache.set(trackInfo, smtcCover);
+            await bakeAndStoreBlur(trackInfo, smtcCover);
+        }
+    } catch (_) { /* 拿不到 SMTC 封面就保留应用 logo */ }
+};
+
+// 浏览器来源拿到封面判定为音乐后（视频类 → 音乐），补拉网络歌词
+watch(isVideoLikeSource, (now, prev) => {
+    if (prev && !now && currentIsBrowser.value && !lyricRequested && parsedLyrics.value.length === 0) {
+        const artist = currentArtistName.value === '未知歌手' ? '' : currentArtistName.value;
+        if (currentSongName.value && currentSongName.value !== '未在播放歌曲') {
+            fetchLyricsForCurrentTrack(currentSongName.value, artist);
+        }
+    }
+});
+
+// ===== 沉浸模式（coverglass）：显示条件与背景层样式 =====
+// 只要媒体活跃且没被消息弹窗霸占，背景就一直存在
+const showCoverglassBg = computed(() =>
+    islandTheme.value === 'coverglass' &&
+    isMusicCtlEnabled.value &&
+    !isMsgActive.value &&
+    !!blurredCoverUrl.value
+);
+
+// 沉浸背景层：智能规避黑边与遮挡
+const coverglassStyle = computed<CSSProperties>(() => {
+    if (isGlowBorderEnabled.value) {
+        // 流光边框开启时：往内缩进 2px 给边框让路，并匹配内层圆角
+        const innerRadius = isExpandedSize.value ? '22px' : (borderRadius.value === 12 ? '10px' : '98px');
+        return { top: '2px', left: '2px', right: '2px', bottom: '2px', borderRadius: innerRadius };
+    }
+    // 流光边框关闭时：无死角铺满整个灵动岛，并匹配外层大圆角
+    return {
+        top: '0', left: '0', right: '0', bottom: '0',
+        borderRadius: isExpandedSize.value ? '24px' : (borderRadius.value === 12 ? '12px' : '100px'),
+    };
+});
+
 // 音乐滚动相关变量
 const maskBoxRef = ref<HTMLElement | null>(null);
 const textInnerRef = ref<HTMLElement | null>(null);
@@ -2074,7 +2505,7 @@ const calculateScroll = () => {
 };
 
 // 核心修复 2：监听数组必须带�?displayMusic，并�?nextTick 后加上微小延迟，防止 v-else-if 导致宽度拿到 0
-watch([currentTrackInfo, displayMusic, isMusicExpanded], async () => {
+watch([currentTrackInfo, currentLyricText, collapsedTrackText, displayMusic, isMusicExpanded], async () => {
     await nextTick();
     setTimeout(() => {
         if (displayMusic.value) {
@@ -2865,6 +3296,11 @@ watch(displayMusic, (newVal: boolean) => {
 
 // 引入你的默认图标作为兜底
 import defaultLogo from '../assets/logo.png';
+// 视频类/浏览器来源的应用 logo（import 引用，打包后路径才会被 Vite 正确重写）
+import bilibiliLogo from '../assets/bilibili-logo.png';
+import edgeLogo from '../assets/edge-logo.png';
+import chromeLogo from '../assets/chrome-logo.png';
+import potplayerLogo from '../assets/potplayer-logo.jpg';
 const currentMsgIcon = ref(defaultLogo);
 
 // 图标映射�?
@@ -2962,6 +3398,13 @@ onMounted(async () => {
     // 监听来自控制台的主题同步指令
     await listen<{ theme: string }>('control-island-theme', (event) => {
         islandTheme.value = event.payload.theme;
+    });
+
+    // 监听来自控制台的歌词延迟同步指令（正值=歌词延后）
+    await listen<{ delay: number }>('control-lyric-delay', (event) => {
+        if (typeof event.payload.delay === 'number' && Number.isFinite(event.payload.delay)) {
+            nsdLyricDelay.value = event.payload.delay;
+        }
     });
 
     // 监听个性化中心的打包设置同步
@@ -3497,6 +3940,7 @@ onUnmounted(() => {
     stopHwRotation();
     clearInterval(musicTimer);
     stopProgressTimer();
+    stopLyricClock();
     // 使进行中的 toast 等待立即失效，避免卸载后继续改状态
     toastWaitToken++;
     clearToastWaitTimer();
@@ -3510,6 +3954,7 @@ onUnmounted(() => {
     unlistenFns.length = 0;
     // 释放封面缓存
     coverCache.clear();
+    blurredCoverCache.clear();
 });
 </script>
 
@@ -3593,7 +4038,7 @@ onUnmounted(() => {
     overflow: hidden;
 }
 
-/* 顺时针匀速旋�?*/
+/* 顺时针匀速旋转 */
 @keyframes rainbow-rotate {
     from {
         transform: rotate(0deg);
@@ -3602,6 +4047,57 @@ onUnmounted(() => {
     to {
         transform: rotate(360deg);
     }
+}
+
+/* 灵动岛沉浸模式专属样式 */
+.coverglass-bg-container {
+    position: absolute;
+    z-index: 1;
+    /* 压在 0层 流光之上，但在 2层 核心内容之下 */
+    pointer-events: none;
+    overflow: hidden;
+}
+
+.coverglass-bg-image {
+    position: absolute;
+    top: -10%;
+    left: -10%;
+    width: 120%;
+    height: 120%;
+    background-size: cover;
+    background-position: center;
+    opacity: 0.9;
+    transition: background-image 0.8s ease;
+    transform: translateZ(0);
+    /* 开启硬件加速 */
+}
+
+.coverglass-noise-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0.15;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='2.5' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+}
+
+.coverglass-mask-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    /* 铺一层浅黑色遮罩，确保白色的文字和图标绝对清晰可读 */
+    background: rgba(0, 0, 0, 0.45);
+}
+
+/* 确保岛内的核心内容层压在背景图上方 */
+.inner-wrapper,
+.audio-spectrum,
+.status-dot {
+    position: relative;
+    z-index: 2;
 }
 
 [data-tauri-drag-region] {

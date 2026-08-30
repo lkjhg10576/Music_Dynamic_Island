@@ -23,6 +23,9 @@ export const NSD_APP_SCALE = 'nsd_app_scale';
 export const NSD_SPECTRUM_COLOR_MODE = 'nsd_spectrum_color_mode'; // 'album' | 'theme' | 'custom'
 export const NSD_SPECTRUM_CUSTOM_COLOR = 'nsd_spectrum_custom_color'; // hex, 默认 '#b6e0ee'
 
+// 网络歌词
+export const NSD_LYRIC_DELAY = 'nsd_lyric_delay'; // 歌词整体偏移秒数，正值延后显示
+
 // 功能开关
 export const NSD_MUSIC_CTRL = 'nsd_music_ctrl';
 export const NSD_GLOW_BORDER = 'nsd_glow_border';

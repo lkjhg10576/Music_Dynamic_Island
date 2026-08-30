@@ -74,8 +74,19 @@ fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSessio
         // 收集为 Vec 以避免消耗迭代器后需要重新获取
         let sessions: Vec<_> = sessions.into_iter().collect();
 
+        // 抖音会话不算音乐：刷抖音视频时不把抖音当音乐显示
+        let is_douyin = |session: &GlobalSystemMediaTransportControlsSession| {
+            session
+                .SourceAppUserModelId()
+                .map(|id| id.to_string().to_lowercase().contains("douyin"))
+                .unwrap_or(false)
+        };
+
         // 优先级1: 正在播放的会话
         for session in &sessions {
+            if is_douyin(session) {
+                continue;
+            }
             if let Ok(playback_info) = session.GetPlaybackInfo() {
                 if let Ok(status) = playback_info.PlaybackStatus() {
                     if status == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing {
@@ -84,9 +95,12 @@ fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSessio
                 }
             }
         }
-        
+
         // 优先级2: 暂停但有媒体信息的会话
         for session in &sessions {
+            if is_douyin(session) {
+                continue;
+            }
             if let Some(properties) = session.TryGetMediaPropertiesAsync().ok()?.get().ok() {
                 if let Ok(title) = properties.Title() {
                     if !title.to_string().is_empty() {
@@ -95,7 +109,7 @@ fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSessio
                 }
             }
         }
-        
+
         return None;
     }
 
@@ -105,11 +119,22 @@ fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSessio
     for session in sessions {
         if let Ok(app_id) = session.SourceAppUserModelId() {
             let app_id_str = app_id.to_string().to_lowercase();
-            
+
+            // 抖音会话不算音乐，直接放弃匹配（对齐上游）
+            if app_id_str.contains("douyin") {
+                return None;
+            }
+
             // 网易云特殊一点，包名可能叫 cloudmusic 或 netease
             if target == "netease" && (app_id_str.contains("cloudmusic") || app_id_str.contains("netease")) {
                 return Some(session);
-            } 
+            }
+            // 洛雪音乐：官方包名叫 cn.toside.music.desktop，用 lx-music 作为备用包名
+            else if target == "lx-music"
+                && (app_id_str.contains("cn.toside.music.desktop") || app_id_str.contains("lx-music"))
+            {
+                return Some(session);
+            }
             // 其他软件直接用名字去系统进程列表里撞
             else if target != "netease" && app_id_str.contains(&target) {
                 return Some(session);
@@ -120,7 +145,7 @@ fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSessio
 }
 
 #[command]
-pub async fn fetch_netease_music_info() -> Result<Option<(String, String, bool)>, String> {
+pub async fn fetch_netease_music_info() -> Result<Option<(String, String, bool, String)>, String> {
     let session = match get_target_media_session() {
         Some(s) => s,
         None => return Ok(None),
@@ -144,11 +169,49 @@ pub async fn fetch_netease_music_info() -> Result<Option<(String, String, bool)>
     let title = properties.Title().unwrap_or_default().to_string();
     let artist = properties.Artist().unwrap_or_default().to_string();
 
+    // 当前会话来源应用的 AUMID（小写），供前端区分浏览器/视频类来源与应用 logo
+    let app_id_str = session
+        .SourceAppUserModelId()
+        .map(|id| id.to_string().to_lowercase())
+        .unwrap_or_default();
+
     if title.is_empty() {
+        // SMTC 已连上应用但尚未提供有效标题：仍返回会话信息（空标题 + 应用包名），
+        // 让前端把单行展示改为显示"已连接的应用名"，而不是"未在播放"
+        return Ok(Some((String::new(), String::new(), is_playing, app_id_str)));
+    }
+
+    // 识别到抖音：直接判非音乐（会话选择层已按 AUMID 过滤，此处是双保险）
+    if title.contains("抖音") || title.contains("douyin") {
         return Ok(None);
     }
 
-    Ok(Some((title, artist, is_playing)))
+    if app_id_str.contains("bilibili") { // 识别到哔哩哔哩
+        return Ok(Some((title, "bilibili".to_string(), is_playing, app_id_str)));
+    }
+
+    if app_id_str.contains("edge") { // 识别到 Edge 浏览器
+        if artist.is_empty() {
+            return Ok(Some((title, "edge".to_string(), is_playing, app_id_str)));
+        }
+        return Ok(Some((title, artist, is_playing, app_id_str)));
+    }
+
+    if app_id_str.contains("chrome") { // 识别到 Chrome 浏览器
+        if artist.is_empty() {
+            return Ok(Some((title, "chrome".to_string(), is_playing, app_id_str)));
+        }
+        return Ok(Some((title, artist, is_playing, app_id_str)));
+    }
+
+    if app_id_str.contains("potplayer") { // 识别到 PotPlayer
+        if artist.is_empty() {
+            return Ok(Some((title, "potplayer".to_string(), is_playing, app_id_str)));
+        }
+        return Ok(Some((title, artist, is_playing, app_id_str)));
+    }
+
+    Ok(Some((title, artist, is_playing, app_id_str)))
 }
 
 #[command]
@@ -182,6 +245,12 @@ fn get_smtc_thumbnail() -> Option<String> {
     reader.ReadBytes(&mut bytes).ok()?;
 
     Some(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
+}
+
+// 仅尝试读取 SMTC 本地封面，不联网兜底（浏览器/视频类应用专用，避免视频标题在网络搜图时串错封面）
+#[command]
+pub async fn get_smtc_cover() -> Result<Option<String>, String> {
+    Ok(get_smtc_thumbnail())
 }
 
 #[command]
@@ -372,4 +441,221 @@ pub async fn seek_music(position_ms: u64) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+// ===== 网络歌词：QQ 音乐引擎优先，网易云兜底 =====
+
+#[command]
+pub async fn fetch_netease_lyrics(
+    song_name: String,
+    artist_name: String,
+    duration_ms: i64,
+) -> Result<String, String> {
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+    let query = format!("{} {}", song_name, artist_name);
+    let query_name_lower = song_name.to_lowercase();
+    let query_artist_lower = artist_name.to_lowercase(); // 歌手小写比对
+
+    // ENGINE 1: QQ MUSIC (极速国内优选源)
+    let qq_search_url = format!(
+        "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={}&n=5&format=json",
+        urlencoding::encode(&query)
+    );
+
+    if let Ok(resp) = client
+        .get(&qq_search_url)
+        .header("User-Agent", ua)
+        .send()
+        .await
+    {
+        if let Ok(json) = resp.json::<serde_json::Value>().await {
+            if let Some(songs) = json.pointer("/data/song/list").and_then(|v| v.as_array()) {
+                let mut best_songmid = None;
+
+                for song in songs {
+                    let songmid = song.get("songmid").and_then(|v| v.as_str());
+                    let interval = song.get("interval").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let name = song
+                        .get("songname")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+
+                    // 提取 QQ 音乐歌手名
+                    let mut singer_name = String::new();
+                    if let Some(singers) = song.get("singer").and_then(|v| v.as_array()) {
+                        for s in singers {
+                            if let Some(sname) = s.get("name").and_then(|v| v.as_str()) {
+                                singer_name.push_str(&sname.to_lowercase());
+                            }
+                        }
+                    }
+
+                    let name_match =
+                        name.contains(&query_name_lower) || query_name_lower.contains(&name);
+                    let artist_match = singer_name.contains(&query_artist_lower)
+                        || query_artist_lower.contains(&singer_name)
+                        || query_artist_lower.is_empty();
+
+                    if let Some(mid) = songmid {
+                        if duration_ms > 0 {
+                            let diff = (interval * 1000 - duration_ms).abs();
+                            // 必须名字匹配，且 (歌手匹配 或 时间误差极小)
+                            if name_match && (artist_match || diff <= 3000) {
+                                best_songmid = Some(mid.to_string());
+                                break;
+                            }
+                        } else if name_match && artist_match {
+                            best_songmid = Some(mid.to_string());
+                            break;
+                        }
+                    }
+                }
+
+                if let Some(songmid) = best_songmid {
+                    let qq_lyric_url = format!("https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={}&format=json&nobase64=1", songmid);
+                    if let Ok(lyric_resp) = client
+                        .get(&qq_lyric_url)
+                        .header("Referer", "https://y.qq.com/")
+                        .header("User-Agent", ua)
+                        .send()
+                        .await
+                    {
+                        if let Ok(lyric_json) = lyric_resp.json::<serde_json::Value>().await {
+                            if let Some(lyric_text) =
+                                lyric_json.get("lyric").and_then(|v| v.as_str())
+                            {
+                                let decoded = lyric_text
+                                    .replace("&#10;", "\n")
+                                    .replace("&#13;", "\r")
+                                    .replace("&#32;", " ")
+                                    .replace("&#45;", "-")
+                                    .replace("&#40;", "(")
+                                    .replace("&#41;", ")");
+                                if !decoded.is_empty() {
+                                    println!("[网络歌词调试] 命中 QQ音乐 API (已通过双重校验)");
+                                    return Ok(decoded);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ENGINE 2: NETEASE FALLBACK (网易云兜底，伪造随机 IP 避免风控)
+    let fake_ip = {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        format!(
+            "{}.{}.{}.{}",
+            rng.gen_range(11..250),
+            rng.gen_range(11..250),
+            rng.gen_range(11..250),
+            rng.gen_range(11..250)
+        )
+    };
+
+    if let Ok(resp) = client
+        .post("https://music.163.com/api/search/get/web")
+        .header("Referer", "https://music.163.com")
+        .header("User-Agent", ua)
+        .header("X-Real-IP", &fake_ip)
+        .form(&[
+            ("s", query.as_str()),
+            ("type", "1"),
+            ("limit", "8"),
+            ("offset", "0"),
+        ])
+        .send()
+        .await
+    {
+        if let Ok(json) = resp.json::<serde_json::Value>().await {
+            if let Some(songs) = json.pointer("/result/songs").and_then(|v| v.as_array()) {
+                let mut best_song_id = None;
+                let mut min_diff = i64::MAX;
+
+                for song in songs {
+                    let song_duration = song
+                        .get("duration")
+                        .or(song.get("dt"))
+                        .and_then(|v| v.as_i64());
+                    let id = song.get("id").and_then(|v| v.as_i64());
+                    let name = song
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+
+                    // 提取网易云歌手名进行比对
+                    let mut singer_name = String::new();
+                    if let Some(artists) = song
+                        .get("artists")
+                        .or(song.get("ar"))
+                        .and_then(|v| v.as_array())
+                    {
+                        for a in artists {
+                            if let Some(aname) = a.get("name").and_then(|v| v.as_str()) {
+                                singer_name.push_str(&aname.to_lowercase());
+                            }
+                        }
+                    }
+
+                    let name_match =
+                        name.contains(&query_name_lower) || query_name_lower.contains(&name);
+                    let artist_match = singer_name.contains(&query_artist_lower)
+                        || query_artist_lower.contains(&singer_name)
+                        || query_artist_lower.is_empty();
+
+                    if let (Some(id), Some(song_dur)) = (id, song_duration) {
+                        if duration_ms > 0 {
+                            let diff = (song_dur - duration_ms).abs();
+                            // 必须名字匹配，且 (歌手匹配 或 时间误差极小) 才算命中
+                            if name_match && (artist_match || diff <= 3000) {
+                                if diff < min_diff {
+                                    min_diff = diff;
+                                    best_song_id = Some(id);
+                                }
+                            }
+                        } else if name_match && artist_match {
+                            best_song_id = Some(id);
+                            break;
+                        }
+                    }
+                }
+
+                if let Some(song_id) = best_song_id {
+                    let lyric_url = format!(
+                        "https://music.163.com/api/song/lyric?id={}&lv=-1&kv=-1&tv=-1",
+                        song_id
+                    );
+                    if let Ok(lyric_resp) = client
+                        .get(&lyric_url)
+                        .header("User-Agent", ua)
+                        .header("X-Real-IP", &fake_ip)
+                        .send()
+                        .await
+                    {
+                        if let Ok(lyric_json) = lyric_resp.json::<serde_json::Value>().await {
+                            if let Some(lyric_text) =
+                                lyric_json.pointer("/lrc/lyric").and_then(|v| v.as_str())
+                            {
+                                println!("[网络歌词调试] 命中网易云 API 兜底 (已通过双重校验)");
+                                return Ok(lyric_text.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    println!("[网络歌词调试] 失败：所有网络接口均未找到匹配歌词，或未通过双重校验");
+    Ok("".to_string())
 }
