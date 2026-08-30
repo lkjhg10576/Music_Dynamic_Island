@@ -1,6 +1,6 @@
 # Music Dynamic Island（MDI）
 
-> **关于本版本**：Music Dynamic Island（简称 **MDI**）由 **鲫鱼 NSD Pro（NetSpeed Dynamic Pro）** 衍生而来。NSD 即 *NetSpeed Dynamic Pro* 的缩写；本分支在项目原版基础上将重心转向“音乐岛”模式，并做了大量音乐相关优化。
+> **关于本版本**：Music Dynamic Island（简称 **MDI**）由 **NSD Pro（NetSpeed Dynamic Pro）** 衍生而来。NSD 即 *NetSpeed Dynamic Pro* 的缩写；本分支在项目原版基础上将重心转向“音乐岛”模式，并做了大量音乐相关优化。
 
 <div align="center">
 
@@ -88,7 +88,7 @@
 
 ### 多实时活动并行
 
-- **单图标轮换**：灵动岛右侧只保留一个小图标，按你设定的优先级依次轮换当前正在进行的活动
+- **单图标轮换**：灵动岛右侧只保留一个小图标，按设定的优先级依次轮换当前正在进行的活动
 - **参与轮换**：专注番茄钟 / 快捷倒计时 / 硬件监控 / 健康提醒；音乐与网速显示不参与轮换
 - **点击展开**：点小图标可展开当前活动的详情，并自动切到下一个活动
 - **关闭还原**：点 X 关闭详情后，灵动岛会自动回到音乐或独立小图标状态
@@ -170,7 +170,7 @@ Music_Dynamic_Island/
 - Node.js >= 18
 - Rust >= 1.70
 - Tauri 2 CLI
-- 当前版本：`0.4.1`（正式版）
+- 当前版本：`0.5.0`（正式版）`0.6.0-3`（测试版）
 
 ### 安装与运行
 
@@ -228,4 +228,4 @@ Copyright (c) 2026 lkjhg10576
 
 该分支使用了AI编程，在AI编写时已注意了质量问题，项目本身也是我本人长期使用的，我可以保证没有问题，但若介意，还请不要使用
 
-项目使用过以下模型编写代码，介意请勿使用：DeepSeek v4 Pro/Flash，Kimi-K2.7-Code，MiniMax M3，GLM5.2，Hy3，GPT5.6 Sol/Terra，Claude Sonnet 5，Claude Opus 4.8，Grok4.5，LongCat2.0，Step-3.7-Flash，Qwen3.7-Max/Plus，Qwen3.8-Max-Preview
+项目使用过以下模型编写代码，介意请勿使用：DeepSeek v4 Pro/Flash，Kimi-K2.7-Code，MiniMax M3，GLM5.2，GLM5.3 Flash，Hy3，Hy4 Preview，GPT5.6 Sol/Terra，Claude Sonnet 5，Claude Opus 4.8，Grok4.5，LongCat2.0，Step-3.7-Flash，Qwen3.7-Max/Plus，Qwen3.8-Max-Preview
