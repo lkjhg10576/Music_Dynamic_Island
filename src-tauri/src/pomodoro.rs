@@ -1,5 +1,4 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
@@ -18,7 +17,7 @@ static POMO_PHASE_TOTAL_SECS: AtomicU32 = AtomicU32::new(0);
 
 /// 启动后台番茄钟线程（每秒 tick，空闲时降低唤醒频率以节省 CPU）
 pub fn start_pomodoro_thread(app_handle: AppHandle) {
-    thread::spawn(move || {
+    crate::thread_mgr::spawn_managed("pomodoro_tick", move |exit| {
         let mut was_inactive = false; // 追踪空闲状态，避免重复 emit
         loop {
             let active = POMO_ACTIVE.load(Ordering::Relaxed);
@@ -31,12 +30,17 @@ pub fn start_pomodoro_thread(app_handle: AppHandle) {
                     }));
                     was_inactive = true;
                 }
-                // 空闲时延长休眠到 5 秒，大幅降低线程唤醒频率
-                thread::sleep(Duration::from_millis(5000));
+                // 空闲时延长休眠到 5 秒，大幅降低线程唤醒频率（可中断）
+                if exit.sleep_interruptible(Duration::from_millis(5000)) {
+                    return;
+                }
                 continue;
             }
             was_inactive = false;
-            thread::sleep(Duration::from_millis(1000));
+            // 可中断 1s 休眠：收到退出信号立即结束
+            if exit.sleep_interruptible(Duration::from_millis(1000)) {
+                return;
+            }
 
             let paused = POMO_PAUSED.load(Ordering::Relaxed);
             if paused {

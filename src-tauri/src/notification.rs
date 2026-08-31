@@ -181,13 +181,17 @@ pub fn set_notification_listening(app: tauri::AppHandle, enabled: bool) -> Resul
         }
         let (tx, rx) = sync_channel::<Ctrl>(16);
         let handler_tx = tx.clone();
-        *NOTIF_CTRL.lock().unwrap() = Some(tx);
+        *NOTIF_CTRL.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
         NOTIF_RUNNING.store(true, Ordering::SeqCst);
         EVENT_CONFIRMED.store(false, Ordering::SeqCst);
-        std::thread::spawn(move || start_listener_thread(rx, handler_tx, app));
+        crate::thread_mgr::spawn_managed("notification_listener", move |exit| {
+            start_listener_thread(rx, handler_tx, app, exit)
+        });
     } else {
-        if let Some(tx) = NOTIF_CTRL.lock().unwrap().take() {
-            let _ = tx.send(Ctrl::Stop);
+        if let Some(tx) = NOTIF_CTRL.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            if let Err(e) = tx.send(Ctrl::Stop) {
+                eprintln!("[NSD][warn] 发送通知停止信号失败: {}", e);
+            }
         }
         NOTIF_RUNNING.store(false, Ordering::SeqCst);
     }
@@ -196,22 +200,22 @@ pub fn set_notification_listening(app: tauri::AppHandle, enabled: bool) -> Resul
 
 // ===== 常驻监听线程 + 状态机 + COM + 事件注册 + 轮询兜底 =====
 
-fn start_listener_thread(rx: Receiver<Ctrl>, ctrl_tx: SyncSender<Ctrl>, app: tauri::AppHandle) {
+fn start_listener_thread(
+    rx: Receiver<Ctrl>,
+    ctrl_tx: SyncSender<Ctrl>,
+    app: tauri::AppHandle,
+    exit: crate::thread_mgr::ExitFlag,
+) {
     use windows::UI::Notifications::Management::UserNotificationListener;
     use windows::UI::Notifications::Management::UserNotificationListenerAccessStatus;
 
-    // COM 套间：MTA（与 lib.rs 全屏线程一致，WinRT 调用前置条件）
-    unsafe {
-        let _ = windows::Win32::System::Com::CoInitializeEx(
-            None,
-            windows::Win32::System::Com::COINIT_MULTITHREADED,
-        );
-    }
+    // COM 套间：MTA（WinRT 调用前置条件）；ComGuard RAII 保证 CoUninitialize 严格配对
+    let _com_guard = crate::win32_utils::ComGuard::new();
 
     let listener = match UserNotificationListener::Current() {
         Ok(l) => l,
         Err(_) => {
-            let _ = app.emit("notification-status", AccessStatus::Unavailable);
+            crate::win32_utils::log_err(app.emit("notification-status", AccessStatus::Unavailable), "emit notification-status (unavailable)");
             NOTIF_RUNNING.store(false, Ordering::SeqCst);
             return;
         }
@@ -229,7 +233,7 @@ fn start_listener_thread(rx: Receiver<Ctrl>, ctrl_tx: SyncSender<Ctrl>, app: tau
 
     let mut event_registered = false;
     if let Ok(token) = listener.NotificationChanged(&handler) {
-        *EVENT_TOKEN.lock().unwrap() = Some(token);
+        *EVENT_TOKEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(token);
         event_registered = true;
     }
     // 注册失败（非 MSIX Win32 已知限制）→ event_registered=false，纯 5s 轮询
@@ -241,11 +245,14 @@ fn start_listener_thread(rx: Receiver<Ctrl>, ctrl_tx: SyncSender<Ctrl>, app: tau
             UserNotificationListenerAccessStatus::Denied => AccessStatus::Denied,
             _ => AccessStatus::Denied,
         };
-        let _ = app.emit("notification-status", status);
+        crate::win32_utils::log_err(app.emit("notification-status", status), "emit notification-status");
     }
 
     let mut first_run = true;
     loop {
+        if exit.is_exiting() {
+            break;
+        }
         // 状态机：事件已确认 → 60s 低频安全网；否则 5s 轮询（覆盖「事件永不触发」兜底）
         let interval = if EVENT_CONFIRMED.load(Ordering::SeqCst) {
             std::time::Duration::from_secs(60)
@@ -268,17 +275,19 @@ fn start_listener_thread(rx: Receiver<Ctrl>, ctrl_tx: SyncSender<Ctrl>, app: tau
 
         match fetch_incremental(first_run) {
             Ok(batch) if !batch.items.is_empty() => {
-                let _ = app.emit("notification-event", batch);
+                crate::win32_utils::log_err(app.emit("notification-event", batch), "emit notification-event");
             }
             _ => {}
         }
         first_run = false;
     }
 
-    // 清理：注销事件
+    // 清理：注销事件（防泄漏：EVENT_TOKEN 与 RemoveNotificationChanged 严格配对）
     if event_registered {
-        if let Some(token) = EVENT_TOKEN.lock().unwrap().take() {
-            let _ = listener.RemoveNotificationChanged(token);
+        if let Some(token) = EVENT_TOKEN.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            if let Err(e) = listener.RemoveNotificationChanged(token) {
+                eprintln!("[NSD][warn] 注销通知事件失败: {}", e);
+            }
         }
     }
     NOTIF_RUNNING.store(false, Ordering::SeqCst);
@@ -349,7 +358,7 @@ fn parse_command(cmd: &str) -> (String, String) {
 
 /// 调用 ShellExecuteW 启动可执行文件
 fn shell_execute(exe: &str, args: &str) {
-    use winapi::um::shellapi::ShellExecuteW;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
 
     let exe_wide: Vec<u16> = exe.encode_utf16().chain(std::iter::once(0)).collect();
     let args_wide: Vec<u16> = if args.is_empty() {

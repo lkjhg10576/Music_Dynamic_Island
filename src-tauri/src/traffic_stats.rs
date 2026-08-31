@@ -28,9 +28,8 @@ static LAST_PERSIST: Lazy<Mutex<Option<Instant>>> = Lazy::new(|| Mutex::new(None
 fn local_date_string() -> String {
     #[cfg(target_os = "windows")]
     unsafe {
-        // SYSTEMTIME 实际定义在 minwinbase，sysinfoapi 只是私有重导出（直接引会 E0603）
-        use winapi::um::minwinbase::SYSTEMTIME;
-        use winapi::um::sysinfoapi::GetLocalTime;
+        use windows_sys::Win32::Foundation::SYSTEMTIME;
+        use windows_sys::Win32::System::SystemInformation::GetLocalTime;
         let mut st: SYSTEMTIME = std::mem::zeroed();
         GetLocalTime(&mut st);
         format!("{:04}-{:02}-{:02}", st.wYear, st.wMonth, st.wDay)
@@ -70,9 +69,9 @@ pub fn init(app: &tauri::AppHandle) {
     let loaded: Option<HashMap<String, DayTraffic>> =
         file_path(app).ok().and_then(|p| read_json(&p));
     if let Some(map) = loaded {
-        *TRAFFIC.lock().unwrap() = map;
+        *TRAFFIC.lock().unwrap_or_else(|e| e.into_inner()) = map;
     }
-    *LAST_PERSIST.lock().unwrap() = Some(Instant::now());
+    *LAST_PERSIST.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
 }
 
 /// 硬件监控线程每秒调用：把 1s 内的上/下行字节数累计到当日
@@ -81,7 +80,7 @@ pub fn accumulate(up_bytes: u64, down_bytes: u64) {
         return;
     }
     let today = local_date_string();
-    let mut map = TRAFFIC.lock().unwrap();
+    let mut map = TRAFFIC.lock().unwrap_or_else(|e| e.into_inner());
     let entry = map.entry(today).or_default();
     entry.up += up_bytes;
     entry.down += down_bytes;
@@ -90,7 +89,7 @@ pub fn accumulate(up_bytes: u64, down_bytes: u64) {
 /// 落盘节流：距上次落盘超过 PERSIST_INTERVAL 才真正写盘
 pub fn maybe_persist(app: &tauri::AppHandle) {
     let due = {
-        let mut last = LAST_PERSIST.lock().unwrap();
+        let mut last = LAST_PERSIST.lock().unwrap_or_else(|e| e.into_inner());
         match *last {
             Some(t) if t.elapsed() < PERSIST_INTERVAL => false,
             _ => {
@@ -100,7 +99,7 @@ pub fn maybe_persist(app: &tauri::AppHandle) {
         }
     };
     if due {
-        let _ = persist(app);
+        crate::win32_utils::log_err(persist(app), "persist traffic_stats.json");
     }
 }
 
@@ -108,7 +107,7 @@ pub fn maybe_persist(app: &tauri::AppHandle) {
 pub fn persist(app: &tauri::AppHandle) -> Result<(), String> {
     let path = file_path(app)?;
     let data = {
-        let map = TRAFFIC.lock().unwrap();
+        let map = TRAFFIC.lock().unwrap_or_else(|e| e.into_inner());
         serde_json::to_vec_pretty(&*map).map_err(|e| format!("序列化流量统计失败: {}", e))?
     };
     atomic_write(&path, &data)
@@ -116,7 +115,7 @@ pub fn persist(app: &tauri::AppHandle) -> Result<(), String> {
 
 /// 前端只读快照
 pub fn snapshot() -> HashMap<String, DayTraffic> {
-    TRAFFIC.lock().unwrap().clone()
+    TRAFFIC.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 /// 迁移：合并前端 localStorage 的历史数据。按天取 max（后端已累计与旧数据取大者，避免双计），合并后立即落盘。
@@ -125,7 +124,7 @@ pub fn merge_legacy(
     legacy: HashMap<String, DayTraffic>,
 ) -> Result<(), String> {
     {
-        let mut map = TRAFFIC.lock().unwrap();
+        let mut map = TRAFFIC.lock().unwrap_or_else(|e| e.into_inner());
         for (day, traffic) in legacy {
             let entry = map.entry(day).or_default();
             entry.up = entry.up.max(traffic.up);

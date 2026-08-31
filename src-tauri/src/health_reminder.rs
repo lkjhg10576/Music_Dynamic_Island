@@ -1,5 +1,4 @@
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
-use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
@@ -24,9 +23,9 @@ static WATER_CAN_SKIP: AtomicBool = AtomicBool::new(true); // 是否可以跳过
 /// 在 Windows 上播放系统"感叹号"音效
 fn play_exclamation_sound() {
     #[cfg(target_os = "windows")]
-    unsafe {
-        // MB_ICONEXCLAMATION (0x30) 播放系统感叹号音效
-        winapi::um::winuser::MessageBeep(0x30);
+    {
+        // MB_ICONEXCLAMATION (0x30) 播放系统感叹号音效（收口到 win32_utils）
+        crate::win32_utils::message_beep(0x30);
     }
 }
 
@@ -65,7 +64,7 @@ fn process_reminder_tick(
 
 /// 启动健康提醒后台线程（每秒 tick）
 pub fn start_health_reminder_thread(app_handle: AppHandle) {
-    thread::spawn(move || {
+    crate::thread_mgr::spawn_managed("health_reminder_tick", move |exit| {
         let mut was_inactive = false;
         loop {
             let sitting_enabled = SITTING_ENABLED.load(Ordering::Relaxed);
@@ -79,12 +78,18 @@ pub fn start_health_reminder_thread(app_handle: AppHandle) {
                     }));
                     was_inactive = true;
                 }
-                thread::sleep(Duration::from_millis(5000));
+                // 空闲时延长休眠到 5 秒（可中断）
+                if exit.sleep_interruptible(Duration::from_millis(5000)) {
+                    return;
+                }
                 continue;
             }
             was_inactive = false;
 
-            thread::sleep(Duration::from_millis(1000));
+            // 可中断 1s 休眠：收到退出信号立即结束
+            if exit.sleep_interruptible(Duration::from_millis(1000)) {
+                return;
+            }
 
             // 处理久坐提醒
             process_reminder_tick(

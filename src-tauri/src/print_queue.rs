@@ -1,15 +1,20 @@
 //! 打印队列实时监测（事件驱动，无作业时阻塞挂起，零 CPU 轮询）
 //!
-//! 使用 winapi::um::winspool（windows 0.58 的 Devices_Printing 未稳定导出，与锁屏检测同坑）。
-//! 流程：OpenPrinterW(NULL) → FindFirstPrinterChangeNotification → WaitForMultipleObjects
+//! 使用 windows-sys 0.59 的 Win32::Graphics::Printing（不再依赖 winapi）。
+//! Win32 调用已全部收口到 print_utils（plan-2026-08-31 §3.3），句柄 RAII 化：
+//! OpenPrinterW → FindFirstPrinterChangeNotification → WaitForMultipleObjects
 //! 唤醒后 EnumJobsW 拉全量快照，经节流后 emit `print-queue-tick`。
+//! 监控线程接入 thread_mgr 统一退出信号（§4.1），退出时 CloseHandle 释放 stop 事件（§4.3）。
 
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
-use std::thread;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+
+use crate::print_utils;
+use crate::thread_mgr::ExitFlag;
+use crate::win32_utils::log_err;
 
 // ──────────────────────────────────────────────
 // 契约结构（camelCase，与前端一致）
@@ -52,7 +57,8 @@ impl Default for PrintQueueState {
 
 static PRINTER_MONITOR_ENABLED: AtomicBool = AtomicBool::new(true);
 static MONITOR_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
-static STOP_EVENT: OnceLock<isize> = OnceLock::new(); // HANDLE as isize
+// stop 事件句柄（HANDLE as isize）。改为 Mutex<Option<_>> 以支持线程退出时 CloseHandle（§4.3）
+static STOP_EVENT: Mutex<Option<isize>> = Mutex::new(None);
 static LAST_STATE: Mutex<PrintQueueState> = Mutex::new(PrintQueueState {
     has_jobs: false,
     default_printer: String::new(),
@@ -106,14 +112,14 @@ pub fn start_print_queue_monitor(app: AppHandle) {
     // 预创建 stop 事件，供 set_printer_monitor_enabled(false) 立即唤醒
     ensure_stop_event();
 
-    thread::spawn(move || {
+    crate::thread_mgr::spawn_managed("print_queue_monitor", move |exit| {
         #[cfg(target_os = "windows")]
         {
-            monitor_loop(app);
+            monitor_loop(app, exit);
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let _ = app;
+            let _ = (app, exit);
             // 非 Windows：线程立即结束（保持编译通过）
         }
     });
@@ -146,41 +152,40 @@ pub fn get_printer_state() -> PrintQueueState {
 // ──────────────────────────────────────────────
 
 fn ensure_stop_event() -> isize {
-    *STOP_EVENT.get_or_init(|| {
-        #[cfg(target_os = "windows")]
-        unsafe {
-            // 手动复位事件，初始未信号
-            let h = winapi::um::synchapi::CreateEventW(
-                std::ptr::null_mut(),
-                1, // bManualReset = TRUE
-                0, // bInitialState = FALSE
-                std::ptr::null(),
-            );
-            h as isize
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            0
-        }
-    })
+    let mut guard = STOP_EVENT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(h) = *guard {
+        return h;
+    }
+    let h = print_utils::create_manual_reset_event() as isize;
+    *guard = Some(h);
+    h
 }
 
 fn signal_stop_event() {
-    #[cfg(target_os = "windows")]
-    unsafe {
-        let h = ensure_stop_event() as winapi::shared::ntdef::HANDLE;
-        if !h.is_null() {
-            winapi::um::synchapi::SetEvent(h);
+    let h = STOP_EVENT.lock().map(|g| *g).unwrap_or(None);
+    if let Some(h) = h {
+        if h != 0 {
+            print_utils::set_event(h as windows_sys::Win32::Foundation::HANDLE);
         }
     }
 }
 
 fn reset_stop_event() {
-    #[cfg(target_os = "windows")]
-    unsafe {
-        let h = ensure_stop_event() as winapi::shared::ntdef::HANDLE;
-        if !h.is_null() {
-            winapi::um::synchapi::ResetEvent(h);
+    let h = STOP_EVENT.lock().map(|g| *g).unwrap_or(None);
+    if let Some(h) = h {
+        if h != 0 {
+            print_utils::reset_event(h as windows_sys::Win32::Foundation::HANDLE);
+        }
+    }
+}
+
+/// 监控线程退出时关闭 stop 事件句柄，杜绝泄漏（§4.3）。
+/// 仅在监控线程末尾调用一次；此后不再有 signal/reset 请求路径。
+fn close_stop_event() {
+    let mut guard = STOP_EVENT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(h) = guard.take() {
+        if h != 0 {
+            print_utils::close_handle(h as windows_sys::Win32::Foundation::HANDLE);
         }
     }
 }
@@ -190,14 +195,8 @@ fn reset_stop_event() {
 // ──────────────────────────────────────────────
 
 #[cfg(target_os = "windows")]
-fn monitor_loop(app: AppHandle) {
-    use winapi::shared::minwindef::FALSE;
-    use winapi::shared::ntdef::HANDLE;
-    use winapi::um::synchapi::WaitForMultipleObjects;
-    use winapi::um::winspool::{
-        ClosePrinter, FindClosePrinterChangeNotification, FindFirstPrinterChangeNotification,
-        FindNextPrinterChangeNotification, OpenPrinterW,
-    };
+fn monitor_loop(app: AppHandle, exit: ExitFlag) {
+    use windows_sys::Win32::Foundation::HANDLE;
 
     let stop_handle = ensure_stop_event() as HANDLE;
     let mut last_emit = Instant::now() - Duration::from_secs(10);
@@ -214,6 +213,10 @@ fn monitor_loop(app: AppHandle) {
     }
 
     loop {
+        if exit.is_exiting() {
+            break;
+        }
+
         // 禁用时：清空状态，阻塞等待 re-enable（可被 stop 事件立即唤醒，无忙循环）
         if !PRINTER_MONITOR_ENABLED.load(Ordering::SeqCst) {
             let empty = PrintQueueState::default();
@@ -222,61 +225,36 @@ fn monitor_loop(app: AppHandle) {
             last_set_sig.clear();
             // 先 Reset 掉本次唤醒信号，再阻塞等待下次 SetEvent（启用）或超时复查
             reset_stop_event();
-            unsafe {
-                let _ = WaitForMultipleObjects(1, &stop_handle, FALSE, RECONNECT_WAIT_MS);
-            }
+            print_utils::wait_multiple(&[stop_handle], RECONNECT_WAIT_MS);
             // 醒来后清信号，避免下一轮瞬时返回
             reset_stop_event();
             continue;
         }
 
-        // OpenPrinterW(NULL) —— 打开本地打印服务器
-        let mut h_printer: HANDLE = std::ptr::null_mut();
-        let open_ok = unsafe { OpenPrinterW(std::ptr::null_mut(), &mut h_printer, std::ptr::null_mut()) };
-        if open_ok == 0 || h_printer.is_null() {
+        // OpenPrinterW(NULL) —— 打开本地打印服务器（RAII：Drop 时 ClosePrinter）
+        let Some(printer) = print_utils::PrinterHandle::open_default_server() else {
             // spooler 不可用：可被 stop 打断的阻塞等待后重试，不忙循环
-            unsafe {
-                let _ = WaitForMultipleObjects(1, &stop_handle, FALSE, RECONNECT_WAIT_MS);
-            }
-            if !PRINTER_MONITOR_ENABLED.load(Ordering::SeqCst) {
-                // 禁用路径走上方分支
-                continue;
-            }
+            print_utils::wait_multiple(&[stop_handle], RECONNECT_WAIT_MS);
             continue;
-        }
-
-        // FindFirstPrinterChangeNotification
-        let h_change = unsafe {
-            FindFirstPrinterChangeNotification(
-                h_printer,
-                PRINTER_CHANGE_JOB,
-                0,
-                std::ptr::null_mut(),
-            )
         };
-        if h_change.is_null() || h_change == winapi::um::handleapi::INVALID_HANDLE_VALUE {
-            unsafe {
-                ClosePrinter(h_printer);
-            }
-            unsafe {
-                let _ = WaitForMultipleObjects(1, &stop_handle, FALSE, RECONNECT_WAIT_MS);
-            }
-            continue;
-        }
 
-        // 进入事件等待循环
+        // FindFirstPrinterChangeNotification（RAII：Drop 时 FindClosePrinterChangeNotification）
+        let Some(change) = print_utils::ChangeNotifyHandle::register(&printer, PRINTER_CHANGE_JOB) else {
+            print_utils::wait_multiple(&[stop_handle], RECONNECT_WAIT_MS);
+            continue;
+        };
+
+        // 进入事件等待循环（printer / change 离开作用域时由 RAII 自动关闭）
         loop {
-            if !PRINTER_MONITOR_ENABLED.load(Ordering::SeqCst) {
+            if exit.is_exiting() || !PRINTER_MONITOR_ENABLED.load(Ordering::SeqCst) {
                 break;
             }
 
-            let handles: [HANDLE; 2] = [h_change, stop_handle];
-            let wait_rc = unsafe {
-                WaitForMultipleObjects(2, handles.as_ptr(), FALSE, WAIT_TIMEOUT_MS)
-            };
+            let handles: [HANDLE; 2] = [change.raw(), stop_handle];
+            let wait_rc = print_utils::wait_multiple(&handles, WAIT_TIMEOUT_MS);
 
-            // stop 事件（index 1）或已禁用
-            if wait_rc == WAIT_OBJECT_0 + 1 || !PRINTER_MONITOR_ENABLED.load(Ordering::SeqCst) {
+            // stop 事件（index 1）
+            if wait_rc == WAIT_OBJECT_0 + 1 {
                 reset_stop_event();
                 break;
             }
@@ -296,19 +274,11 @@ fn monitor_loop(app: AppHandle) {
 
             if from_notification {
                 // 必须确认通知，否则不会再触发
-                unsafe {
-                    let mut change: u32 = 0;
-                    let _ = FindNextPrinterChangeNotification(
-                        h_change,
-                        &mut change,
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                    );
-                }
+                print_utils::find_next_change(&change);
             }
 
             // 拉全量快照
-            let state = snapshot_with_printer(h_printer);
+            let state = snapshot_with_printer(printer.raw());
             let set_sig = jobs_set_sig(&state.jobs);
             let prog_sig = jobs_progress_sig(&state.jobs);
 
@@ -342,18 +312,14 @@ fn monitor_loop(app: AppHandle) {
             }
 
             if should_emit {
-                let _ = app.emit("print-queue-tick", &state);
+                log_err(app.emit("print-queue-tick", &state), "emit print-queue-tick");
                 last_emit = Instant::now();
                 last_jobs_sig = prog_sig;
                 last_set_sig = set_sig;
             }
         }
 
-        // 清理句柄
-        unsafe {
-            FindClosePrinterChangeNotification(h_change);
-            ClosePrinter(h_printer);
-        }
+        // ── printer / change 的 RAII Drop 在此（FindClosePrinterChangeNotification + ClosePrinter）──
 
         // 禁用时 emit 空队列
         if !PRINTER_MONITOR_ENABLED.load(Ordering::SeqCst) {
@@ -363,12 +329,13 @@ fn monitor_loop(app: AppHandle) {
             last_set_sig.clear();
         }
         // 否则是 spooler 重启/句柄失效，短暂等待后重建（可被 stop 打断）
-        else {
-            unsafe {
-                let _ = WaitForMultipleObjects(1, &stop_handle, FALSE, 500);
-            }
+        else if !exit.is_exiting() {
+            print_utils::wait_multiple(&[stop_handle], 500);
         }
     }
+
+    // 监控线程退出：关闭 stop 事件句柄（§4.3）
+    close_stop_event();
 }
 
 #[cfg(target_os = "windows")]
@@ -377,7 +344,7 @@ fn store_and_emit(app: &AppHandle, state: &PrintQueueState, emit: bool) {
         *guard = state.clone();
     }
     if emit {
-        let _ = app.emit("print-queue-tick", state);
+        log_err(app.emit("print-queue-tick", state), "emit print-queue-tick");
     }
 }
 
@@ -397,94 +364,43 @@ fn jobs_progress_sig(jobs: &[PrintJob]) -> Vec<(u32, u32, u32, String)> {
 
 #[cfg(target_os = "windows")]
 fn snapshot_queue() -> PrintQueueState {
-    use winapi::shared::ntdef::HANDLE;
-    use winapi::um::winspool::{ClosePrinter, OpenPrinterW};
-
-    let mut h_printer: HANDLE = std::ptr::null_mut();
-    let open_ok = unsafe { OpenPrinterW(std::ptr::null_mut(), &mut h_printer, std::ptr::null_mut()) };
-    if open_ok == 0 || h_printer.is_null() {
-        return PrintQueueState {
+    match print_utils::PrinterHandle::open_default_server() {
+        Some(printer) => {
+            // printer 由 RAII 在此作用域结束时 ClosePrinter
+            snapshot_with_printer(printer.raw())
+        }
+        None => PrintQueueState {
             has_jobs: false,
-            default_printer: get_default_printer_name(),
+            default_printer: print_utils::get_default_printer(),
             jobs: Vec::new(),
-        };
+        },
     }
-    let state = snapshot_with_printer(h_printer);
-    unsafe {
-        ClosePrinter(h_printer);
-    }
-    state
 }
 
 #[cfg(target_os = "windows")]
-fn snapshot_with_printer(h_printer: winapi::shared::ntdef::HANDLE) -> PrintQueueState {
-    use winapi::shared::minwindef::DWORD;
-    use winapi::um::winspool::{EnumJobsW, JOB_INFO_1W};
-
-    let default_printer = get_default_printer_name();
+fn snapshot_with_printer(h_printer: windows_sys::Win32::Foundation::HANDLE) -> PrintQueueState {
+    let default_printer = print_utils::get_default_printer();
     let mut jobs: Vec<PrintJob> = Vec::new();
 
-    // 两阶段 EnumJobsW：先取所需缓冲区大小
-    let mut needed: DWORD = 0;
-    let mut returned: DWORD = 0;
-    unsafe {
-        // First call: 期望返回 ERROR_INSUFFICIENT_BUFFER
-        let _ = EnumJobsW(
-            h_printer,
-            0,
-            0xFFFF_FFFF, // 全部作业
-            1,           // JOB_INFO_1
-            std::ptr::null_mut(),
-            0,
-            &mut needed,
-            &mut returned,
-        );
-    }
-
-    if needed > 0 {
-        let mut buf = vec![0u8; needed as usize];
-        let ok = unsafe {
-            EnumJobsW(
-                h_printer,
-                0,
-                0xFFFF_FFFF,
-                1,
-                buf.as_mut_ptr(),
-                needed,
-                &mut needed,
-                &mut returned,
-            )
-        };
-        if ok != 0 && returned > 0 {
-            let base = buf.as_ptr() as *const JOB_INFO_1W;
-            for i in 0..returned as isize {
-                let info = unsafe { &*base.offset(i) };
-                // 过滤已删除/已完成作业（部分 spooler 仍短暂保留）
-                if info.Status & (JOB_STATUS_DELETED | JOB_STATUS_PRINTED) != 0
-                    && info.Status & JOB_STATUS_PRINTING == 0
-                    && info.Status & JOB_STATUS_SPOOLING == 0
-                {
-                    // 已打印且不再活动 → 跳过
-                    if info.Status & JOB_STATUS_DELETED != 0 {
-                        continue;
-                    }
-                }
-                let document = wide_ptr_to_string(info.pDocument);
-                let printer = wide_ptr_to_string(info.pPrinterName);
-                let status = map_job_status(info.Status, info.pStatus);
-                let submitted = systemtime_to_unix_ms(&info.Submitted);
-                jobs.push(PrintJob {
-                    job_id: info.JobId,
-                    document,
-                    printer,
-                    pages_printed: info.PagesPrinted,
-                    total_pages: info.TotalPages,
-                    position: info.Position,
-                    status,
-                    submitted,
-                });
-            }
+    for raw in print_utils::enum_jobs_level1(h_printer) {
+        // 过滤已删除作业（部分 spooler 仍短暂保留；正在打印/后台处理的不算已删除）
+        if raw.status & JOB_STATUS_DELETED != 0
+            && raw.status & JOB_STATUS_PRINTING == 0
+            && raw.status & JOB_STATUS_SPOOLING == 0
+        {
+            continue;
         }
+        let status = map_job_status(raw.status, &raw.custom_status);
+        jobs.push(PrintJob {
+            job_id: raw.job_id,
+            document: raw.document,
+            printer: raw.printer,
+            pages_printed: raw.pages_printed,
+            total_pages: raw.total_pages,
+            position: raw.position,
+            status,
+            submitted: raw.submitted_ms,
+        });
     }
 
     // 按队列位置排序
@@ -498,74 +414,10 @@ fn snapshot_with_printer(h_printer: winapi::shared::ntdef::HANDLE) -> PrintQueue
 }
 
 #[cfg(target_os = "windows")]
-fn get_default_printer_name() -> String {
-    use winapi::shared::minwindef::DWORD;
-    use winapi::um::winspool::GetDefaultPrinterW;
-
-    let mut needed: DWORD = 0;
-    unsafe {
-        // 取长度
-        let _ = GetDefaultPrinterW(std::ptr::null_mut(), &mut needed);
-    }
-    if needed == 0 {
-        return String::new();
-    }
-    let mut buf = vec![0u16; needed as usize];
-    let ok = unsafe { GetDefaultPrinterW(buf.as_mut_ptr(), &mut needed) };
-    if ok == 0 {
-        return String::new();
-    }
-    // 去掉末尾 NUL
-    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    String::from_utf16_lossy(&buf[..len])
-}
-
-#[cfg(target_os = "windows")]
-fn wide_ptr_to_string(ptr: *mut u16) -> String {
-    if ptr.is_null() {
-        return String::new();
-    }
-    unsafe {
-        let mut len = 0usize;
-        // 防御性上限，避免异常指针死循环
-        while len < 4096 && *ptr.add(len) != 0 {
-            len += 1;
-        }
-        String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len))
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn systemtime_to_unix_ms(st: &winapi::um::minwinbase::SYSTEMTIME) -> u64 {
-    // SYSTEMTIME 为本地/UTC 混合场景；用 chrono-free 近似：
-    // 通过 SystemTime::now 不做复杂转换时，回退 0；优先用 Windows API 转 FILETIME
-    use winapi::shared::minwindef::FILETIME;
-    use winapi::um::minwinbase::SYSTEMTIME;
-    use winapi::um::timezoneapi::SystemTimeToFileTime;
-
-    unsafe {
-        let mut ft: FILETIME = std::mem::zeroed();
-        if SystemTimeToFileTime(st as *const SYSTEMTIME, &mut ft) == 0 {
-            return 0;
-        }
-        // FILETIME: 100-ns intervals since 1601-01-01 UTC
-        let ticks = ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64);
-        // 1601 → 1970 偏移：11644473600 秒
-        const EPOCH_DIFF_100NS: u64 = 11644473600u64 * 10_000_000;
-        if ticks < EPOCH_DIFF_100NS {
-            return 0;
-        }
-        let unix_100ns = ticks - EPOCH_DIFF_100NS;
-        unix_100ns / 10_000 // → 毫秒
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn map_job_status(status: u32, p_status: *mut u16) -> String {
+fn map_job_status(status: u32, custom: &str) -> String {
     // 优先可读 pStatus 字符串
-    let custom = wide_ptr_to_string(p_status);
     if !custom.is_empty() {
-        return custom;
+        return custom.to_string();
     }
     if status & JOB_STATUS_ERROR != 0 {
         return "错误".into();
@@ -608,5 +460,3 @@ fn map_job_status(status: u32, p_status: *mut u16) -> String {
     }
     "处理中".into()
 }
-
-

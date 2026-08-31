@@ -13,7 +13,7 @@
                     <span class="lm-col-action"></span>
                 </div>
                 <div v-if="entries.length === 0" class="lm-empty">
-                    暂无缓存歌词。播放歌曲命中网络歌词后会自动缓存；也可点击「导入当前歌曲」手动绑定。
+                    暂无已缓存歌词，播放过且有网络歌词的歌曲会自动缓存，也可点击「导入当前歌曲」手动绑定
                 </div>
                 <div v-for="e in entries" :key="e.key" class="lm-row lm-entry" @dblclick="openEntry(e)">
                     <span class="lm-song" :title="e.song">{{ e.song }}</span>
@@ -23,7 +23,7 @@
                     </span>
                 </div>
             </div>
-            <p class="lm-hint">双击条目进入配置；来源 {{ SOURCE_LABELS.auto }} 的条目由播放链路自动缓存。</p>
+            <p class="lm-hint">双击以配置歌曲的对应歌词</p>
         </div>
 
         <!-- ===== 二级界面：单首配置 ===== -->
@@ -47,7 +47,7 @@
                         <span>歌名</span><span>歌手</span><span>专辑</span><span>时长</span><span>来源</span>
                     </div>
                     <div v-if="candidates.length === 0" class="lm-empty lm-empty-compact">
-                        {{ searching ? '搜索中…' : (searched ? '未找到候选' : '输入歌名歌手后搜索，双击结果行载入歌词') }}
+                        {{ searching ? '正在搜索...' : (searched ? '未找到匹配的歌词' : '输入歌名与歌手以搜索') }}
                     </div>
                     <div v-for="(c, i) in candidates" :key="i" class="lm-cand-row lm-entry"
                         @dblclick="previewCandidate(c)">
@@ -59,7 +59,7 @@
                     </div>
                 </div>
                 <div class="lm-card lm-preview-card">
-                    <pre class="lm-lyric-pre">{{ previewContent || '双击左侧结果载入歌词原文\n或点击「导入」选择本地 .lrc 文件' }}</pre>
+                    <pre class="lm-lyric-pre">{{ previewContent || '双击左侧结果以载入，或使用「导入」使用本地.lrc' }}</pre>
                     <div class="lm-preview-actions">
                         <button class="lm-btn" @click="importFile">导入</button>
                         <button class="lm-btn lm-btn-primary" :disabled="saving" @click="save">
@@ -85,11 +85,25 @@
             </div>
         </Transition>
 
+        <!-- ===== 空歌词保存确认弹窗 ===== -->
+        <Transition name="fade">
+            <div v-if="showEmptyLyricDialog" class="lm-modal-overlay" @click.self="showEmptyLyricDialog = false">
+                <div class="lm-modal">
+                    <h4>无歌词</h4>
+                    <p class="lm-modal-body">歌词为空。仍要保存吗？</p>
+                    <div class="lm-modal-actions">
+                        <button class="lm-btn" @click="showEmptyLyricDialog = false">返回</button>
+                        <button class="lm-btn lm-btn-primary" @click="confirmSaveEmptyLyric">保存</button>
+                    </div>
+                </div>
+            </div>
+        </Transition>
+
         <!-- ===== 未保存退出三键弹窗 ===== -->
         <Transition name="fade">
             <div v-if="showLeaveDialog" class="lm-modal-overlay">
                 <div class="lm-modal">
-                    <h4>尚未保存配置，是否保存？</h4>
+                    <h4>尚未保存当前歌词。仍要退出吗？</h4>
                     <div class="lm-modal-actions lm-modal-actions-column">
                         <button class="lm-btn lm-btn-primary" @click="leaveSaveAndExit">保存并退出</button>
                         <button class="lm-btn" @click="leaveDiscard">不保存</button>
@@ -210,7 +224,7 @@ async function importCurrentTrack() {
     try {
         const track = await invoke<CurrentTrack | null>('import_current_track');
         if (!track) {
-            alertInfo('请先播放歌曲', '未检测到正在播放的音乐，请先在任意播放器中播放歌曲再导入。');
+            alertInfo('获取播放信息失败', '未检测到播放，请播放一首歌曲并点击以导入。');
             return;
         }
         editSong.value = track.song;
@@ -224,7 +238,7 @@ async function importCurrentTrack() {
         view.value = 'editor';
     } catch (err) {
         console.error('获取当前歌曲失败:', err);
-        alertInfo('导入失败', '获取当前播放信息失败，请稍后再试。');
+        alertInfo('获取歌词失败', '获取正在播放歌曲时出现异常，获取失败。');
     }
 }
 
@@ -253,14 +267,14 @@ async function previewCandidate(c: LyricCandidate) {
     try {
         content = await invoke<string>('get_lyrics_by_candidate', { source: c.source, id: c.id });
     } catch (err) {
-        alertInfo('载入失败', typeof err === 'string' ? err : '获取该候选歌词失败，请换一个候选。');
+        alertInfo('获取歌词失败', typeof err === 'string' ? err : '获取歌词失败，请更换源并重试。');
         return;
     }
     if (normalizeDisplay(c.song) !== normalizeDisplay(editSong.value)) {
         confirmDialog.value = {
             visible: true,
             title: '歌名不一致',
-            message: `候选歌名「${c.song}」与当前条目歌名「${editSong.value}」不一致。翻唱绑原唱词是合法操作，但请确认歌词对应正确。是否载入该候选歌词？`,
+            message: `即将保存的「${c.song}」歌词，歌名与正在编辑的歌曲「${editSong.value}」不匹配。仍要保存吗？`,
             onConfirm: () => {
                 previewContent.value = content;
                 confirmDialog.value.visible = false;
@@ -347,7 +361,7 @@ function decodeImportedLrc(bytes: Uint8Array): string {
     if (best.score > 0 && best.mojibakeRate < 0.01 && clearWinner) {
         return best.text;
     }
-    throw new Error('无法识别文件编码，请转换为 UTF-8 后导入');
+    throw new Error('编码识别失败，请转换为UTF-8后重试。');
 }
 
 function importFile() {
@@ -361,7 +375,7 @@ async function onFilePicked(ev: Event) {
     if (!file) return;
 
     if (file.size > MAX_IMPORT_SIZE) {
-        alertInfo('文件过大', `导入的文件超过 1MB 上限（实际 ${formatSize(file.size)}），已拒收。`);
+        alertInfo('文件过大', `超过1MB上限（${formatSize(file.size)}），导入失败。`);
         return;
     }
 
@@ -370,7 +384,7 @@ async function onFilePicked(ev: Event) {
         const buffer = await file.arrayBuffer();
         text = decodeImportedLrc(new Uint8Array(buffer));
     } catch (err) {
-        alertInfo('无法导入', err instanceof Error ? err.message : '文件解码失败，请转换为 UTF-8 后重试。');
+        alertInfo('解码失败', err instanceof Error ? err.message : '解码时出现异常，请转换为UTF-8后重试。');
         return;
     }
 
@@ -379,11 +393,11 @@ async function onFilePicked(ev: Event) {
     // 时间轴校验：至少命中若干 [mm:ss.xx] 行才算有效 LRC
     const timelineLines = text.split(/\r?\n/).filter((line) => TIMELINE_RE.test(line)).length;
     if (timelineLines < MIN_TIMELINE_LINES) {
-        alertInfo('不是有效的 LRC', `未检测到足够的时间轴行（命中 ${timelineLines} 条，至少需要 ${MIN_TIMELINE_LINES} 条）。`);
+        alertInfo('时间轴过少', `时间轴行过少，至少需要有${MIN_TIMELINE_LINES}行时间轴行。`);
         return;
     }
     if (text.trim().length === 0) {
-        alertInfo('文件为空', '导入的文件没有有效内容。');
+        alertInfo('空文件', '导入的文件为空。');
         return;
     }
 
@@ -396,6 +410,9 @@ function formatSize(bytes: number) {
 }
 
 // ===== 保存 =====
+/** 空歌词保存确认弹窗 */
+const showEmptyLyricDialog = ref(false);
+
 async function save() {
     return doSave();
 }
@@ -403,13 +420,36 @@ async function save() {
 async function doSave(): Promise<boolean> {
     const song = editSong.value.trim();
     if (!song) {
-        alertInfo('缺少歌名', '请填写歌名后再保存（保存后按 歌名+歌手+时长 生成唯一绑定）。');
+        alertInfo('未配置歌名', '请填写歌名后保存。');
         return false;
     }
     if (previewContent.value.trim().length === 0) {
-        alertInfo('没有歌词', '请先双击搜索结果载入歌词，或导入本地 .lrc 文件。');
+        // 空歌词：弹确认弹窗
+        showEmptyLyricDialog.value = true;
         return false;
     }
+    return performSave();
+}
+
+/** 空歌词保存确认后退出回调（由 leaveSaveAndExit 注入） */
+let emptyLyricLeaveCallback: (() => void) | null = null;
+
+/** 点「保存」确认空歌词后真正执行保存 */
+function confirmSaveEmptyLyric() {
+    showEmptyLyricDialog.value = false;
+    if (emptyLyricLeaveCallback) {
+        // 保存并退出路径
+        emptyLyricLeaveCallback();
+        emptyLyricLeaveCallback = null;
+    } else {
+        // 普通保存路径
+        void performSave();
+    }
+}
+
+/** 实际执行保存逻辑 */
+async function performSave(): Promise<boolean> {
+    const song = editSong.value.trim();
     saving.value = true;
     try {
         const entry = await invoke<LyricEntry>('save_lyrics_binding', {
@@ -425,7 +465,7 @@ async function doSave(): Promise<boolean> {
         return true;
     } catch (err) {
         console.error('保存失败:', err);
-        alertInfo('保存失败', typeof err === 'string' ? err : '保存歌词绑定失败，请稍后再试。');
+        alertInfo('保存失败', typeof err === 'string' ? err : '保存失败，请重启后再试，或上报此问题。');
         return false;
     } finally {
         saving.value = false;
@@ -459,7 +499,35 @@ function confirmLeave(): Promise<boolean> {
 }
 
 async function leaveSaveAndExit() {
-    const ok = await doSave();
+    const song = editSong.value.trim();
+    if (!song) {
+        alertInfo('未配置歌名', '请填写歌名后保存。');
+        return;
+    }
+    if (previewContent.value.trim().length === 0) {
+        // 空歌词：先弹确认弹窗，确认后再保存并退出
+        showEmptyLyricDialog.value = true;
+        // 临时替换确认处理器：确认后保存并退出
+        const proceed = () => {
+            showEmptyLyricDialog.value = false;
+            performSave().then((ok) => {
+                showLeaveDialog.value = false;
+                if (ok) {
+                    view.value = 'list';
+                    leaveResolver?.(true);
+                } else {
+                    leaveResolver?.(false);
+                }
+            });
+        };
+        // 关闭未保存退出弹窗，由空歌词确认弹窗接管
+        showLeaveDialog.value = false;
+        showEmptyLyricDialog.value = true;
+        // 存储 proceed 供确认按钮调用
+        emptyLyricLeaveCallback = proceed;
+        return;
+    }
+    const ok = await performSave();
     showLeaveDialog.value = false;
     if (ok) {
         view.value = 'list';

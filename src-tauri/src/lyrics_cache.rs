@@ -76,7 +76,7 @@ pub fn make_key(song: &str, artist: &str, duration_ms: i64) -> String {
 }
 
 fn load_index(app: &AppHandle) -> Vec<LyricEntry> {
-    let mut cached = INDEX_CACHE.lock().unwrap();
+    let mut cached = INDEX_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(list) = cached.as_ref() {
         return list.clone();
     }
@@ -91,7 +91,7 @@ fn persist_index(app: &AppHandle, list: &[LyricEntry]) -> Result<(), String> {
     let path = index_path(app)?;
     let data = serde_json::to_vec_pretty(list).map_err(|e| format!("序列化歌词索引失败: {}", e))?;
     atomic_write(&path, &data)?;
-    *INDEX_CACHE.lock().unwrap() = Some(list.to_vec());
+    *INDEX_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some(list.to_vec());
     Ok(())
 }
 
@@ -191,7 +191,9 @@ pub fn delete(app: &AppHandle, key: &str) -> Result<(), String> {
     if let Some(pos) = index.iter().position(|e| e.key == key) {
         let entry = index.remove(pos);
         if let Ok(dir) = lyrics_dir(app) {
-            let _ = std::fs::remove_file(dir.join(&entry.file));
+            if let Err(e) = std::fs::remove_file(dir.join(&entry.file)) {
+                eprintln!("[NSD][warn] 删除歌词文件失败 ({}): {}", entry.file, e);
+            }
         }
         persist_index(app, &index)?;
     }

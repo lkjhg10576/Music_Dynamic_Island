@@ -2,8 +2,10 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rustfft::{num_complex::Complex, Fft, FftPlanner};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
 use tauri::Emitter;
+
+use crate::thread_mgr;
+use crate::win32_utils::log_err;
 
 // 存储 5 个频段的全局数组，默认高度 0.35 (对应前端的 scaleY(0.35))
 static SPECTRUM: Mutex<[f32; 5]> = Mutex::new([0.35; 5]);
@@ -13,6 +15,9 @@ static FFT_CACHE: Mutex<Option<(usize, std::sync::Arc<dyn Fft<f32>>)>> = Mutex::
 
 // 频谱处理开关：仅在前端需要频谱数据时才执行 FFT 运算，空闲时零分配零 CPU
 static SPECTRUM_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+// 采集线程是否在运行（§4.2 按需启停的幂等守卫）
+static MONITOR_RUNNING: AtomicBool = AtomicBool::new(false);
 
 // AGC：每频段滑动峰值包络，使任意音量下视觉幅度一致
 static PEAK_ENV: Mutex<[f32; 5]> = Mutex::new([0.0; 5]);
@@ -25,17 +30,17 @@ static LAST_EMIT_MS: AtomicU64 = AtomicU64::new(0);
 
 /// 注册 AppHandle（在 Tauri setup 阶段调用），用于 emit 事件到前端
 pub fn set_app_handle(handle: Arc<tauri::AppHandle>) {
-    *APP_HANDLE.lock().unwrap() = Some(handle);
+    *APP_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
 }
 
 /// 向 WebSocket 推送最新频谱数据（5 个频段，范围 0.35~0.95）
 fn emit_spectrum(data: &[f32; 5]) {
     let handle = {
-        let guard = APP_HANDLE.lock().unwrap();
+        let guard = APP_HANDLE.lock().unwrap_or_else(|e| e.into_inner());
         guard.clone()
     };
     if let Some(handle) = handle {
-        let _ = handle.emit("spectrum-data", data);
+        log_err(handle.emit("spectrum-data", data), "emit spectrum-data");
     }
 }
 
@@ -49,70 +54,115 @@ thread_local! {
     static I16_F32_BUF: std::cell::RefCell<Vec<f32>> = std::cell::RefCell::new(Vec::new());
 }
 
-#[tauri::command]
-pub fn set_spectrum_active(active: bool) {
-    SPECTRUM_ACTIVE.store(active, Ordering::Relaxed);
+// ===== 按需启停（§4.2）=====
+
+/// 启动音频频谱采集线程（幂等：重复调用不会生成多个线程）。
+/// 线程持有 cpal loopback stream；退出标志置位后 stream 随线程结束一并 Drop，
+/// 释放音频采集资源（旧实现的 `loop { sleep(3600s) }` 空转线程已废弃）。
+pub fn start_monitor() {
+    if MONITOR_RUNNING.swap(true, Ordering::SeqCst) {
+        return; // 已在运行
+    }
+    thread_mgr::spawn_managed("audio_spectrum", |exit| {
+        monitor_thread(exit);
+        MONITOR_RUNNING.store(false, Ordering::SeqCst);
+    });
 }
 
-pub fn start_monitor() {
-    thread::spawn(|| {
-        let host = cpal::default_host();
-        
-        // 获取系统默认播放设备
-        let device = match host.default_output_device() {
-            Some(d) => d,
-            None => return,
-        };
+/// 请求停止采集线程并等待其退出（stream 随之 Drop）
+pub fn stop_monitor() {
+    thread_mgr::stop_thread("audio_spectrum");
+}
 
-        let config = match device.default_output_config() {
-            Ok(c) => c,
-            Err(_) => return,
-        };
+/// 启动采集 + 激活 FFT（前端命令）
+#[tauri::command]
+pub fn start_audio_spectrum() {
+    SPECTRUM_ACTIVE.store(true, Ordering::Relaxed);
+    start_monitor();
+}
 
-        let err_fn = |err| eprintln!("Audio capture error: {}", err);
-        let sample_format = config.sample_format();
-        let config: cpal::StreamConfig = config.into();
-        let channels = config.channels;
+/// 停止 FFT + 关闭采集线程（前端命令）
+#[tauri::command]
+pub fn stop_audio_spectrum() {
+    SPECTRUM_ACTIVE.store(false, Ordering::Relaxed);
+    stop_monitor();
+}
 
-        // 在 Windows 上，对 output_device 调用 build_input_stream 会自动开启 Loopback(内录) 模式
-        let stream = match sample_format {
-            cpal::SampleFormat::F32 => device.build_input_stream(
-                &config,
-                move |data: &[f32], _: &_| {
-                    // 频谱未激活时直接早退，避免无谓的 process_data 函数调用和 thread_local buffer 操作
-                    if !SPECTRUM_ACTIVE.load(Ordering::Relaxed) { return; }
-                    process_data(data, channels)
-                },
-                err_fn,
-                None,
-            ),
-            cpal::SampleFormat::I16 => device.build_input_stream(
-                &config,
-                move |data: &[i16], _: &_| {
-                    // 频谱未激活时直接早退，避免无谓的 Vec 分配和类型转换
-                    if !SPECTRUM_ACTIVE.load(Ordering::Relaxed) { return; }
-                    // 复用 thread_local buffer，避免每次回调都分配
-                    I16_F32_BUF.with(|buf| {
-                        let mut f32_data = buf.borrow_mut();
-                        f32_data.clear();
-                        f32_data.extend(data.iter().map(|&s| s as f32 / i16::MAX as f32));
-                        process_data(&f32_data, channels);
-                    });
-                },
-                err_fn,
-                None,
-            ),
-            _ => return,
-        };
+/// 兼容入口：原统一开关（等价于 start/stop_audio_spectrum）
+#[tauri::command]
+pub fn set_spectrum_active(active: bool) {
+    if active {
+        start_audio_spectrum();
+    } else {
+        stop_audio_spectrum();
+    }
+}
 
-        if let Ok(stream) = stream {
-            let _ = stream.play();
-            // 保持子线程存活
-            loop {
-                thread::sleep(std::time::Duration::from_secs(3600));
+// ===== 采集线程 =====
+
+fn monitor_thread(exit: thread_mgr::ExitFlag) {
+    let host = cpal::default_host();
+
+    // 获取系统默认播放设备
+    let device = match host.default_output_device() {
+        Some(d) => d,
+        None => return,
+    };
+
+    let config = match device.default_output_config() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let err_fn = |err| eprintln!("Audio capture error: {}", err);
+    let sample_format = config.sample_format();
+    let config: cpal::StreamConfig = config.into();
+    let channels = config.channels;
+
+    // 在 Windows 上，对 output_device 调用 build_input_stream 会自动开启 Loopback(内录) 模式
+    let stream = match sample_format {
+        cpal::SampleFormat::F32 => device.build_input_stream(
+            &config,
+            move |data: &[f32], _: &_| {
+                // 频谱未激活时直接早退，避免无谓的 process_data 函数调用和 thread_local buffer 操作
+                if !SPECTRUM_ACTIVE.load(Ordering::Relaxed) { return; }
+                process_data(data, channels)
+            },
+            err_fn,
+            None,
+        ),
+        cpal::SampleFormat::I16 => device.build_input_stream(
+            &config,
+            move |data: &[i16], _: &_| {
+                // 频谱未激活时直接早退，避免无谓的 Vec 分配和类型转换
+                if !SPECTRUM_ACTIVE.load(Ordering::Relaxed) { return; }
+                // 复用 thread_local buffer，避免每次回调都分配
+                I16_F32_BUF.with(|buf| {
+                    let mut f32_data = buf.borrow_mut();
+                    f32_data.clear();
+                    f32_data.extend(data.iter().map(|&s| s as f32 / i16::MAX as f32));
+                    process_data(&f32_data, channels);
+                });
+            },
+            err_fn,
+            None,
+        ),
+        _ => return,
+    };
+
+    if let Ok(stream) = stream {
+        if let Err(e) = stream.play() {
+            eprintln!("[NSD][warn] 音频频谱采集启动失败: {}", e);
+            return;
+        }
+        // 零唤醒挂起：阻塞等待退出信号（每 1h 醒来复查一次防错过），
+        // stop_monitor 触发 signal 后立即醒来，stream 随作用域结束 Drop
+        loop {
+            if exit.wait_for(std::time::Duration::from_secs(3600)) {
+                break;
             }
         }
-    });
+    }
 }
 
 // FFT 核心处理逻辑
@@ -139,7 +189,7 @@ fn process_data(data: &[f32], channels: u16) {
 
         // 2. FFT 准备 - 使用缓存避免每次重建
         let fft = {
-            let mut cache = FFT_CACHE.lock().unwrap();
+            let mut cache = FFT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
             if cache.as_ref().map_or(true, |(len, _)| *len != n) {
                 let mut planner = FftPlanner::new();
                 let plan = planner.plan_fft_forward(n);

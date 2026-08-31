@@ -28,13 +28,16 @@ pub fn init(app: &tauri::AppHandle) {
         .ok()
         .and_then(|p| read_json::<HashMap<String, Value>>(&p))
     {
-        *CONFIG.lock().unwrap() = map;
+        *CONFIG.lock().unwrap_or_else(|e| e.into_inner()) = map;
     }
     let handle = app.clone();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_millis(500));
+    crate::thread_mgr::spawn_managed("config_persist", move |exit| loop {
+        // 可中断休眠：收到退出信号立即结束，避免最长 500ms 的 join 延迟
+        if exit.sleep_interruptible(std::time::Duration::from_millis(500)) {
+            return;
+        }
         if DIRTY.swap(false, Ordering::Relaxed) {
-            let _ = persist(&handle);
+            crate::win32_utils::log_err(persist(&handle), "persist config.json");
         }
     });
 }
@@ -42,23 +45,23 @@ pub fn init(app: &tauri::AppHandle) {
 pub fn persist(app: &tauri::AppHandle) -> Result<(), String> {
     let path = file_path(app)?;
     let data = {
-        let map = CONFIG.lock().unwrap();
+        let map = CONFIG.lock().unwrap_or_else(|e| e.into_inner());
         serde_json::to_vec_pretty(&*map).map_err(|e| format!("序列化配置失败: {}", e))?
     };
     atomic_write(&path, &data)
 }
 
 pub fn get(key: &str) -> Option<Value> {
-    CONFIG.lock().unwrap().get(key).cloned()
+    CONFIG.lock().unwrap_or_else(|e| e.into_inner()).get(key).cloned()
 }
 
 pub fn get_all() -> HashMap<String, Value> {
-    CONFIG.lock().unwrap().clone()
+    CONFIG.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 pub fn set(app: &tauri::AppHandle, key: String, value: Value) -> Result<(), String> {
     {
-        let mut map = CONFIG.lock().unwrap();
+        let mut map = CONFIG.lock().unwrap_or_else(|e| e.into_inner());
         // 值未变化则跳过，避免重复落盘与广播
         if map.get(&key) == Some(&value) {
             return Ok(());
@@ -66,20 +69,26 @@ pub fn set(app: &tauri::AppHandle, key: String, value: Value) -> Result<(), Stri
         map.insert(key.clone(), value.clone());
     }
     DIRTY.store(true, Ordering::Relaxed);
-    let _ = app.emit(
-        "config-changed",
-        serde_json::json!({ "key": key, "value": value }),
+    crate::win32_utils::log_err(
+        app.emit(
+            "config-changed",
+            serde_json::json!({ "key": key, "value": value }),
+        ),
+        "emit config-changed",
     );
     Ok(())
 }
 
 pub fn remove(app: &tauri::AppHandle, key: String) -> Result<(), String> {
-    let removed = CONFIG.lock().unwrap().remove(&key).is_some();
+    let removed = CONFIG.lock().unwrap_or_else(|e| e.into_inner()).remove(&key).is_some();
     if removed {
         DIRTY.store(true, Ordering::Relaxed);
-        let _ = app.emit(
-            "config-changed",
-            serde_json::json!({ "key": key, "value": Value::Null }),
+        crate::win32_utils::log_err(
+            app.emit(
+                "config-changed",
+                serde_json::json!({ "key": key, "value": Value::Null }),
+            ),
+            "emit config-changed (remove)",
         );
     }
     Ok(())
@@ -90,7 +99,7 @@ pub fn remove(app: &tauri::AppHandle, key: String) -> Result<(), String> {
 pub fn merge_legacy(app: &tauri::AppHandle, legacy: HashMap<String, Value>) -> Result<(), String> {
     let mut changed = false;
     {
-        let mut map = CONFIG.lock().unwrap();
+        let mut map = CONFIG.lock().unwrap_or_else(|e| e.into_inner());
         for (k, v) in legacy {
             if !map.contains_key(&k) {
                 map.insert(k, v);

@@ -5,13 +5,11 @@ use serde::Serialize;
 use serde::Deserialize;
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Win32::Media::Audio::{eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator};
-use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
-// 锁屏检测改用 winapi 0.3：其 OpenInputDesktop/CloseDesktop/GENERIC_READ API 在
-// Win32_UI_WindowsAndMessaging / Win32_Foundation 下稳定且无需特殊处理（windows 0.58 的
-// 桌面函数在该特性组合下未导出，会导致编译失败）。
-use winapi::um::winuser::{CloseDesktop, OpenInputDesktop};
-use winapi::um::winnt::GENERIC_READ;
+// 锁屏检测统一到 windows-sys 0.59（OpenInputDesktop/CloseDesktop/GENERIC_READ 均可用）。
+use windows_sys::Win32::Foundation::GENERIC_READ;
+use windows_sys::Win32::UI::WindowsAndMessaging::{CloseDesktop, OpenInputDesktop};
 
 // 结构化系统事件载荷（取代原纯文本 system-event / 结构化 battery-event）
 // kind ∈ {volume, power, battery, network, network_latency, network_disconnect,
@@ -82,7 +80,7 @@ fn emit_sys_event(app: &AppHandle, kind: &str, level: &str, text: &str) {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0),
     };
-    let _ = app.emit("sysmsg-event", payload);
+    crate::win32_utils::log_err(app.emit("sysmsg-event", payload), "emit sysmsg-event");
 }
 
 /// 缓存默认播放设备的 IAudioEndpointVolume，避免每轮重新 CoCreate。
@@ -144,11 +142,9 @@ impl VolumeEndpointCache {
 }
 
 pub fn start_monitor(app: AppHandle) {
-    std::thread::spawn(move || {
-        // 初始化 COM 接口以获取音频
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        }
+    crate::thread_mgr::spawn_managed("system_event_monitor", move |exit| {
+        // 初始化 COM 接口以获取音频；ComGuard RAII 保证 CoUninitialize 严格配对
+        let _com_guard = crate::win32_utils::ComGuard::new();
 
         let mut volume_cache = VolumeEndpointCache::new();
         // last_volume_pct: 0..=100；None 表示尚无有效读数，不触发“变化”
@@ -184,7 +180,10 @@ pub fn start_monitor(app: AppHandle) {
             } else {
                 600
             };
-            std::thread::sleep(Duration::from_millis(sleep_ms));
+            // 可中断休眠：收到退出信号立即结束，避免最长 2s 的 join 延迟
+            if exit.sleep_interruptible(Duration::from_millis(sleep_ms)) {
+                return;
+            }
 
             let mut changed = false;
 
@@ -559,11 +558,14 @@ fn apply_latency_sample(
 /// 按门控发送 sysmsg toast；network-status 始终发送（不受分类门控）
 fn emit_network_actions(app: &AppHandle, actions: &NetworkActions) {
     if let Some(status) = actions.status {
-        let _ = app.emit(
-            "network-status",
-            NetworkStatusPayload {
-                status: status.to_string(),
-            },
+        crate::win32_utils::log_err(
+            app.emit(
+                "network-status",
+                NetworkStatusPayload {
+                    status: status.to_string(),
+                },
+            ),
+            "emit network-status",
         );
     }
     if let Some((kind, level, text)) = &actions.toast {
@@ -584,8 +586,8 @@ fn emit_network_actions(app: &AppHandle, actions: &NetworkActions) {
 pub fn start_network_monitor(app: AppHandle) {
     #[cfg(target_os = "windows")]
     {
-        std::thread::spawn(move || {
-            network_monitor_loop(app);
+        crate::thread_mgr::spawn_managed("network_monitor", move |exit| {
+            network_monitor_loop(app, exit);
         });
     }
     #[cfg(not(target_os = "windows"))]
@@ -596,14 +598,13 @@ pub fn start_network_monitor(app: AppHandle) {
 }
 
 #[cfg(target_os = "windows")]
-fn network_monitor_loop(app: AppHandle) {
+fn network_monitor_loop(app: AppHandle, exit: crate::thread_mgr::ExitFlag) {
     use windows::Win32::Networking::NetworkListManager::{
         INetworkListManager, NetworkListManager,
     };
 
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-    }
+    // COM 套间：MTA；ComGuard RAII 保证 CoUninitialize 严格配对
+    let _com_guard = crate::win32_utils::ComGuard::new();
 
     // 创建 NLM；失败时后续轮询重试
     let mut nlm: Option<INetworkListManager> = unsafe {
@@ -615,6 +616,9 @@ fn network_monitor_loop(app: AppHandle) {
     let mut next_latency_at = Instant::now();
 
     loop {
+        if exit.is_exiting() {
+            return;
+        }
         // 1) NLM 连通性（每 5s）
         if nlm.is_none() {
             nlm = unsafe { CoCreateInstance(&NetworkListManager, None, CLSCTX_ALL).ok() };
@@ -654,7 +658,10 @@ fn network_monitor_loop(app: AppHandle) {
         }
         // NLM 调用失败：本轮跳过，不改变 state
 
-        std::thread::sleep(NLM_POLL_INTERVAL);
+        // 可中断休眠：收到退出信号立即结束
+        if exit.sleep_interruptible(NLM_POLL_INTERVAL) {
+            return;
+        }
     }
 }
 

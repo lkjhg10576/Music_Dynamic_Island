@@ -51,12 +51,12 @@ struct BoundSession {
 /// 调用方必须保证此刻**没有持有** CURRENT_SESSION 锁（Remove* 是同步 COM 调用）。
 impl Drop for BoundSession {
     fn drop(&mut self) {
-        let _ = self
-            .session
-            .RemoveMediaPropertiesChanged(self.media_token.clone());
-        let _ = self
-            .session
-            .RemovePlaybackInfoChanged(self.playback_token.clone());
+        if let Err(e) = self.session.RemoveMediaPropertiesChanged(self.media_token.clone()) {
+            eprintln!("[NSD][warn] RemoveMediaPropertiesChanged 失败: {}", e);
+        }
+        if let Err(e) = self.session.RemovePlaybackInfoChanged(self.playback_token.clone()) {
+            eprintln!("[NSD][warn] RemovePlaybackInfoChanged 失败: {}", e);
+        }
     }
 }
 
@@ -120,30 +120,28 @@ fn register_playback_changed(
 /// 旧的同步实现会在主线程上执行 `RequestAsync().get()`（跨进程、可达数秒），
 /// 把整个 setup 卡住。这里只 spawn 线程，实际初始化挪到 binder_thread。
 pub fn init(app: tauri::AppHandle) {
-    *APP_HANDLE.lock().unwrap() = Some(app.clone());
+    *APP_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = Some(app.clone());
 
     let (tx, rx) = mpsc::channel::<BinderCmd>();
-    *CMD_TX.lock().unwrap() = Some(tx);
+    *CMD_TX.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
 
-    std::thread::spawn(move || binder_thread(app, rx));
+    crate::thread_mgr::spawn_managed("smtc_binder", move |exit| binder_thread(app, rx, exit));
 }
 
 /// binder 常驻线程：MTA 套间 + SessionManager 预热 + 事件注册 + 命令循环
-fn binder_thread(app: tauri::AppHandle, rx: mpsc::Receiver<BinderCmd>) {
-    unsafe {
-        let _ = windows::Win32::System::Com::CoInitializeEx(
-            None,
-            windows::Win32::System::Com::COINIT_MULTITHREADED,
-        );
-    }
+fn binder_thread(app: tauri::AppHandle, rx: mpsc::Receiver<BinderCmd>, exit: crate::thread_mgr::ExitFlag) {
+    // COM 套间：MTA；ComGuard RAII 保证 CoUninitialize 严格配对
+    let _com_guard = crate::win32_utils::ComGuard::new();
 
     // 在本线程（有 COM 套间）预热 SessionManager。
     // 启动极早期（SMTC/RPC 服务尚未就绪）RequestAsync 可能失败：
     // 失败绝不能放弃——这里若死掉，SessionsChanged 永远注册不上，
     // MANAGER_READY 恒为 false，兜底轮询也拿不到数据，事件链永久失效。
-    // 以 1s 间隔无限重试，直到成功。
+    // 以 1s 间隔无限重试，直到成功（可中断：退出信号到达时放弃）
     while !prime_session_manager() {
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        if exit.sleep_interruptible(std::time::Duration::from_secs(1)) {
+            return;
+        }
     }
 
     if let Some(manager) = get_cached_session_manager() {
@@ -160,7 +158,9 @@ fn binder_thread(app: tauri::AppHandle, rx: mpsc::Receiver<BinderCmd>) {
         };
         let handler = ManagerHandler::new(sessions_callback);
         if let Ok(token) = register_sessions_changed(&manager, &handler) {
-            *SESSIONS_TOKEN.lock().unwrap() = Some(token);
+            // SESSIONS_TOKEN 不解绑：本线程与应用同生命周期，进程退出即释放；
+            // 强行在退出路径解绑反而要额外同步，收益为零。
+            *SESSIONS_TOKEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(token);
         }
     }
 
@@ -169,6 +169,9 @@ fn binder_thread(app: tauri::AppHandle, rx: mpsc::Receiver<BinderCmd>) {
     // 常驻命令循环。MTA 下事件由 RPC 线程池投递，这里阻塞 recv 不影响事件接收。
     // 线程不退出，保证 MTA 存活、回调可达。
     for cmd in rx {
+        if exit.is_exiting() {
+            break;
+        }
         match cmd {
             BinderCmd::Rebind => rebind(app.clone(), true),
         }
@@ -207,7 +210,7 @@ fn rebind(app: tauri::AppHandle, force_emit: bool) {
 
     // 与当前绑定是同一会话 → 不重绑（避免重复挂事件），按需补推快照
     {
-        let guard = CURRENT_SESSION.lock().unwrap();
+        let guard = CURRENT_SESSION.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(bound) = guard.as_ref() {
             if bound.session.as_raw() == new_session.as_raw() {
                 drop(guard);
@@ -260,7 +263,10 @@ fn bind_to(app: tauri::AppHandle, new_session: GlobalSystemMediaTransportControl
     let playback_token = match register_playback_changed(&new_session, &playback_handler) {
         Ok(t) => t,
         Err(_) => {
-            let _ = new_session.RemoveMediaPropertiesChanged(media_token);
+            // 回滚已挂上的 media 事件；失败只打 warn（会话即将弃用，无泄漏后果）
+            if let Err(e) = new_session.RemoveMediaPropertiesChanged(media_token) {
+                eprintln!("[NSD][warn] 回滚 RemoveMediaPropertiesChanged 失败: {}", e);
+            }
             return;
         }
     };
@@ -270,7 +276,7 @@ fn bind_to(app: tauri::AppHandle, new_session: GlobalSystemMediaTransportControl
     drop(old);
 
     // —— 锁内置入 ——
-    *CURRENT_SESSION.lock().unwrap() = Some(BoundSession {
+    *CURRENT_SESSION.lock().unwrap_or_else(|e| e.into_inner()) = Some(BoundSession {
         session: new_session.clone(),
         media_token,
         playback_token,
@@ -288,7 +294,7 @@ fn bind_to(app: tauri::AppHandle, new_session: GlobalSystemMediaTransportControl
 
 /// 锁内取出当前绑定（返回后调用方 drop 以在锁外执行 Remove* 解绑）
 fn take_bound_session() -> Option<BoundSession> {
-    CURRENT_SESSION.lock().unwrap().take()
+    CURRENT_SESSION.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
 /// 元数据变化回调处理：推送全量音乐信息。
@@ -328,9 +334,12 @@ fn handle_playback_info_changed(
     }
 
     // 轻量事件：让前端立即处理播放态与窗口显隐（无网络请求，响应最快）
-    let _ = app.emit(
-        "music-playback-changed",
-        serde_json::json!({ "playing": playing }),
+    crate::win32_utils::log_err(
+        app.emit(
+            "music-playback-changed",
+            serde_json::json!({ "playing": playing }),
+        ),
+        "emit music-playback-changed",
     );
     // 同时推一次全量快照（零阻塞，标题来自缓存），保证歌名与播放态同步
     emit_music_info(app.clone(), extract_quick_info(&session));
@@ -397,5 +406,5 @@ fn emit_music_info(app: tauri::AppHandle, info: Payload) {
         }),
         None => serde_json::Value::Null,
     };
-    let _ = app.emit("music-info-changed", payload);
+    crate::win32_utils::log_err(app.emit("music-info-changed", payload), "emit music-info-changed");
 }

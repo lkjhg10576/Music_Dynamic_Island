@@ -89,7 +89,8 @@ fn set_cached_info(aumid: &str, song: &str, artist: &str) {
 // 全局 HTTP 客户端单例，避免每次切歌都创建新的
 static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     Client::builder()
-        .timeout(std::time::Duration::from_secs(3))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .read_timeout(std::time::Duration::from_secs(10))
         .build()
         .expect("failed to build reqwest client")
 });
@@ -135,7 +136,7 @@ pub(crate) fn get_target_media_session() -> Option<GlobalSystemMediaTransportCon
         Some(m) => m,
         None => return None,
     };
-    
+
     let sessions = manager.GetSessions().ok()?;
 
     // 获取当前的目标（前端如果还没传，默认用 netease）
@@ -399,80 +400,104 @@ pub async fn get_smtc_cover() -> Result<Option<String>, String> {
 
 #[command]
 pub async fn get_random_cover_url(song_name: String, artist_name: String) -> Result<String, String> {
+    const FALLBACK_COVER: &str = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTUwIiBoZWlnaHQ9IjE1MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPjxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiNhOGVkZWEiLz48c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiNmZWQ2ZTMiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iMTUwIiBoZWlnaHQ9IjE1MCIgcng9Ijc1IiBmaWxsPSJ1cmwoI2cpIi8+PC9zdmc+";
+
     if let Some(base64_cover) = get_smtc_thumbnail() {
         return Ok(base64_cover);
     }
 
     let client = &*HTTP_CLIENT;
+    let song = song_name.as_str();
+    let artist = artist_name.as_str();
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel(3);
+    // 串行优先：Apple → 网易 → Deezer，成功即返回；每个赛道 5s 超时，失败降级下一赛道
+    if let Some(url) = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        fetch_apple_cover(client, song, artist),
+    )
+    .await
+    .ok()
+    .flatten()
+    {
+        return Ok(url);
+    }
 
-    // 1号赛道：Apple Music
-    let tx_itunes = tx.clone();
-    let client_itunes = client.clone();
-    let query_itunes = format!("{} {}", song_name, artist_name);
-    tokio::spawn(async move {
-        let encoded_query = urlencoding::encode(&query_itunes).into_owned();
-        let itunes_url = format!("https://itunes.apple.com/search?term={}&media=music&limit=1", encoded_query);
-        if let Ok(resp) = client_itunes.get(&itunes_url).send().await {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(artwork) = json.pointer("/results/0/artworkUrl100").and_then(|v| v.as_str()) {
-                    let _ = tx_itunes.send(artwork.replace("100x100bb", "300x300bb")).await;
-                }
-            }
+    if let Some(url) = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        fetch_netease_cover(client, song, artist),
+    )
+    .await
+    .ok()
+    .flatten()
+    {
+        return Ok(url);
+    }
+
+    if let Some(url) = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        fetch_deezer_cover(client, song, artist),
+    )
+    .await
+    .ok()
+    .flatten()
+    {
+        return Ok(url);
+    }
+
+    Ok(FALLBACK_COVER.to_string())
+}
+
+/// Apple Music 封面赛道
+async fn fetch_apple_cover(client: &Client, song_name: &str, artist_name: &str) -> Option<String> {
+    let query = format!("{} {}", song_name, artist_name);
+    let encoded_query = urlencoding::encode(&query).into_owned();
+    let url = format!("https://itunes.apple.com/search?term={}&media=music&limit=1", encoded_query);
+    let resp = client.get(&url).send().await.ok()?;
+    let json: serde_json::Value = resp.json().await.ok()?;
+    let artwork = json.pointer("/results/0/artworkUrl100").and_then(|v| v.as_str())?;
+    Some(artwork.replace("100x100bb", "300x300bb"))
+}
+
+/// 网易云封面赛道
+async fn fetch_netease_cover(client: &Client, song_name: &str, artist_name: &str) -> Option<String> {
+    let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+    let query = format!("{} {}", song_name, artist_name);
+    let resp = client
+        .post("https://music.163.com/api/search/get/web")
+        .header("Referer", "https://music.163.com")
+        .header("User-Agent", ua)
+        .form(&[("s", query.as_str()), ("type", "1"), ("limit", "1"), ("offset", "0")])
+        .send()
+        .await
+        .ok()?;
+    let json: serde_json::Value = resp.json().await.ok()?;
+    let pic = json.pointer("/result/songs/0/al/picUrl").and_then(|v| v.as_str())?;
+    if pic.is_empty() || pic == "http://p4.music.126.net/UeTuwE7pvjBpypWLudqukQ==/3135032972947607.jpg" {
+        return None;
+    }
+    Some(pic.replace("http://", "https://") + "?param=300y300")
+}
+
+/// Deezer 封面赛道
+async fn fetch_deezer_cover(client: &Client, song_name: &str, artist_name: &str) -> Option<String> {
+    let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+    let url = format!(
+        "https://api.deezer.com/search?q=track:\"{}\" artist:\"{}\"&limit=1",
+        urlencoding::encode(song_name).into_owned(),
+        urlencoding::encode(artist_name).into_owned()
+    );
+    let resp = client.get(&url).header("User-Agent", ua).send().await.ok()?;
+    let json: serde_json::Value = resp.json().await.ok()?;
+    if let Some(cover) = json.pointer("/data/0/album/cover_medium").and_then(|v| v.as_str()) {
+        if !cover.is_empty() {
+            return Some(cover.to_string());
         }
-    });
-
-    // 2号赛道：网易云 API
-    let tx_netease = tx.clone();
-    let client_netease = client.clone();
-    let song_netease = song_name.clone();
-    let artist_netease = artist_name.clone();
-    tokio::spawn(async move {
-        let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
-        let query = format!("{} {}", song_netease, artist_netease);
-        if let Ok(resp) = client_netease.post("https://music.163.com/api/search/get/web")
-            .header("Referer", "https://music.163.com")
-            .header("User-Agent", ua)
-            .form(&[("s", query.as_str()), ("type", "1"), ("limit", "1"), ("offset", "0")])
-            .send().await
-        {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(pic) = json.pointer("/result/songs/0/al/picUrl").and_then(|v| v.as_str()) {
-                    if !pic.is_empty() && pic != "http://p4.music.126.net/UeTuwE7pvjBpypWLudqukQ==/3135032972947607.jpg" {
-                        let _ = tx_netease.send(pic.replace("http://", "https://") + "?param=300y300").await;
-                    }
-                }
-            }
-        }
-    });
-
-    // 3号赛道：Deezer API
-    let tx_deezer = tx.clone();
-    let client_deezer = client.clone();
-    let song_deezer = song_name.clone();
-    let artist_deezer = artist_name.clone();
-    tokio::spawn(async move {
-        let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
-        let deezer_url = format!(
-            "https://api.deezer.com/search?q=track:\"{}\" artist:\"{}\"&limit=1",
-            urlencoding::encode(&song_deezer).into_owned(),
-            urlencoding::encode(&artist_deezer).into_owned()
-        );
-        if let Ok(resp) = client_deezer.get(&deezer_url).header("User-Agent", ua).send().await {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(cover) = json.pointer("/data/0/album/cover_medium").and_then(|v| v.as_str()) {
-                    if !cover.is_empty() { let _ = tx_deezer.send(cover.to_string()).await; }
-                } else if let Some(cover) = json.pointer("/data/0/album/cover_big").and_then(|v| v.as_str()) {
-                    if !cover.is_empty() { let _ = tx_deezer.send(cover.to_string()).await; }
-                }
-            }
-        }
-    });
-
-    match tokio::time::timeout(std::time::Duration::from_secs(3), rx.recv()).await {
-        Ok(Some(url)) => Ok(url),
-        _ => Ok("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTUwIiBoZWlnaHQ9IjE1MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPjxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiNhOGVkZWEiLz48c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiNmZWQ2ZTMiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iMTUwIiBoZWlnaHQ9IjE1MCIgcng9Ijc1IiBmaWxsPSJ1cmwoI2cpIi8+PC9zdmc+".to_string()),
+    }
+    let cover = json.pointer("/data/0/album/cover_big").and_then(|v| v.as_str())?;
+    if cover.is_empty() {
+        None
+    } else {
+        Some(cover.to_string())
     }
 }
 
@@ -613,11 +638,7 @@ pub async fn fetch_netease_lyrics(
         return Ok(cached);
     }
 
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(4))
-        .build()
-        .map_err(|e| e.to_string())?;
-
+    let client = &*HTTP_CLIENT;
     let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
     let query = format!("{} {}", song_name, artist_name);
     let query_name_lower = song_name.to_lowercase();
@@ -696,7 +717,10 @@ pub async fn fetch_netease_lyrics(
                                 if !decoded.is_empty() {
                                     println!("[网络歌词调试] 命中 QQ音乐 API (已通过双重校验)");
                                     // 6a：命中即落盘（自动缓存）
-                                    let _ = crate::lyrics_cache::save(&app, &song_name, &artist_name, duration_ms, &decoded, "auto");
+                                    crate::win32_utils::log_err(
+                                        crate::lyrics_cache::save(&app, &song_name, &artist_name, duration_ms, &decoded, "auto"),
+                                        "save auto lyrics (QQ)",
+                                    );
                                     return Ok(decoded);
                                 }
                             }
@@ -806,7 +830,10 @@ pub async fn fetch_netease_lyrics(
                             {
                                 println!("[网络歌词调试] 命中网易云 API 兜底 (已通过双重校验)");
                                 // 6a：命中即落盘（自动缓存）
-                                let _ = crate::lyrics_cache::save(&app, &song_name, &artist_name, duration_ms, lyric_text, "auto");
+                                crate::win32_utils::log_err(
+                                    crate::lyrics_cache::save(&app, &song_name, &artist_name, duration_ms, lyric_text, "auto"),
+                                    "save auto lyrics (netease)",
+                                );
                                 return Ok(lyric_text.to_string());
                             }
                         }
@@ -873,10 +900,7 @@ pub async fn search_lyrics_candidates(
     song_name: String,
     artist_name: String,
 ) -> Result<Vec<LyricCandidate>, String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(4))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = &*HTTP_CLIENT;
     let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
     let query = if artist_name.is_empty() {
         song_name.clone()
@@ -1005,10 +1029,7 @@ pub async fn search_lyrics_candidates(
 /// 按候选拉取完整 LRC 原文（时间轴全保留）
 #[command]
 pub async fn get_lyrics_by_candidate(source: String, id: String) -> Result<String, String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(4))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = &*HTTP_CLIENT;
     let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
     if source == "qq" {

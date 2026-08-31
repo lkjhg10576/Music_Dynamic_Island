@@ -1273,10 +1273,10 @@ watch([showSpectrumIndicator, isIslandVisible], () => {
     const shouldActivate = showSpectrumIndicator.value && isIslandVisible.value;
     if (shouldActivate && !isSpectrumActive) {
         isSpectrumActive = true;
-        invoke('set_spectrum_active', { active: true }).catch(() => {});
+        invoke('start_audio_spectrum').catch(() => {});
     } else if (!shouldActivate && isSpectrumActive) {
         isSpectrumActive = false;
-        invoke('set_spectrum_active', { active: false }).catch(() => {});
+        invoke('stop_audio_spectrum').catch(() => {});
         // 关闭捕获时复位到静默基准线，避免残留上一首歌曲的波形
         spectrumData.value = [0.35, 0.35, 0.35, 0.35, 0.35];
     }
@@ -3040,7 +3040,7 @@ onUnmounted(() => {
     // 使进行中的 toast 等待立即失效，避免卸载后继续改状态（逻辑在 useNotifications 内）
     cleanupNotifications();
     // 组件卸载时关闭频谱捕获，避免后端空跑
-    invoke('set_spectrum_active', { active: false }).catch(() => {});
+    invoke('stop_audio_spectrum').catch(() => {});
     if (speedCycleTimer) clearInterval(speedCycleTimer);
     // 清理所有 Tauri 事件订阅，防止卸载后残留监听器累积
     unlistenFns.forEach(fn => { try { fn(); } catch (_) {} });

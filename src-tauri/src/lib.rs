@@ -11,6 +11,9 @@ mod traffic_stats;
 mod config_store;
 mod session_binder;
 mod lyrics_cache;
+mod print_utils;
+mod thread_mgr;
+mod win32_utils;
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicBool, Ordering};
@@ -22,7 +25,6 @@ use std::time::Duration;
 use tauri_plugin_autostart::MacosLauncher;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton};
-use winapi::shared::windef::RECT;
 
 // 全功能灵动岛智能双模动画锁
 static ANIMATION_ID: AtomicU32 = AtomicU32::new(0);
@@ -97,11 +99,15 @@ struct AnimationCommand {
 /// 启动常驻动画线程（单次创建，loop 监听 channel）
 fn start_animation_thread() {
     let (tx, rx): (std::sync::mpsc::SyncSender<AnimationCommand>, Receiver<AnimationCommand>) = std::sync::mpsc::sync_channel(1);
-    let _ = ANIMATION_CHANNEL.lock().unwrap().insert(tx);
+    let _ = ANIMATION_CHANNEL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(tx);
 
-    std::thread::spawn(move || {
+    thread_mgr::spawn_managed("island_animation", move |exit| {
         let rx = Arc::new(rx);
         loop {
+            if exit.is_exiting() { break; }
             // try_recv 非阻塞：只在有新任务时执行，空闲时零 CPU
             let cmd = rx.recv();
             match cmd {
@@ -121,6 +127,7 @@ fn start_animation_thread() {
                         }
 
                         std::thread::sleep(std::time::Duration::from_millis(8));
+                        if exit.is_exiting() { return; }
 
                         let elapsed = start_time.elapsed().as_secs_f64();
                         let progress = elapsed / 0.4;
@@ -139,13 +146,7 @@ fn start_animation_thread() {
                             (cmd.anchor_cx - phys_window_w / 2, cmd.anchor_cy)
                         };
 
-                        unsafe {
-                            winapi::um::winuser::SetWindowPos(
-                                cmd.hwnd_raw as _,
-                                std::ptr::null_mut(),
-                                final_x, final_y, phys_window_w, phys_window_h, 0x0014,
-                            );
-                        }
+                        win32_utils::set_window_pos_no_activate(cmd.hwnd_raw, final_x, final_y, phys_window_w, phys_window_h);
                     }
 
                     // 动画结束：设置最终目标尺寸，emit island-resize，清理锚点
@@ -158,14 +159,11 @@ fn start_animation_thread() {
                         (cmd.anchor_cx - phys_target_w / 2, cmd.anchor_cy)
                     };
 
-                    unsafe {
-                        winapi::um::winuser::SetWindowPos(
-                            cmd.hwnd_raw as _,
-                            std::ptr::null_mut(),
-                            final_x, final_y, phys_target_w, phys_target_h, 0x0014,
-                        );
-                    }
-                    let _ = cmd.window_clone.emit("island-resize", vec![cmd.target_width, cmd.target_height]);
+                    win32_utils::set_window_pos_no_activate(cmd.hwnd_raw, final_x, final_y, phys_target_w, phys_target_h);
+                    win32_utils::log_err(
+                        cmd.window_clone.emit("island-resize", vec![cmd.target_width, cmd.target_height]),
+                        "emit island-resize",
+                    );
 
                     // 仅当当前动画仍是锚点持有者时才清理，防止误删新一轮动画的锁
                     if let Ok(mut guard) = ANIMATION_ANCHOR.lock() {
@@ -187,37 +185,13 @@ fn start_animation_thread() {
 
 #[tauri::command]
 fn force_window_topmost(app: tauri::AppHandle) {
-    #[cfg(target_os = "windows")]
-    {
-        unsafe {
-            let fg_hwnd = winapi::um::winuser::GetForegroundWindow();
-            if !fg_hwnd.is_null() {
-                let mut class_name = [0u16; 256];
-                let len = winapi::um::winuser::GetClassNameW(fg_hwnd, class_name.as_mut_ptr(), class_name.len() as i32);
-                let class_str = String::from_utf16_lossy(&class_name[..len as usize]);
-                
-                if class_str == "#32768" { return; }
-
-                let mut rect: RECT = std::mem::zeroed();
-                winapi::um::winuser::GetWindowRect(fg_hwnd, &mut rect);
-
-                let monitor = winapi::um::winuser::MonitorFromWindow(fg_hwnd, winapi::um::winuser::MONITOR_DEFAULTTONEAREST);
-                let mut mi: winapi::um::winuser::MONITORINFO = std::mem::zeroed();
-                mi.cbSize = std::mem::size_of::<winapi::um::winuser::MONITORINFO>() as u32;
-                winapi::um::winuser::GetMonitorInfoW(monitor, &mut mi);
-
-                if rect.left == mi.rcMonitor.left && rect.top == mi.rcMonitor.top && rect.right == mi.rcMonitor.right && rect.bottom == mi.rcMonitor.bottom {
-                    if class_str != "Progman" && class_str != "WorkerW" {
-                        return; 
-                    }
-                }
-            }
-
-            if let Some(win) = app.get_webview_window("widget") {
-                if let Ok(hwnd) = win.hwnd() {
-                    winapi::um::winuser::SetWindowPos(hwnd.0 as _, -1isize as _, 0, 0, 0, 0, 19);
-                }
-            }
+    // 判断逻辑（菜单/外壳/全屏跳过）收口到 win32_utils，此处只做置顶动作
+    if win32_utils::should_skip_topmost() {
+        return;
+    }
+    if let Some(win) = app.get_webview_window("widget") {
+        if let Ok(hwnd) = win.hwnd() {
+            win32_utils::set_window_pos_topmost(hwnd.0 as isize);
         }
     }
 }
@@ -225,21 +199,10 @@ fn force_window_topmost(app: tauri::AppHandle) {
 // 新增：底层原子化窗口调整指令，彻底消除位移闪烁
 #[tauri::command]
 fn set_window_bounds(app: tauri::AppHandle, x: i32, y: i32, width: i32, height: i32) {
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(win) = app.get_webview_window("widget") {
-            if let Ok(hwnd) = win.hwnd() {
-                unsafe {
-                    // 0x0014 = SWP_NOACTIVATE (0x0010) | SWP_NOZORDER (0x0004)
-                    // 确保同时修改坐标和尺寸时，不抢占用户焦点，不打乱窗口层级
-                    winapi::um::winuser::SetWindowPos(
-                        hwnd.0 as _,
-                        std::ptr::null_mut(),
-                        x, y, width, height,
-                        0x0014,
-                    );
-                }
-            }
+    if let Some(win) = app.get_webview_window("widget") {
+        if let Ok(hwnd) = win.hwnd() {
+            // SWP_NOACTIVATE | SWP_NOZORDER：不抢占用户焦点，不打乱窗口层级
+            win32_utils::set_window_pos_no_activate(hwnd.0 as isize, x, y, width, height);
         }
     }
 }
@@ -259,11 +222,10 @@ async fn start_island_animation(
     #[cfg(target_os = "windows")]
     {
         if let Ok(hwnd) = window.hwnd() {
-            use winapi::um::winuser::GetWindowRect;
-            use winapi::shared::windef::RECT;
-
-            let mut rect: RECT = unsafe { std::mem::zeroed() };
-            unsafe { GetWindowRect(hwnd.0 as _, &mut rect); }
+            // 获取失败时用零值矩形兜底（windows-sys RECT 未实现 Default，显式构造）
+            let rect = win32_utils::get_window_rect(hwnd.0 as isize).unwrap_or(
+                windows_sys::Win32::Foundation::RECT { left: 0, top: 0, right: 0, bottom: 0 },
+            );
 
             // 获取并克隆锚点值，与之前逻辑一致
             let (anchor_cx, anchor_cy, anchor_lx, anchor_by) = {
@@ -308,7 +270,10 @@ async fn start_island_animation(
                 is_pinned,
             };
 
-            let tx = ANIMATION_CHANNEL.lock().unwrap().clone();
+            let tx = ANIMATION_CHANNEL
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
             if let Some(tx) = tx {
                 // try_send 非阻塞：channel 满（capacity=1）说明动画线程还在跑 400ms 动画
                 // 直接丢新不阻塞 UI 线程；接收方 try_recv 在动画期间会持续检测
@@ -329,10 +294,28 @@ static HW_LAST_TX: AtomicU64 = AtomicU64::new(0);
 static HW_TOTAL_RX: AtomicU64 = AtomicU64::new(0);
 static HW_TOTAL_TX: AtomicU64 = AtomicU64::new(0);
 
-// B1 后台线程：每 1s 刷新 CPU / 内存统计，写入原子变量供 command 零阻塞读取
-// 同时每 2s emit "monitor-stats" 事件，推送网速差值 + CPU/内存
+// B1 后台线程：默认每 1s 刷新 CPU / 内存统计，写入原子变量供 command 零阻塞读取；
+// 同时每 2s emit "monitor-stats" 事件，推送网速差值 + CPU/内存。
+// §6.1 动态间隔：仅当硬件实时活动开启或主窗口可见时全量轮询；
+// 否则进入 30s 一次的流量统计保活模式（保证省内存/静默自启下统计不中断，同时大幅降低 CPU 消耗）。
+fn is_hardware_realtime_needed(app: &tauri::AppHandle) -> bool {
+    if let Some(value) = config_store::get("nsd_hw_enabled") {
+        let enabled = match &value {
+            serde_json::Value::Bool(b) => *b,
+            serde_json::Value::String(s) => s == "true",
+            _ => false,
+        };
+        if enabled {
+            return true;
+        }
+    }
+    app.get_webview_window("main")
+        .map(|w| w.is_visible().unwrap_or(false))
+        .unwrap_or(false)
+}
+
 fn start_hardware_monitor(app_handle: tauri::AppHandle) {
-    std::thread::spawn(move || {
+    thread_mgr::spawn_managed("hardware_monitor", move |exit| {
         let mut sys = System::new();
         let mut networks = Networks::new_with_refreshed_list();
         let mut last_emit = std::time::Instant::now();
@@ -347,6 +330,47 @@ fn start_hardware_monitor(app_handle: tauri::AppHandle) {
         // 流量统计：载入历史数据后由本线程按天累计
         traffic_stats::init(&app_handle);
         loop {
+            // 实时硬件监控未开启且主窗口不可见时，只做低频流量统计保活
+            if !is_hardware_realtime_needed(&app_handle) {
+                networks.refresh();
+                tick_count += 1;
+                // 每15分钟重建一次 Networks 对象（30s × 30），防止长期运行后虚拟网卡增删导致内部 hash 膨胀
+                if tick_count % 30 == 0 {
+                    networks = Networks::new_with_refreshed_list();
+                    HW_LAST_RX.store(0, Ordering::Relaxed);
+                    HW_LAST_TX.store(0, Ordering::Relaxed);
+                }
+                let mut total_rx: u64 = 0;
+                let mut total_tx: u64 = 0;
+                for (_name, data) in networks.iter() {
+                    total_rx += data.total_received();
+                    total_tx += data.total_transmitted();
+                }
+                let prev_rx = HW_LAST_RX.load(Ordering::Relaxed);
+                let prev_tx = HW_LAST_TX.load(Ordering::Relaxed);
+                let (rx_speed, tx_speed) = if prev_rx > 0 {
+                    let rx_diff = total_rx.saturating_sub(prev_rx);
+                    let tx_diff = total_tx.saturating_sub(prev_tx);
+                    ((rx_diff as f64).round() as u64, (tx_diff as f64).round() as u64)
+                } else {
+                    (0, 0)
+                };
+                HW_LAST_RX.store(total_rx, Ordering::Relaxed);
+                HW_LAST_TX.store(total_tx, Ordering::Relaxed);
+                HW_TOTAL_RX.store(total_rx, Ordering::Relaxed);
+                HW_TOTAL_TX.store(total_tx, Ordering::Relaxed);
+                traffic_stats::accumulate(tx_speed, rx_speed);
+                traffic_stats::maybe_persist(&app_handle);
+                // 清空实时推送缓存，避免恢复全量轮询时把空闲前的旧样本混入新均值
+                pending_rx = 0;
+                pending_tx = 0;
+                sample_count = 0;
+                if exit.sleep_interruptible(Duration::from_secs(30)) {
+                    return;
+                }
+                continue;
+            }
+
             sys.refresh_cpu_usage();
             sys.refresh_memory();
             // sysinfo 0.30 中 global_cpu_info() 行为变化，改用 cpus() 遍历求平均
@@ -403,7 +427,7 @@ fn start_hardware_monitor(app_handle: tauri::AppHandle) {
             traffic_stats::accumulate(tx_speed, rx_speed);
             traffic_stats::maybe_persist(&app_handle);
 
-            // 每 2s 推送 monitor-stats 事件（始终推送，控制台图表依赖此事件）
+            // 每 2s 推送 monitor-stats 事件（实时硬件监控开启时推送，控制台图表依赖此事件）
             if last_emit.elapsed() >= Duration::from_secs(2) {
                 // 取推送周期内的平均速度（字节/秒），使网速显示更连贯、更具代表性
                 let avg_rx = if sample_count > 0 { pending_rx / sample_count } else { 0 };
@@ -418,14 +442,17 @@ fn start_hardware_monitor(app_handle: tauri::AppHandle) {
                     "upload_bytes": total_tx,
                     "download_bytes": total_rx,
                 });
-                let _ = app_handle.emit("monitor-stats", payload);
+                win32_utils::log_err(app_handle.emit("monitor-stats", payload), "emit monitor-stats");
                 last_emit = std::time::Instant::now();
                 pending_rx = 0;
                 pending_tx = 0;
                 sample_count = 0;
             }
 
-            std::thread::sleep(Duration::from_secs(1));
+            // 可中断休眠：收到退出信号立即返回，避免最长 1s 的 join 延迟
+            if exit.sleep_interruptible(Duration::from_secs(1)) {
+                return;
+            }
         }
     });
 }
@@ -496,7 +523,7 @@ fn bind_main_window_close_event(window: &tauri::WebviewWindow) {
     window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
-            let _ = win_clone.hide();
+            win32_utils::log_err(win_clone.hide(), "hide main window on close");
         }
     });
 }
@@ -511,11 +538,11 @@ fn close_main_window(app: tauri::AppHandle) {
     if DESTROY_ON_CLOSE.load(Ordering::Relaxed) {
         std::thread::spawn(move || {
             if let Some(win) = app.get_webview_window("main") {
-                let _ = win.destroy();
+                win32_utils::log_err(win.destroy(), "destroy main window");
             }
         });
     } else if let Some(win) = app.get_webview_window("main") {
-        let _ = win.hide();
+        win32_utils::log_err(win.hide(), "hide main window");
     }
 }
 
@@ -532,7 +559,7 @@ fn recreate_main_window(app: &tauri::AppHandle) {
     match builder.build() {
         Ok(new_window) => {
             bind_main_window_close_event(&new_window);
-            let _ = new_window.set_focus();
+            win32_utils::log_err(new_window.set_focus(), "focus recreated main window");
         }
         Err(e) => {
             eprintln!("[NSD] 重建主窗口失败: {}", e);
@@ -592,6 +619,8 @@ pub fn run() {
             set_window_bounds,
             start_island_animation,
             audio_spectrum::set_spectrum_active,
+            audio_spectrum::start_audio_spectrum,
+            audio_spectrum::stop_audio_spectrum,
             music_controller::set_target_player,
             music_controller::fetch_netease_music_info,
             music_controller::control_system_media,
@@ -646,7 +675,7 @@ pub fn run() {
             audio_spectrum::set_app_handle(Arc::new(app.handle().clone()));
             // B3: 启动常驻动画线程（单次创建）
             start_animation_thread();
-            audio_spectrum::start_monitor();
+            // 音频频谱改为按需启停：由前端 set_spectrum_active / start|stop_audio_spectrum 控制
             system_events::start_monitor(app.handle().clone());
             // 独立线程：NLM 连通性 + 延迟探测（不与 start_monitor 混用 COM 套间）
             system_events::start_network_monitor(app.handle().clone());
@@ -658,90 +687,43 @@ pub fn run() {
             // SMTC 会话绑定管理器：事件驱动音乐信息推送（替代前端 3s 轮询）
             session_binder::init(app.handle().clone());
 
-            // 全屏应用检测线程
-
-            // 全屏应用检测线程：每 600ms 轮询，发射 fullscreen-changed 事件供前端做自动隐藏
+            // 全屏应用检测线程：每 2s 轮询，发射 fullscreen-changed 事件供前端做自动隐藏
+            // Win32 判定逻辑收口到 win32_utils::is_foreground_fullscreen
             let app_handle_for_fs = app.handle().clone();
-            std::thread::spawn(move || {
-                unsafe { let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED); }
-                
+            thread_mgr::spawn_managed("fullscreen_detector", move |exit| {
+                // 本线程 emit 事件用到 COM 相关类型，按 MTA 初始化，ComGuard RAII 配对释放
+                let _com = win32_utils::ComGuard::new();
+
                 let mut was_fullscreen = false;
                 // P1：前台窗口句柄缓存 — 句柄未变时跳过完整的 Win32 API 检测，空闲开销趋近于零
-                let mut last_fg_hwnd = std::ptr::null_mut();
+                let mut last_fg_hwnd: isize = 0;
                 loop {
+                    if exit.is_exiting() { break; }
                     #[cfg(target_os = "windows")]
                     {
-                        unsafe {
-                            let mut is_fullscreen = false;
-                            let fg_hwnd = winapi::um::winuser::GetForegroundWindow();
-                            
-                            // 快速路径：前台窗口句柄与上次相同，说明窗口未切换，跳过完整检测
-                            if fg_hwnd == last_fg_hwnd {
-                                // 窗口未切换时延长休眠间隔（2000ms），减少不必要的 CPU 唤醒
-                                std::thread::sleep(std::time::Duration::from_millis(2000));
-                                continue;
+                        let fg_hwnd = win32_utils::foreground_window();
+                        // 快速路径：前台窗口句柄与上次相同，说明窗口未切换，延长休眠减少 CPU 唤醒
+                        if fg_hwnd == last_fg_hwnd {
+                            if exit.sleep_interruptible(std::time::Duration::from_millis(2000)) {
+                                break;
                             }
-                            last_fg_hwnd = fg_hwnd;
-                            
-                            let shell_hwnd = winapi::um::winuser::GetShellWindow();
-                            
-                            if !fg_hwnd.is_null() 
-                                && fg_hwnd != winapi::um::winuser::GetDesktopWindow() 
-                                && fg_hwnd != shell_hwnd 
-                            {
-                                let mut shell_pid = 0;
-                                if !shell_hwnd.is_null() {
-                                    winapi::um::winuser::GetWindowThreadProcessId(shell_hwnd, &mut shell_pid);
-                                }
+                            continue;
+                        }
+                        last_fg_hwnd = fg_hwnd;
 
-                                let mut fg_pid = 0;
-                                winapi::um::winuser::GetWindowThreadProcessId(fg_hwnd, &mut fg_pid);
-
-                                if shell_pid != 0 && fg_pid == shell_pid {
-                                    // 属于系统外壳组件，忽略
-                                } else {
-                                    let style = winapi::um::winuser::GetWindowLongPtrW(fg_hwnd, winapi::um::winuser::GWL_STYLE) as u32;
-                                    let ex_style = winapi::um::winuser::GetWindowLongPtrW(fg_hwnd, winapi::um::winuser::GWL_EXSTYLE) as u32;
-                                    
-                                    if (style & winapi::um::winuser::WS_CHILD) == 0 && (ex_style & winapi::um::winuser::WS_EX_TRANSPARENT) == 0 {
-                                        let mut class_name = [0u16; 256];
-                                        let len = winapi::um::winuser::GetClassNameW(fg_hwnd, class_name.as_mut_ptr(), class_name.len() as i32);
-                                        let class_str = String::from_utf16_lossy(&class_name[..len as usize]);
-                                        
-                                        let is_blacklisted = class_str.contains("Windows.UI.Core.CoreWindow") 
-                                            || class_str.contains("Xaml_WindowedPopupClass")
-                                            || class_str.contains("SearchApp")
-                                            || class_str.contains("NotifyIconOverflowWindow");
-
-                                        if !is_blacklisted {
-                                            let mut rect: winapi::shared::windef::RECT = std::mem::zeroed();
-                                            winapi::um::winuser::GetWindowRect(fg_hwnd, &mut rect);
-
-                                            let monitor = winapi::um::winuser::MonitorFromWindow(fg_hwnd, winapi::um::winuser::MONITOR_DEFAULTTONEAREST);
-                                            let mut mi: winapi::um::winuser::MONITORINFO = std::mem::zeroed();
-                                            mi.cbSize = std::mem::size_of::<winapi::um::winuser::MONITORINFO>() as u32;
-                                            winapi::um::winuser::GetMonitorInfoW(monitor, &mut mi);
-
-                                            if rect.left <= mi.rcMonitor.left 
-                                                && rect.top <= mi.rcMonitor.top 
-                                                && rect.right >= mi.rcMonitor.right 
-                                                && rect.bottom >= mi.rcMonitor.bottom 
-                                            {
-                                                is_fullscreen = true;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            if is_fullscreen != was_fullscreen {
-                                let _ = app_handle_for_fs.emit("fullscreen-changed", is_fullscreen);
-                                was_fullscreen = is_fullscreen;
-                            }
+                        let is_fullscreen = win32_utils::is_foreground_fullscreen();
+                        if is_fullscreen != was_fullscreen {
+                            win32_utils::log_err(
+                                app_handle_for_fs.emit("fullscreen-changed", is_fullscreen),
+                                "emit fullscreen-changed",
+                            );
+                            was_fullscreen = is_fullscreen;
                         }
                     }
-                    // 正常检测路径：休眠 600ms 后继续轮询
-                    std::thread::sleep(std::time::Duration::from_millis(600));
+                    // 正常检测路径：休眠 2s（可中断），收到退出信号立即返回
+                    if exit.sleep_interruptible(std::time::Duration::from_millis(2000)) {
+                        break;
+                    }
                 }
             });
 
@@ -750,8 +732,8 @@ pub fn run() {
 
             if let Some(main_window) = app.get_webview_window("main") {
                 if !is_autostart {
-                    let _ = main_window.show();
-                    let _ = main_window.set_focus();
+                    win32_utils::log_err(main_window.show(), "show main window at startup");
+                    win32_utils::log_err(main_window.set_focus(), "focus main window at startup");
                 }
             }
 
@@ -770,9 +752,9 @@ pub fn run() {
                         let app = tray.app_handle();
                         match app.get_webview_window("main") {
                             Some(main_window) => {
-                                let _ = main_window.show();
-                                let _ = main_window.unminimize();
-                                let _ = main_window.set_focus();
+                                win32_utils::log_err(main_window.show(), "show main window from tray");
+                                win32_utils::log_err(main_window.unminimize(), "unminimize main window from tray");
+                                win32_utils::log_err(main_window.set_focus(), "focus main window from tray");
                             }
                             None => {
                                 // 省内存模式下窗口已被销毁，重建主窗口
@@ -803,10 +785,16 @@ pub fn run() {
                             SetWindowLongPtrW(hwnd_raw, GWL_STYLE, current_style & !(WS_CAPTION as isize));
 
                             let border_color: u32 = 0xFFFFFFFE;
-                            let _ = DwmSetWindowAttribute(hwnd_raw, DWMWA_BORDER_COLOR as u32, &border_color as *const _ as *const _, 4);
+                            let hr = DwmSetWindowAttribute(hwnd_raw, DWMWA_BORDER_COLOR as u32, &border_color as *const _ as *const _, 4);
+                            if hr != 0 {
+                                eprintln!("[NSD][warn] DwmSetWindowAttribute(BORDER_COLOR) failed, hr=0x{:08X}", hr);
+                            }
 
                             let corner_preference = DWMWCP_DONOTROUND;
-                            let _ = DwmSetWindowAttribute(hwnd_raw, DWMWA_WINDOW_CORNER_PREFERENCE as u32, &corner_preference as *const _ as *const _, 4);
+                            let hr = DwmSetWindowAttribute(hwnd_raw, DWMWA_WINDOW_CORNER_PREFERENCE as u32, &corner_preference as *const _ as *const _, 4);
+                            if hr != 0 {
+                                eprintln!("[NSD][warn] DwmSetWindowAttribute(CORNER_PREFERENCE) failed, hr=0x{:08X}", hr);
+                            }
                         }
                     }
                 }
