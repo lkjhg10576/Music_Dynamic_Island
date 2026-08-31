@@ -54,6 +54,8 @@ fn wait_request(
             // Error / Canceled：GetResults 会返回对应错误，透传给上层走重试
             Ok(AsyncStatus::Error) | Ok(AsyncStatus::Canceled) => return Some(op.GetResults()),
             Ok(AsyncStatus::Started) => {}
+            // 未知状态（非 0~3，如未来新增的状态码）：视作仍在进行，继续轮询
+            Ok(_) => {}
             Err(e) => return Some(Err(e)),
         }
         if std::time::Instant::now() >= deadline {

@@ -35,7 +35,7 @@ use windows::Media::Control::{
 
 use crate::music_controller::{
     extract_music_info, extract_quick_info, get_cached_session_manager, get_target_media_session,
-    is_session_playing, prime_session_manager, session_aumid,
+    is_session_manager_ready, is_session_playing, prime_session_manager, session_aumid,
 };
 
 /// 推送给前端的完整载荷：Some((歌名, 歌手, 是否播放, AUMID)) / None 表示无可用音乐会话
@@ -233,7 +233,7 @@ fn binder_thread(app: tauri::AppHandle, rx: mpsc::Receiver<BinderCmd>, exit: cra
             Ok(BinderCmd::Rebind) => rebind(app.clone(), true),
             Err(mpsc::RecvTimeoutError::Timeout) => rebind(app.clone(), true),
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
+        };
     }
 }
 
