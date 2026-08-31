@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::command;
 use once_cell::sync::Lazy;
@@ -20,6 +21,20 @@ static TARGET_PLAYER: Mutex<String> = Mutex::new(String::new());
 static SESSION_MANAGER: Lazy<Mutex<Option<GlobalSystemMediaTransportControlsSessionManager>>> =
     Lazy::new(|| Mutex::new(None));
 
+/// SessionManager 是否已在「具备 COM 套间的线程」上完成初始化并缓存。
+/// 异步 command 跑在 tokio 工作线程上，那些线程从未 CoInitialize，
+/// 在那里首次触发 RequestAsync 可能失败或长时间阻塞，并污染后续缓存。
+/// 未就绪时兜底路径直接返回 None，等 binder 线程就绪后再取。
+static MANAGER_READY: AtomicBool = AtomicBool::new(false);
+
+/// 最近一次成功提取到的元数据缓存（AUMID 小写, 歌名, 歌手）。
+///
+/// 存在意义：事件回调必须「零阻塞」——回调线程不能发起
+/// `TryGetMediaPropertiesAsync` 这类跨进程异步调用（播放器冷启动时会卡住主线程 STA）。
+/// 因此回调里构造快照时，标题从这里补，播放态走同步调用。
+/// 由 `extract_music_info` 成功时写入。
+static LAST_INFO: Mutex<Option<(String, String, String)>> = Mutex::new(None);
+
 /// 获取（必要时创建并缓存）SMTC SessionManager。缓存命中时零 WinRT 异步调用。
 pub(crate) fn get_cached_session_manager() -> Option<GlobalSystemMediaTransportControlsSessionManager> {
     {
@@ -36,6 +51,38 @@ pub(crate) fn get_cached_session_manager() -> Option<GlobalSystemMediaTransportC
         *guard = Some(manager.clone());
     }
     Some(manager)
+}
+
+/// 在具备 COM 套间的线程（session_binder 的常驻 MTA 线程）上预热 SessionManager 并置就绪标志。
+/// 返回是否成功就绪。
+pub(crate) fn prime_session_manager() -> bool {
+    let ready = get_cached_session_manager().is_some();
+    if ready {
+        MANAGER_READY.store(true, Ordering::SeqCst);
+    }
+    ready
+}
+
+/// SessionManager 是否就绪（供兜底轮询路径判断是否可以直接取会话）
+pub(crate) fn is_session_manager_ready() -> bool {
+    MANAGER_READY.load(Ordering::SeqCst)
+}
+
+/// 读取该 AUMID 缓存到的（歌名, 歌手）。缓存缺失或标题为空时返回 None。
+pub(crate) fn cached_title(aumid: &str) -> Option<(String, String)> {
+    let guard = LAST_INFO.lock().ok()?;
+    let (cached_aumid, song, artist) = guard.as_ref()?;
+    if cached_aumid == aumid && !song.is_empty() {
+        Some((song.clone(), artist.clone()))
+    } else {
+        None
+    }
+}
+
+fn set_cached_info(aumid: &str, song: &str, artist: &str) {
+    if let Ok(mut guard) = LAST_INFO.lock() {
+        *guard = Some((aumid.to_string(), song.to_string(), artist.to_string()));
+    }
 }
 
 // 全局 HTTP 客户端单例，避免每次切歌都创建新的
@@ -59,6 +106,26 @@ pub fn set_target_player(player: String) {
     if changed {
         crate::session_binder::rebind_on_target_changed();
     }
+}
+
+/// 同步判断会话是否正在播放（GetPlaybackInfo 是本地缓存的同步调用，开销可忽略）
+pub(crate) fn is_session_playing(
+    session: &GlobalSystemMediaTransportControlsSession,
+) -> bool {
+    session
+        .GetPlaybackInfo()
+        .ok()
+        .and_then(|p| p.PlaybackStatus().ok())
+        .map(|s| s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing)
+        .unwrap_or(false)
+}
+
+/// 读取会话的 AUMID（小写）。取不到时返回空串。
+pub(crate) fn session_aumid(session: &GlobalSystemMediaTransportControlsSession) -> String {
+    session
+        .SourceAppUserModelId()
+        .map(|id| id.to_string().to_lowercase())
+        .unwrap_or_default()
 }
 
 // 自动匹配你选择的软件
@@ -89,32 +156,47 @@ pub(crate) fn get_target_media_session() -> Option<GlobalSystemMediaTransportCon
                 .unwrap_or(false)
         };
 
+        // 优先级0：已绑定的会话若仍在会话列表中且仍在播放，直接沿用。
+        // 保证灵动岛 / 进度条(1Hz) / 封面 / 歌词指向同一目标，避免多会话时来回跳。
+        if let Some(bound) = crate::session_binder::current_bound_session() {
+            let still_listed = sessions.iter().any(|s| s.as_raw() == bound.as_raw());
+            if still_listed && is_session_playing(&bound) {
+                return Some(bound);
+            }
+        }
+
         // 优先级1: 正在播放的会话
         for session in &sessions {
             if is_douyin(session) {
                 continue;
             }
-            if let Ok(playback_info) = session.GetPlaybackInfo() {
-                if let Ok(status) = playback_info.PlaybackStatus() {
-                    if status == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing {
-                        return Some(session.clone());
-                    }
-                }
+            if is_session_playing(session) {
+                return Some(session.clone());
             }
         }
 
-        // 优先级2: 暂停但有媒体信息的会话
+        // 优先级2: 有缓存标题的会话（零阻塞，不再发起 TryGetMediaPropertiesAsync）
         for session in &sessions {
             if is_douyin(session) {
                 continue;
             }
-            if let Some(properties) = session.TryGetMediaPropertiesAsync().ok()?.get().ok() {
-                if let Ok(title) = properties.Title() {
-                    if !title.to_string().is_empty() {
-                        return Some(session.clone());
-                    }
-                }
+            if cached_title(&session_aumid(session)).is_some() {
+                return Some(session.clone());
             }
+        }
+
+        // 优先级3（关键兜底）：绑定第一个非抖音会话。
+        //
+        // 播放器刚启动时：状态还不是 Playing（优先级1 落空）、标题也还是空（优先级2 落空）。
+        // 旧实现此时 return None，导致 session_binder 完全不绑定任何会话——
+        // 之后播放器切到 Playing 时我们没挂事件、收不到 PlaybackInfoChanged，
+        // 若 SessionsChanged 不再触发就只能等 45s 兜底。这就是「延迟数秒」的根因。
+        // 这里只要把事件挂上，等 MediaPropertiesChanged / PlaybackInfoChanged 唤醒即可。
+        for session in &sessions {
+            if is_douyin(session) {
+                continue;
+            }
+            return Some(session.clone());
         }
 
         return None;
@@ -127,9 +209,10 @@ pub(crate) fn get_target_media_session() -> Option<GlobalSystemMediaTransportCon
         if let Ok(app_id) = session.SourceAppUserModelId() {
             let app_id_str = app_id.to_string().to_lowercase();
 
-            // 抖音会话不算音乐，直接放弃匹配（对齐上游）
+            // 抖音会话不算音乐，跳过本条继续找后面的（不能整体 return None：
+            // 抖音排在会话列表前面时，后面的网易云等播放器会被一起放弃）
             if app_id_str.contains("douyin") {
-                return None;
+                continue;
             }
 
             // 网易云特殊一点，包名可能叫 cloudmusic 或 netease
@@ -151,10 +234,48 @@ pub(crate) fn get_target_media_session() -> Option<GlobalSystemMediaTransportCon
     None
 }
 
-/// 从会话提取 (歌名, 歌手, 是否播放, 来源AUMID)。
+/// 从会话提取 (歌名, 歌手, 是否播放, 来源AUMID)，并把成功的标题写入 LAST_INFO 缓存。
 /// None 表示该会话不产生有效音乐信息；空标题仍返回 Some（前端显示「已连接的应用名」）。
 /// 供 fetch_netease_music_info（快照/兜底轮询）与 session_binder（事件推送）共用。
+///
+/// 注意：内部含阻塞的 `TryGetMediaPropertiesAsync().get()`（跨进程），
+/// 只能在「可以阻塞的线程」上调用：
+/// - 兜底轮询所在的 tokio 线程；
+/// - session_binder 的常驻 MTA 线程（bind_to 第 2 步补发全量元数据）；
+/// - SMTC 事件回调线程（MTA 的 RPC 线程池）：各回调在独立线程上投递，
+///   阻塞单个回调既不会卡消息泵，也不会延迟其他事件的投递，
+///   且 MediaPropertiesChanged 触发时属性刚更新（「热」），读取通常毫秒级。
+///   切歌时新标题必须在这里读进 LAST_INFO 缓存，否则缓存永远是旧歌名。
+/// **主线程（STA）绝不能调用本函数**；STA / 高频路径请用零阻塞的 `extract_quick_info`。
 pub(crate) fn extract_music_info(
+    session: &GlobalSystemMediaTransportControlsSession,
+) -> Option<(String, String, bool, String)> {
+    let result = extract_music_info_uncached(session);
+    if let Some((song, artist, _playing, app_id)) = &result {
+        if !song.is_empty() {
+            set_cached_info(app_id, song, artist);
+        }
+    }
+    result
+}
+
+/// 零阻塞快照：只做同步的 `GetPlaybackInfo` / `SourceAppUserModelId`，
+/// 标题从 LAST_INFO 缓存补（缓存缺失时返回空标题，前端显示「已连接的应用名」）。
+///
+/// 供 SMTC 事件回调使用——回调跑在 WinRT 事件线程上，
+/// 发起 `TryGetMediaPropertiesAsync` 会在播放器冷启动时卡住该线程数秒，
+/// 导致后续事件排队、首帧延迟。
+pub(crate) fn extract_quick_info(
+    session: &GlobalSystemMediaTransportControlsSession,
+) -> Option<(String, String, bool, String)> {
+    let is_playing = is_session_playing(session);
+    let app_id_str = session_aumid(session);
+    let (song, artist) = cached_title(&app_id_str).unwrap_or((String::new(), String::new()));
+    Some((song, artist, is_playing, app_id_str))
+}
+
+/// extract_music_info 的实际实现（不带缓存写入）
+fn extract_music_info_uncached(
     session: &GlobalSystemMediaTransportControlsSession,
 ) -> Option<(String, String, bool, String)> {
     let is_playing = if let Ok(playback_info) = session.GetPlaybackInfo() {
@@ -219,12 +340,21 @@ pub(crate) fn extract_music_info(
 
 #[command]
 pub async fn fetch_netease_music_info() -> Result<Option<(String, String, bool, String)>, String> {
+    // SessionManager 未就绪时不要在这里触发 RequestAsync：
+    // 异步 command 跑在 tokio 工作线程上，那些线程没有 COM 套间，
+    // 首次 RequestAsync 可能失败或长时间阻塞。返回 None 交给下一次轮询重试。
+    if !is_session_manager_ready() {
+        return Ok(None);
+    }
+
     let session = match get_target_media_session() {
         Some(s) => s,
         None => return Ok(None),
     };
 
-    Ok(extract_music_info(&session))
+    // 取属性失败 ≠ 无音乐（播放器刚启动时常见）。会话还在，退回零阻塞快照，
+    // 与事件驱动链路语义一致，避免把 UI 误清空成「未在播放歌曲」。
+    Ok(extract_music_info(&session).or_else(|| extract_quick_info(&session)))
 }
 
 #[command]

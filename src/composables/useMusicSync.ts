@@ -8,6 +8,7 @@
  */
 import { ref, type Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 export function useMusicSync(deps: {
     displayMusic: Ref<boolean>;
@@ -79,8 +80,101 @@ export function useMusicSync(deps: {
         } catch (_) { /* 拿不到 SMTC 封面就保留应用 logo */ }
     };
 
+    // 灵动岛显隐调度：播放中自动恢复显示，停止播放时延迟隐藏。
+    // 必须在 isPlaying 赋值之后调用 —— scheduleAutoHide 内部有 !isPlaying 守卫，
+    // 顺序颠倒会导致「正在播放却被判定为可隐藏」。
+    const applyIslandVisibility = async (playing: boolean) => {
+        // 音乐播放器模式：有音乐就显示，没音乐就隐藏
+        if (!deps.displayMusic.value) return;
+
+        if (playing && !deps.isIslandVisible.value) {
+            // 有音乐播放且灵动岛被隐藏，自动恢复显示
+            await getCurrentWindow().show();
+            deps.isIslandVisible.value = true;
+        } else if (!playing && deps.isIslandVisible.value && !deps.isMouseOver.value) {
+            // 音乐停止播放且鼠标不在灵动岛上，延迟隐藏
+            // scheduleAutoHide 内部会校验音乐控制器模式 + 自动隐藏开关
+            deps.scheduleAutoHide();
+        }
+    };
+
+    // 封面加载（含网络请求）。从 applyMusicInfo 抽出：调用方 fire-and-forget，不阻塞首帧。
+    const loadCoverForTrack = async (
+        song: string,
+        artist: string,
+        appId: string,
+        newTrackInfo: string,
+        fetchVersion: number
+    ) => {
+        if (currentIsBrowser.value) {
+            // 浏览器只认 SMTC 本地封面，绝不走网络兜底（避免视频标题在网络搜图时串错封面）
+            await fetchBrowserCover(newTrackInfo);
+            return;
+        }
+
+        // B站 / PotPlayer 视频模式：不取封面，圆形封面回退应用 logo
+        if (appId.includes('bilibili') || artist === 'potplayer') {
+            coverUrl.value = '';
+            return;
+        }
+
+        // 优先读取缓存（LRU：命中时刷新插入顺序，超限时淘汰最旧条目）
+        if (coverCache.has(newTrackInfo)) {
+            // 命中：先删再设，将该条目移到 Map 末尾（最新）
+            const cached = coverCache.get(newTrackInfo)!;
+            coverCache.delete(newTrackInfo);
+            coverCache.set(newTrackInfo, cached);
+            coverUrl.value = cached;
+            const cachedBlur = blurredCoverCache.get(newTrackInfo);
+            if (cachedBlur !== undefined) {
+                blurredCoverCache.delete(newTrackInfo);
+                blurredCoverCache.set(newTrackInfo, cachedBlur);
+                blurredCoverUrl.value = cachedBlur;
+            } else {
+                await deps.bakeAndStoreBlur(newTrackInfo, cached);
+            }
+            return;
+        }
+
+        try {
+            const realCoverUrl = await invoke<string>('get_random_cover_url', {
+                songName: song,
+                artistName: artist
+            });
+            // 清理缓存或切歌后，丢弃过期封面结果
+            if (fetchVersion !== coverFetchVersion
+                || currentTrackInfo.value !== newTrackInfo) {
+                return;
+            }
+            coverUrl.value = realCoverUrl;
+            // 写入缓存，超限逐条淘汰最旧条目（LRU）
+            while (coverCache.size >= 50) {
+                const oldest = coverCache.keys().next().value;
+                if (oldest !== undefined) {
+                    coverCache.delete(oldest);
+                    blurredCoverCache.delete(oldest);
+                }
+            }
+            coverCache.set(newTrackInfo, realCoverUrl);
+            // 烘焙沉浸模式模糊封面（只烘焙一次并按曲目缓存）
+            await deps.bakeAndStoreBlur(newTrackInfo, realCoverUrl);
+        } catch (coverErr) {
+            if (fetchVersion !== coverFetchVersion
+                || currentTrackInfo.value !== newTrackInfo) {
+                return;
+            }
+            console.error('所有封面源均获取失败', coverErr);
+            // 使用本地图标或纯色背景，不要再用外部 URL 作为错误兜底
+            coverUrl.value = '';
+        }
+    };
+
     // 应用音乐信息到 UI：供后端 music-info-changed 事件与低频兜底轮询共用
     // （封面/歌词/浏览器判定等完整切歌逻辑都在这里）
+    //
+    // ⚠️ 流程顺序至关重要：歌名 / 歌手 / 播放态 / 窗口显隐构成「首帧」，必须在任何网络 I/O 之前完成。
+    // 旧实现把 isPlaying 赋值和 show() 排在封面（1~3s）与歌词（1~3s）两次串行网络请求之后，
+    // 而启动时灵动岛已被自动隐藏，导致用户要等 2~6s 才看到内容。
     const applyMusicInfo = async (song: string, artist: string, playing: boolean, appId: string) => {
         // 捕获本次调用起始版本；清理缓存会递增版本，避免过期封面回写
         const fetchVersion = coverFetchVersion;
@@ -90,6 +184,7 @@ export function useMusicSync(deps: {
         currentIsBrowser.value = appId.includes('edge') || appId.includes('chrome');
 
         // SMTC 已连上应用但还没有有效标题：单行展示改为显示"已连接的应用名"（而不是"未在播放"）
+        // （播放器刚启动时很常见：会话已建但标题还没发布）
         if (!song) {
             const connectedName = deps.getConnectedAppName(appId);
             currentSongName.value = connectedName;
@@ -101,17 +196,18 @@ export function useMusicSync(deps: {
             isPlaying.value = playing;
             coverUrl.value = '';
             blurredCoverUrl.value = '';
-            if (!playing && deps.isIslandVisible.value && !deps.isMouseOver.value) {
-                deps.scheduleAutoHide();
-            }
+            // 播放中也要能弹出（旧实现只有 hide 分支，播放器已在播但标题未就绪时不显示）
+            await applyIslandVisibility(playing);
             return;
         }
 
-        // 新增这两行为了展开后的双行显示分别赋值
+        // ===== ① 首帧：同步赋值 + 窗口显隐，零网络 I/O =====
         currentSongName.value = song;
         currentArtistName.value = artist || '未知歌手';
+        isPlaying.value = playing;
+        await applyIslandVisibility(playing);
 
-        // 拼接新的歌曲信息
+        // ===== ② 后台：封面与歌词并行，不阻塞首帧 =====
         const newTrackInfo = artist ? `${song} - ${artist}` : song;
 
         if (currentTrackInfo.value !== newTrackInfo) {
@@ -123,81 +219,10 @@ export function useMusicSync(deps: {
             coverUrl.value = '';
             blurredCoverUrl.value = '';
 
-            if (currentIsBrowser.value) {
-                // 浏览器只认 SMTC 本地封面，绝不走网络兜底（避免视频标题在网络搜图时串错封面）
-                fetchBrowserCover(newTrackInfo);
-            } else if (!appId.includes('bilibili') && artist !== 'potplayer') {
-                // 优先读取缓存（LRU：命中时刷新插入顺序，超限时淘汰最旧条目）
-                if (coverCache.has(newTrackInfo)) {
-                    // 命中：先删再设，将该条目移到 Map 末尾（最新）
-                    const cached = coverCache.get(newTrackInfo)!;
-                    coverCache.delete(newTrackInfo);
-                    coverCache.set(newTrackInfo, cached);
-                    coverUrl.value = cached;
-                    const cachedBlur = blurredCoverCache.get(newTrackInfo);
-                    if (cachedBlur !== undefined) {
-                        blurredCoverCache.delete(newTrackInfo);
-                        blurredCoverCache.set(newTrackInfo, cachedBlur);
-                        blurredCoverUrl.value = cachedBlur;
-                    } else {
-                        await deps.bakeAndStoreBlur(newTrackInfo, cached);
-                    }
-                } else {
-                    try {
-                        const realCoverUrl = await invoke<string>('get_random_cover_url', {
-                            songName: song,
-                            artistName: artist
-                        });
-                        // 清理缓存或切歌后，丢弃过期封面结果
-                        if (fetchVersion !== coverFetchVersion
-                            || currentTrackInfo.value !== newTrackInfo) {
-                            return;
-                        }
-                        coverUrl.value = realCoverUrl;
-                        // 写入缓存，超限逐条淘汰最旧条目（LRU）
-                        while (coverCache.size >= 50) {
-                            const oldest = coverCache.keys().next().value;
-                            if (oldest !== undefined) {
-                                coverCache.delete(oldest);
-                                blurredCoverCache.delete(oldest);
-                            }
-                        }
-                        coverCache.set(newTrackInfo, realCoverUrl);
-                        // 烘焙沉浸模式模糊封面（只烘焙一次并按曲目缓存）
-                        await deps.bakeAndStoreBlur(newTrackInfo, realCoverUrl);
-                    } catch (coverErr) {
-                        if (fetchVersion !== coverFetchVersion
-                            || currentTrackInfo.value !== newTrackInfo) {
-                            return;
-                        }
-                        console.error('所有封面源均获取失败', coverErr);
-                        // 使用本地图标或纯色背景，不要再用外部 URL 作为错误兜底
-                        coverUrl.value = '';
-                    }
-                }
-            } else {
-                // B站 / PotPlayer 视频模式：不取封面，圆形封面回退应用 logo
-                coverUrl.value = '';
-            }
-
             // 非视频类来源：发起网络歌词请求（浏览器源由封面/歌词就绪后的判定翻转触发）
-            await deps.fetchLyricsForCurrentTrack(song, artist);
-        }
-
-        isPlaying.value = playing;
-
-        // 音乐播放器模式：有音乐就显示，没音乐就隐藏
-        if (deps.displayMusic.value) {
-            if (playing && !deps.isIslandVisible.value) {
-                // 有音乐播放且灵动岛被隐藏，自动恢复显示
-                const { getCurrentWindow } = await import('@tauri-apps/api/window');
-                await getCurrentWindow().show();
-                deps.isIslandVisible.value = true;
-            } else if (!playing && deps.isIslandVisible.value && !deps.isMouseOver.value) {
-                // 音乐停止播放且鼠标不在灵动岛上，延迟隐藏
-                // scheduleAutoHide 内部会校验音乐控制器模式 + 自动隐藏开关
-                deps.scheduleAutoHide();
-            }
+            // 两者各自的过期校验（fetchVersion / lyricReqSeq）保证切歌时不串写
+            void loadCoverForTrack(song, artist, appId, newTrackInfo, fetchVersion);
+            void deps.fetchLyricsForCurrentTrack(song, artist);
         }
     };
 
