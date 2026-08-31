@@ -36,6 +36,33 @@ static MANAGER_READY: AtomicBool = AtomicBool::new(false);
 /// 由 `extract_music_info` 成功时写入。
 static LAST_INFO: Mutex<Option<(String, String, String)>> = Mutex::new(None);
 
+/// RequestAsync 的有限等待：每 50ms 轮询一次 Status（同步非阻塞调用），3s 超时放弃。
+/// 返回 None 表示超时（本次请求作废，上层按失败重试）。
+///
+/// 旧实现直接 `.get()`——内部是「等完成回调」，无超时参数。SMTC/RPC 服务异常时
+/// 异步操作可能既不完成也不报错，get() 永久挂起：binder 线程一旦卡死在预热，
+/// SessionsChanged 注册不上、MANAGER_READY 恒 false，事件链与兜底轮询全部失效
+/// （表现为灵动岛永远「未在播放歌曲」，45s 兜底也无从生效）。
+fn wait_request(
+    op: windows::Foundation::IAsyncOperation<GlobalSystemMediaTransportControlsSessionManager>,
+) -> Option<windows::core::Result<GlobalSystemMediaTransportControlsSessionManager>> {
+    use windows::Foundation::AsyncStatus;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        match op.Status() {
+            Ok(AsyncStatus::Completed) => return Some(op.GetResults()),
+            // Error / Canceled：GetResults 会返回对应错误，透传给上层走重试
+            Ok(AsyncStatus::Error) | Ok(AsyncStatus::Canceled) => return Some(op.GetResults()),
+            Ok(AsyncStatus::Started) => {}
+            Err(e) => return Some(Err(e)),
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 /// 获取（必要时创建并缓存）SMTC SessionManager。缓存命中时零 WinRT 异步调用。
 pub(crate) fn get_cached_session_manager() -> Option<GlobalSystemMediaTransportControlsSessionManager> {
     {
@@ -44,10 +71,8 @@ pub(crate) fn get_cached_session_manager() -> Option<GlobalSystemMediaTransportC
             return Some(m.clone());
         }
     }
-    let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-        .ok()?
-        .get()
-        .ok()?;
+    let op = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().ok()?;
+    let manager = wait_request(op)?.ok()?;
     if let Ok(mut guard) = SESSION_MANAGER.lock() {
         *guard = Some(manager.clone());
     }

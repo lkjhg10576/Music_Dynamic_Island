@@ -68,6 +68,11 @@ static CMD_TX: Lazy<Mutex<Option<mpsc::Sender<BinderCmd>>>> = Lazy::new(|| Mutex
 /// 上次 emit 的 music-info-changed 载荷，用于去重
 /// （SMTC 常连发 MediaPropertiesChanged + PlaybackInfoChanged，避免前端重复拉封面/歌词）
 static LAST_EMITTED: Lazy<Mutex<Option<Payload>>> = Lazy::new(|| Mutex::new(None));
+/// bind_to 全程串行化：SessionsChanged 回调线程（RPC 线程池）/ binder 命令线程 /
+/// 播放态回调线程可能并发触发换绑，事件「挂载→解绑旧→置入」存在竞态窗口
+///（双重绑定或 CURRENT_SESSION 被旧值覆盖）。锁内无递归换绑、锁序固定
+/// REBIND_GUARD → CURRENT_SESSION → LAST_EMITTED，无环，无死锁风险。
+static REBIND_GUARD: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// binder_thread 可处理的命令
 enum BinderCmd {
@@ -128,52 +133,91 @@ pub fn init(app: tauri::AppHandle) {
     crate::thread_mgr::spawn_managed("smtc_binder", move |exit| binder_thread(app, rx, exit));
 }
 
-/// binder 常驻线程：MTA 套间 + SessionManager 预热 + 事件注册 + 命令循环
+/// binder 常驻线程：MTA 套间 + SessionManager 预热 + 事件注册 + 命令循环。
+///
+/// 统一自愈循环结构（三段式，任一环节失败都在下一轮循环重试）：
+/// ① SessionManager 预热（内部带 3s 超时，绝不永久阻塞）；
+/// ② 幂等注册 SessionsChanged（首次成功后跳过）；
+/// ③ 命令等待 + 45s 无命令兜底 rebind。
+///
+/// 旧实现是「预热成功 → 注册 → rebind → 阻塞 recv」的直线结构：
+/// 预热一旦长期失败/挂起（0.6.0-4 起 get() 无超时，SMTC 服务未就绪时会永久卡住），
+/// 后续所有步骤永远不会执行，且无任何恢复手段——事件链与兜底轮询全部失效。
 fn binder_thread(app: tauri::AppHandle, rx: mpsc::Receiver<BinderCmd>, exit: crate::thread_mgr::ExitFlag) {
     // COM 套间：MTA；ComGuard RAII 保证 CoUninitialize 严格配对
     let _com_guard = crate::win32_utils::ComGuard::new();
 
-    // 在本线程（有 COM 套间）预热 SessionManager。
-    // 启动极早期（SMTC/RPC 服务尚未就绪）RequestAsync 可能失败：
-    // 失败绝不能放弃——这里若死掉，SessionsChanged 永远注册不上，
-    // MANAGER_READY 恒为 false，兜底轮询也拿不到数据，事件链永久失效。
-    // 以 1s 间隔无限重试，直到成功（可中断：退出信号到达时放弃）
-    while !prime_session_manager() {
-        if exit.sleep_interruptible(std::time::Duration::from_secs(1)) {
-            return;
-        }
-    }
+    // SessionsChanged 只需注册一次；失败时下一轮循环重试（幂等）
+    let mut sessions_registered = false;
+    // 首次会话选择标记：预热并注册完成后立即选一次会话（force_emit=false，
+    // 有会话则绑定推送、无会话保持静默等事件），之后交给命令/兜底驱动
+    let mut first_select = true;
 
-    if let Some(manager) = get_cached_session_manager() {
-        // 形参类型必须显式标注：交给推导会得到「非 HRTB」的闭包，报 FnMut not general enough
-        let sessions_callback = move |_manager: &Option<
-            GlobalSystemMediaTransportControlsSessionManager,
-        >,
-              _args: &Option<SessionsChangedEventArgs>|
-              -> windows::core::Result<()> {
-            if let Some(app) = app_handle() {
-                rebind(app, true);
-            }
-            Ok(())
-        };
-        let handler = ManagerHandler::new(sessions_callback);
-        if let Ok(token) = register_sessions_changed(&manager, &handler) {
-            // SESSIONS_TOKEN 不解绑：本线程与应用同生命周期，进程退出即释放；
-            // 强行在退出路径解绑反而要额外同步，收益为零。
-            *SESSIONS_TOKEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(token);
-        }
-    }
-
-    rebind(app.clone(), false);
-
-    // 常驻命令循环。MTA 下事件由 RPC 线程池投递，这里阻塞 recv 不影响事件接收。
-    // 线程不退出，保证 MTA 存活、回调可达。
-    for cmd in rx {
+    loop {
         if exit.is_exiting() {
             break;
         }
-        match cmd {
-            BinderCmd::Rebind => rebind(app.clone(), true),
+
+        // —— ① SessionManager 预热：失败 / 超时 1s 后重试（可中断退出）。
+        // 启动极早期（SMTC/RPC 服务尚未就绪）RequestAsync 可能失败，
+        // 预热内部已带 3s 超时，不会像旧实现那样永久挂起本线程。
+        if !is_session_manager_ready() {
+            if !prime_session_manager() {
+                if exit.sleep_interruptible(std::time::Duration::from_secs(1)) {
+                    break;
+                }
+                continue;
+            }
+        }
+
+        // —— ② 幂等注册「会话列表变化」事件：播放器退出 / 新启动时触发 rebind
+        if !sessions_registered {
+            if let Some(manager) = get_cached_session_manager() {
+                // 形参类型必须显式标注：交给推导会得到「非 HRTB」的闭包，报 FnMut not general enough
+                let sessions_callback = move |_manager: &Option<
+                    GlobalSystemMediaTransportControlsSessionManager,
+                >,
+                      _args: &Option<SessionsChangedEventArgs>|
+                      -> windows::core::Result<()> {
+                    if let Some(app) = app_handle() {
+                        rebind(app, true);
+                    }
+                    Ok(())
+                };
+                let handler = ManagerHandler::new(sessions_callback);
+                match register_sessions_changed(&manager, &handler) {
+                    Ok(token) => {
+                        // SESSIONS_TOKEN 不解绑：本线程与应用同生命周期，进程退出即释放；
+                        // 强行在退出路径解绑反而要额外同步，收益为零。
+                        *SESSIONS_TOKEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(token);
+                        sessions_registered = true;
+                    }
+                    Err(_) => {
+                        // 注册失败：短退避后重试，不进 45s 等待（否则事件链失联 45s）
+                        if exit.sleep_interruptible(std::time::Duration::from_millis(500)) {
+                            break;
+                        }
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // —— 首次会话选择：对齐旧实现 rebind(force_emit=false) 的启动绑定语义 ——
+        if first_select {
+            first_select = false;
+            rebind(app.clone(), false);
+        }
+
+        // —— ③ 命令等待 + 45s 后端兜底轮询。
+        // 事件驱动是主链路；但浏览器/视频类来源 SMTC 事件经常延迟或不发，
+        // 且事件系统自身也可能静默失灵。45s 无命令时主动 rebind(force_emit=true)
+        // 强制重选会话并推送一次快照 —— 与前端 45s fetch 兜底互为冗余双保险，
+        // 即使事件链完全失灵，状态最多延迟 45s 也能被校准回来。
+        match rx.recv_timeout(std::time::Duration::from_secs(45)) {
+            Ok(BinderCmd::Rebind) => rebind(app.clone(), true),
+            Err(mpsc::RecvTimeoutError::Timeout) => rebind(app.clone(), true),
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
 }
@@ -228,11 +272,16 @@ fn rebind(app: tauri::AppHandle, force_emit: bool) {
 }
 
 /// 绑定指定会话：先挂事件（锁外），再解绑旧会话（锁外），最后锁内置入并推送快照。
+/// 全程持有 REBIND_GUARD 串行化，阻塞的全量属性读取在释放锁之后执行。
 ///
 /// 推送分两步：
 /// 1. 零阻塞 quick 快照 → UI 立刻响应（播放器刚启动时这一步就能把灵动岛弹出来）
 /// 2. 全量元数据（含阻塞的 TryGetMediaPropertiesAsync）→ 补上真实歌名
 fn bind_to(app: tauri::AppHandle, new_session: GlobalSystemMediaTransportControlsSession) {
+    // 串行化换绑：防止 SessionsChanged / 播放态回调线程与 binder 命令线程
+    // 并发挂载/解绑事件（REBIND_GUARD，锁序说明见该锁的文档注释）
+    let serial_guard = REBIND_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
     // —— 锁外：挂元数据变化事件（→ 全量推送） ——
     let app_for_media = app.clone();
     let media_callback = move |session: &Option<GlobalSystemMediaTransportControlsSession>,
@@ -284,6 +333,9 @@ fn bind_to(app: tauri::AppHandle, new_session: GlobalSystemMediaTransportControl
 
     // 第 1 步：零阻塞快照，UI 无需等待属性读取完成
     emit_music_info(app.clone(), extract_quick_info(&new_session));
+
+    // 释放串行化锁后再做第 2 步的阻塞属性读取（跨进程可达数秒，不长时间占锁）
+    drop(serial_guard);
 
     // 第 2 步：全量元数据。取属性失败 ≠ 无音乐（播放器刚启动时很常见），
     // 此时保留第 1 步的快照，绝不 emit None，否则前端会误清空 UI。
