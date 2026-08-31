@@ -28,7 +28,9 @@ static LAST_PERSIST: Lazy<Mutex<Option<Instant>>> = Lazy::new(|| Mutex::new(None
 fn local_date_string() -> String {
     #[cfg(target_os = "windows")]
     unsafe {
-        use winapi::um::sysinfoapi::{GetLocalTime, SYSTEMTIME};
+        // SYSTEMTIME 实际定义在 minwinbase，sysinfoapi 只是私有重导出（直接引会 E0603）
+        use winapi::um::minwinbase::SYSTEMTIME;
+        use winapi::um::sysinfoapi::GetLocalTime;
         let mut st: SYSTEMTIME = std::mem::zeroed();
         GetLocalTime(&mut st);
         format!("{:04}-{:02}-{:02}", st.wYear, st.wMonth, st.wDay)

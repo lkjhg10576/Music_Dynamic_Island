@@ -5,6 +5,8 @@ use serde::de::DeserializeOwned;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+// app.path() 来自 Manager trait，必须显式导入否则 E0599
+use tauri::Manager;
 
 /// 获取应用数据目录（不存在则创建）
 pub fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {

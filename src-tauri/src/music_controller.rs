@@ -458,7 +458,6 @@ pub async fn seek_music(position_ms: u64) -> Result<(), String> {
 
 // ===== 网络歌词：QQ 音乐引擎优先，网易云兜底 =====
 
-#[command]
 /// QQ 歌词 API 返回的 HTML 实体解码
 fn decode_qq_lyric(lyric_text: &str) -> String {
     lyric_text
@@ -470,6 +469,8 @@ fn decode_qq_lyric(lyric_text: &str) -> String {
         .replace("&#41;", ")")
 }
 
+/// 拉取歌词：本地缓存 → QQ 音乐 → 网易云兜底。由 lib.rs generate_handler 注册为命令。
+#[command]
 pub async fn fetch_netease_lyrics(
     app: tauri::AppHandle,
     song_name: String,

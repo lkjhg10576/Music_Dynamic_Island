@@ -46,6 +46,19 @@ fn set_network_latency_interval(secs: u64) {
     NETWORK_LATENCY_INTERVAL_SECS.store(clamped, Ordering::Relaxed);
 }
 
+/// 测量到 223.5.5.5:53 的 TCP 连接延迟（毫秒），超时 1500ms 记 Err。
+/// 由 system_events::network_monitor_loop 用 block_on 调用；不再作为前端命令暴露，
+/// 故不注册进 generate_handler，仅 crate 内可见。
+#[allow(dead_code)]
+pub(crate) async fn get_network_latency() -> Result<u128, String> {
+    let start = std::time::Instant::now();
+    let connect_future = tokio::net::TcpStream::connect("223.5.5.5:53");
+    match tokio::time::timeout(Duration::from_millis(1500), connect_future).await {
+        Ok(Ok(_)) => Ok(start.elapsed().as_millis()),
+        _ => Err("Timeout".to_string()),
+    }
+}
+
 // B1 硬件统计缓存：后台线程每 1s 刷新，command 零阻塞读取
 static HW_CPU_X100: AtomicU32 = AtomicU32::new(0);
 static HW_MEM_USED: AtomicU64 = AtomicU64::new(0);

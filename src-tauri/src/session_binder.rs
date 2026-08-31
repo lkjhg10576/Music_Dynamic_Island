@@ -17,7 +17,8 @@ use windows::core::Interface;
 use windows::Foundation::{EventRegistrationToken, TypedEventHandler};
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
-    GlobalSystemMediaTransportControlsSessionPlaybackStatus,
+    GlobalSystemMediaTransportControlsSessionPlaybackStatus, MediaPropertiesChangedEventArgs,
+    PlaybackInfoChangedEventArgs, SessionsChangedEventArgs,
 };
 
 use crate::music_controller::{
@@ -34,12 +35,17 @@ static CURRENT_SESSION: Lazy<Mutex<Option<BoundSession>>> = Lazy::new(|| Mutex::
 static APP_HANDLE: Lazy<Mutex<Option<tauri::AppHandle>>> = Lazy::new(|| Mutex::new(None));
 static SESSIONS_TOKEN: Lazy<Mutex<Option<EventRegistrationToken>>> = Lazy::new(|| Mutex::new(None));
 
+// TypedEventHandler 是泛型委托：TResult 必须与事件的 EventArgs 类型「精确一致」——
+// windows 0.58 用 Param/CanInto 做约束，写 IInspectable 会因缺少 CanInto 而 E0277。
+// 回调签名固定为 (&Option<TSender>, &Option<TResult>)，写值类型会 E0631。
 type ManagerHandler = TypedEventHandler<
     GlobalSystemMediaTransportControlsSessionManager,
-    windows::core::IInspectable,
+    SessionsChangedEventArgs,
 >;
-type SessionHandler =
-    TypedEventHandler<GlobalSystemMediaTransportControlsSession, windows::core::IInspectable>;
+type MediaHandler =
+    TypedEventHandler<GlobalSystemMediaTransportControlsSession, MediaPropertiesChangedEventArgs>;
+type PlaybackHandler =
+    TypedEventHandler<GlobalSystemMediaTransportControlsSession, PlaybackInfoChangedEventArgs>;
 
 fn app_handle() -> Option<tauri::AppHandle> {
     APP_HANDLE.lock().unwrap().clone()
@@ -56,7 +62,7 @@ fn register_sessions_changed(
 /// 注册「媒体元数据变化」事件：歌名 / 歌手 / 专辑变化时触发
 fn register_media_changed(
     session: &GlobalSystemMediaTransportControlsSession,
-    handler: &SessionHandler,
+    handler: &MediaHandler,
 ) -> windows::core::Result<EventRegistrationToken> {
     session.MediaPropertiesChanged(handler)
 }
@@ -64,7 +70,7 @@ fn register_media_changed(
 /// 注册「播放信息变化」事件：播放 / 暂停状态变化时触发
 fn register_playback_changed(
     session: &GlobalSystemMediaTransportControlsSession,
-    handler: &SessionHandler,
+    handler: &PlaybackHandler,
 ) -> windows::core::Result<EventRegistrationToken> {
     session.PlaybackInfoChanged(handler)
 }
@@ -76,7 +82,12 @@ pub fn init(app: tauri::AppHandle) {
     *APP_HANDLE.lock().unwrap() = Some(app.clone());
 
     if let Some(manager) = get_cached_session_manager() {
-        let sessions_callback = move |_manager, _args| -> windows::core::Result<()> {
+        // 形参类型必须显式标注：交给推导会得到「非 HRTB」的闭包，报 FnMut not general enough
+        let sessions_callback = move |_manager: &Option<
+            GlobalSystemMediaTransportControlsSessionManager,
+        >,
+              _args: &Option<SessionsChangedEventArgs>|
+              -> windows::core::Result<()> {
             if let Some(app) = app_handle() {
                 rebind(app, true);
             }
@@ -133,14 +144,15 @@ fn rebind(app: tauri::AppHandle, force_emit: bool) {
 fn bind_to(app: tauri::AppHandle, new_session: GlobalSystemMediaTransportControlsSession) {
     // —— 锁外：挂元数据变化事件（→ 全量推送） ——
     let app_for_media = app.clone();
-    let media_callback = move |session, _args| -> windows::core::Result<()> {
-        let Some(session) = session else {
-            return Ok(());
-        };
-        handle_media_properties_changed(app_for_media.clone(), session);
+    let media_callback = move |session: &Option<GlobalSystemMediaTransportControlsSession>,
+                               _args: &Option<MediaPropertiesChangedEventArgs>|
+          -> windows::core::Result<()> {
+        if let Some(session) = session.as_ref() {
+            handle_media_properties_changed(app_for_media.clone(), session.clone());
+        }
         Ok(())
     };
-    let media_handler = SessionHandler::new(media_callback);
+    let media_handler = MediaHandler::new(media_callback);
     let media_token = match register_media_changed(&new_session, &media_handler) {
         Ok(t) => t,
         Err(_) => return, // 挂事件失败：不换绑，保留旧绑定继续工作
@@ -148,14 +160,15 @@ fn bind_to(app: tauri::AppHandle, new_session: GlobalSystemMediaTransportControl
 
     // —— 锁外：挂播放态变化事件（→ 轻量推送 + 自动切应用） ——
     let app_for_playback = app.clone();
-    let playback_callback = move |session, _args| -> windows::core::Result<()> {
-        let Some(session) = session else {
-            return Ok(());
-        };
-        handle_playback_info_changed(app_for_playback.clone(), session);
+    let playback_callback = move |session: &Option<GlobalSystemMediaTransportControlsSession>,
+                                  _args: &Option<PlaybackInfoChangedEventArgs>|
+          -> windows::core::Result<()> {
+        if let Some(session) = session.as_ref() {
+            handle_playback_info_changed(app_for_playback.clone(), session.clone());
+        }
         Ok(())
     };
-    let playback_handler = SessionHandler::new(playback_callback);
+    let playback_handler = PlaybackHandler::new(playback_callback);
     let playback_token = match register_playback_changed(&new_session, &playback_handler) {
         Ok(t) => t,
         Err(_) => {
