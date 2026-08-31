@@ -6,6 +6,7 @@ use reqwest::Client;
 use base64::Engine;
 
 // --- 引入 SMTC 需要的模块 ---
+use windows::core::Interface;
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus,
