@@ -164,10 +164,21 @@ pub(crate) fn get_target_media_session() -> Option<GlobalSystemMediaTransportCon
 
     let sessions = manager.GetSessions().ok()?;
 
-    // 获取当前的目标（前端如果还没传，默认用 netease）
+    // 获取当前的目标。优先用前端 set_target_player 设过的值；尚未设置时
+    // （binder 首次选会话早于前端加载完成）从后端 config 单一数据源读取用户
+    // 真实配置——旧实现此处硬编码默认 netease：若用户配置的是其他播放器/SMTC
+    // 模式，「音乐已在播放时启动软件」的首次选会话必然 AUMID 匹配失败且静默，
+    // 而该场景 SessionsChanged 永不触发（会话列表无变化），无任何事件可救。
     let target = {
         let guard = TARGET_PLAYER.lock().unwrap_or_else(|e| e.into_inner()); // 加入防中毒
-        if guard.is_empty() { "netease".to_string() } else { guard.clone() }
+        if !guard.is_empty() {
+            guard.clone()
+        } else {
+            match crate::config_store::get("nsd_target_player") {
+                Some(serde_json::Value::String(s)) if !s.is_empty() => s,
+                _ => "netease".to_string(),
+            }
+        }
     };
 
     // SMTC模式：返回第一个活动的媒体会话

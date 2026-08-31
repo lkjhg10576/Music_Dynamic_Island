@@ -138,20 +138,22 @@ pub fn init(app: tauri::AppHandle) {
 /// 统一自愈循环结构（三段式，任一环节失败都在下一轮循环重试）：
 /// ① SessionManager 预热（内部带 3s 超时，绝不永久阻塞）；
 /// ② 幂等注册 SessionsChanged（首次成功后跳过）；
-/// ③ 命令等待 + 45s 无命令兜底 rebind。
+/// ③ 命令等待 + 兜底 rebind：选到会话前 1.5s×10 短退避（启动窗口期），
+///    之后 45s 兜底（与前端 45s fetch 冗余双保险）。
 ///
-/// 旧实现是「预热成功 → 注册 → rebind → 阻塞 recv」的直线结构：
-/// 预热一旦长期失败/挂起（0.6.0-4 起 get() 无超时，SMTC 服务未就绪时会永久卡住），
-/// 后续所有步骤永远不会执行，且无任何恢复手段——事件链与兜底轮询全部失效。
+/// 旧实现是「预热成功 → 注册 → rebind(一次) → 阻塞 recv」的直线结构：
+/// 预热挂起（get() 无超时）或首次选会话落空（音乐已在播放时启动软件），
+/// 后续所有步骤都不会再执行，且无任何恢复手段——事件链与兜底轮询全部失效。
 fn binder_thread(app: tauri::AppHandle, rx: mpsc::Receiver<BinderCmd>, exit: crate::thread_mgr::ExitFlag) {
     // COM 套间：MTA；ComGuard RAII 保证 CoUninitialize 严格配对
     let _com_guard = crate::win32_utils::ComGuard::new();
 
     // SessionsChanged 只需注册一次；失败时下一轮循环重试（幂等）
     let mut sessions_registered = false;
-    // 首次会话选择标记：预热并注册完成后立即选一次会话（force_emit=false，
-    // 有会话则绑定推送、无会话保持静默等事件），之后交给命令/兜底驱动
+    // 首次会话选择标记：选到会话前以短退避重试（见下方「启动窗口期」说明）
     let mut first_select = true;
+    // 启动窗口期短退避计数（超过后退化为 45s 兜底节奏，避免长期高频轮询）
+    let mut boot_attempts: u32 = 0;
 
     loop {
         if exit.is_exiting() {
@@ -203,18 +205,31 @@ fn binder_thread(app: tauri::AppHandle, rx: mpsc::Receiver<BinderCmd>, exit: cra
             }
         }
 
-        // —— 首次会话选择：对齐旧实现 rebind(force_emit=false) 的启动绑定语义 ——
-        if first_select {
+        // —— 首次会话选择（对齐旧实现 rebind(force_emit=false) 的启动绑定语义）——
+        if first_select && rebind(app.clone(), false) {
             first_select = false;
-            rebind(app.clone(), false);
         }
 
-        // —— ③ 命令等待 + 45s 后端兜底轮询。
+        // —— ③ 命令等待 + 兜底轮询。
         // 事件驱动是主链路；但浏览器/视频类来源 SMTC 事件经常延迟或不发，
-        // 且事件系统自身也可能静默失灵。45s 无命令时主动 rebind(force_emit=true)
+        // 且事件系统自身也可能静默失灵。无命令时主动 rebind(force_emit=true)
         // 强制重选会话并推送一次快照 —— 与前端 45s fetch 兜底互为冗余双保险，
-        // 即使事件链完全失灵，状态最多延迟 45s 也能被校准回来。
-        match rx.recv_timeout(std::time::Duration::from_secs(45)) {
+        // 即使事件链完全失灵，状态最多延迟一个兜底周期也能被校准回来。
+        //
+        // 「启动窗口期」快节奏（1.5s × 10 ≈ 15s）：音乐已在播放时启动软件的场景，
+        // SessionsChanged 不会再触发（会话列表无变化、无事件可救），成败完全押在
+        // binder 首次选会话上——而此时 SessionManager 刚创建（GetSessions 可能返回空）、
+        // 前端 set_target_player 也未到达（target 还是默认值）。旧实现只尝试一次，
+        // 失败即静默，表现为灵动岛恒「未在播放歌曲」。窗口期内以 1.5s 短退避重试，
+        // 之后退化为 45s 兜底节奏（get_target_media_session 为零阻塞快速路径，
+        // 短退避期开销可忽略）。
+        let interval = if first_select && boot_attempts < 10 {
+            boot_attempts += 1;
+            std::time::Duration::from_millis(1500)
+        } else {
+            std::time::Duration::from_secs(45)
+        };
+        match rx.recv_timeout(interval) {
             Ok(BinderCmd::Rebind) => rebind(app.clone(), true),
             Err(mpsc::RecvTimeoutError::Timeout) => rebind(app.clone(), true),
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -241,7 +256,9 @@ pub(crate) fn current_bound_session() -> Option<GlobalSystemMediaTransportContro
 }
 
 /// 重新选择目标会话并绑定。`force_emit=true` 时即使会话未变也推送一次快照。
-fn rebind(app: tauri::AppHandle, force_emit: bool) {
+/// 返回是否成功选到会话（false = 当前无任何可用音乐会话）。
+/// 返回值供 binder 线程判断「启动窗口期是否需要重试」。
+fn rebind(app: tauri::AppHandle, force_emit: bool) -> bool {
     let Some(new_session) = get_target_media_session() else {
         // 无可用会话：解绑当前并通知前端「未在播放」
         let old = take_bound_session();
@@ -249,7 +266,7 @@ fn rebind(app: tauri::AppHandle, force_emit: bool) {
         if force_emit {
             emit_music_info(app, None);
         }
-        return;
+        return false;
     };
 
     // 与当前绑定是同一会话 → 不重绑（避免重复挂事件），按需补推快照
@@ -263,12 +280,13 @@ fn rebind(app: tauri::AppHandle, force_emit: bool) {
                     let info = extract_quick_info(&new_session);
                     emit_music_info(app, info);
                 }
-                return;
+                return true;
             }
         }
     }
 
     bind_to(app, new_session);
+    true
 }
 
 /// 绑定指定会话：先挂事件（锁外），再解绑旧会话（锁外），最后锁内置入并推送快照。
