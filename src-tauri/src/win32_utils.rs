@@ -8,6 +8,12 @@
 
 use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging as winuser;
+// 显示器相关 API 在 windows-sys 中归属 Gdi 模块（非 WindowsAndMessaging）；
+// MessageBeep 已从 windows-sys 0.59 移除，按项目规范走 winapi 0.3。
+use windows_sys::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromWindow, MONITOR_DEFAULTTONEAREST, MONITORINFO,
+};
+use winapi::um::winuser::MessageBeep;
 
 // ──────────────────────────────────────────────
 // COM RAII（§3.2）
@@ -55,9 +61,9 @@ impl Default for ComGuard {
 // 统一错误出口（§3.4）
 // ──────────────────────────────────────────────
 
-/// Result 错误统一出口：Err 时打 warn（stderr），Ok 静默。
+/// Result 错误统一出口：Err 时打 warn（stderr），Ok（含任意载荷，如 LyricEntry）静默。
 /// 用于替换 `let _ = ...` 式的静默忽略；事件 emit / 文件操作等路径均适用。
-pub(crate) fn log_err<E: std::fmt::Display>(res: Result<(), E>, ctx: &str) {
+pub(crate) fn log_err<T, E: std::fmt::Display>(res: Result<T, E>, ctx: &str) {
     if let Err(e) = res {
         eprintln!("[NSD][warn] {}: {}", ctx, e);
     }
@@ -111,10 +117,10 @@ pub fn get_window_rect(hwnd: isize) -> Option<RECT> {
 pub fn monitor_rect_of(hwnd: isize) -> Option<RECT> {
     // SAFETY: `hwnd` is a valid window handle; MONITORINFO.cbSize is set per API contract.
     unsafe {
-        let monitor = winuser::MonitorFromWindow(hwnd as HWND, winuser::MONITOR_DEFAULTTONEAREST);
-        let mut mi: winuser::MONITORINFO = std::mem::zeroed();
-        mi.cbSize = std::mem::size_of::<winuser::MONITORINFO>() as u32;
-        if winuser::GetMonitorInfoW(monitor, &mut mi) != 0 {
+        let monitor = MonitorFromWindow(hwnd as HWND, MONITOR_DEFAULTTONEAREST);
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(monitor, &mut mi) != 0 {
             Some(mi.rcMonitor)
         } else {
             None
@@ -233,6 +239,6 @@ pub fn is_foreground_fullscreen() -> bool {
 pub fn message_beep(kind: u32) {
     // SAFETY: single system sound request with a valid sound-type constant.
     unsafe {
-        winuser::MessageBeep(kind);
+        MessageBeep(kind);
     }
 }

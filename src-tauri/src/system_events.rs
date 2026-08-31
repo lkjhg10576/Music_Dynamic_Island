@@ -7,9 +7,10 @@ use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Win32::Media::Audio::{eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
-// 锁屏检测统一到 windows-sys 0.59（OpenInputDesktop/CloseDesktop/GENERIC_READ 均可用）。
-use windows_sys::Win32::Foundation::GENERIC_READ;
-use windows_sys::Win32::UI::WindowsAndMessaging::{CloseDesktop, OpenInputDesktop};
+// 锁屏检测：OpenInputDesktop/CloseDesktop 已从 windows-sys 0.59 的 win32metadata 中移除
+// （docs.rs 0.59.0 查证不存在），按项目规范锁屏检测一律用 winapi 0.3；GENERIC_READ 同源取自 winnt。
+use winapi::um::winnt::GENERIC_READ;
+use winapi::um::winuser::{CloseDesktop, OpenInputDesktop};
 
 // 结构化系统事件载荷（取代原纯文本 system-event / 结构化 battery-event）
 // kind ∈ {volume, power, battery, network, network_latency, network_disconnect,

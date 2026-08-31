@@ -31,7 +31,12 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_SystemInformation",
     "Win32_System_Time",
     "Win32_UI_Shell",
+    # CreateEventW（print_utils.rs）参数含 SECURITY_ATTRIBUTES，必须启用 Security feature
+    "Win32_Security",
 ] }
+# 锁屏检测 / MessageBeep：OpenInputDesktop/CloseDesktop/MessageBeep 在 windows-sys 0.59
+# 的 win32metadata 中已被移除（docs.rs 0.59.0 查证不存在），按项目规范这些 API 一律走 winapi 0.3。
+winapi = { version = "0.3", features = ["winuser"] }
 tauri-plugin-single-instance = "2.0.0" # 根据你的Tauri2版本调整具体小版本
 tokio = { version = "1", features = ["rt", "sync", "time", "net"] }
 urlencoding = "2.1.3"
