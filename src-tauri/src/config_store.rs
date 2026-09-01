@@ -17,6 +17,8 @@ const FILE_NAME: &str = "config.json";
 
 static CONFIG: Lazy<Mutex<HashMap<String, Value>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static DIRTY: AtomicBool = AtomicBool::new(false);
+static INITIALIZED: AtomicBool = AtomicBool::new(false);
+static INIT_LOCK: Mutex<()> = Mutex::new(());
 
 fn file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join(FILE_NAME))
@@ -24,6 +26,10 @@ fn file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 /// 启动时载入 config.json 并启动 500ms 节流落盘线程（setup 阶段调用一次）
 pub fn init(app: &tauri::AppHandle) {
+    let _guard = INIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if INITIALIZED.load(Ordering::SeqCst) {
+        return;
+    }
     if let Some(map) = file_path(app)
         .ok()
         .and_then(|p| read_json::<HashMap<String, Value>>(&p))
@@ -40,9 +46,18 @@ pub fn init(app: &tauri::AppHandle) {
             crate::win32_utils::log_err(persist(&handle), "persist config.json");
         }
     });
+    INITIALIZED.store(true, Ordering::SeqCst);
+}
+
+/// 确保配置已从磁盘载入。若前端命令早于 setup 执行，也能正确读到已持久化数据。
+pub fn ensure_loaded(app: &tauri::AppHandle) {
+    if !INITIALIZED.load(Ordering::SeqCst) {
+        init(app);
+    }
 }
 
 pub fn persist(app: &tauri::AppHandle) -> Result<(), String> {
+    ensure_loaded(app);
     let path = file_path(app)?;
     let data = {
         let map = CONFIG.lock().unwrap_or_else(|e| e.into_inner());
@@ -60,6 +75,7 @@ pub fn get_all() -> HashMap<String, Value> {
 }
 
 pub fn set(app: &tauri::AppHandle, key: String, value: Value) -> Result<(), String> {
+    ensure_loaded(app);
     {
         let mut map = CONFIG.lock().unwrap_or_else(|e| e.into_inner());
         // 值未变化则跳过，避免重复落盘与广播
@@ -69,6 +85,8 @@ pub fn set(app: &tauri::AppHandle, key: String, value: Value) -> Result<(), Stri
         map.insert(key.clone(), value.clone());
     }
     DIRTY.store(true, Ordering::Relaxed);
+    // 立即落盘，避免依赖后台线程/退出前刷新导致设置丢失
+    persist(app)?;
     crate::win32_utils::log_err(
         app.emit(
             "config-changed",
@@ -80,9 +98,12 @@ pub fn set(app: &tauri::AppHandle, key: String, value: Value) -> Result<(), Stri
 }
 
 pub fn remove(app: &tauri::AppHandle, key: String) -> Result<(), String> {
+    ensure_loaded(app);
     let removed = CONFIG.lock().unwrap_or_else(|e| e.into_inner()).remove(&key).is_some();
     if removed {
         DIRTY.store(true, Ordering::Relaxed);
+        // 立即落盘，避免删除操作因退出/崩溃而丢失
+        persist(app)?;
         crate::win32_utils::log_err(
             app.emit(
                 "config-changed",
@@ -97,6 +118,7 @@ pub fn remove(app: &tauri::AppHandle, key: String) -> Result<(), String> {
 /// 一次性迁移：接收窗口 localStorage 的旧键值。后端已有值不覆盖（先启动的窗口迁移生效，
 /// 双窗口 localStorage 本就靠 emit 保持一致，先到先得即可），迁移后立即落盘。
 pub fn merge_legacy(app: &tauri::AppHandle, legacy: HashMap<String, Value>) -> Result<(), String> {
+    ensure_loaded(app);
     let mut changed = false;
     {
         let mut map = CONFIG.lock().unwrap_or_else(|e| e.into_inner());

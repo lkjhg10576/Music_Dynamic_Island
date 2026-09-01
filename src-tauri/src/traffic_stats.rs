@@ -6,6 +6,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -23,6 +24,8 @@ pub struct DayTraffic {
 
 static TRAFFIC: Lazy<Mutex<HashMap<String, DayTraffic>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static LAST_PERSIST: Lazy<Mutex<Option<Instant>>> = Lazy::new(|| Mutex::new(None));
+static INITIALIZED: AtomicBool = AtomicBool::new(false);
+static INIT_LOCK: Mutex<()> = Mutex::new(());
 
 /// 本地日期（YYYY-MM-DD）。仅 Windows 下为真本地时区，其余平台用 UTC 近似。
 fn local_date_string() -> String {
@@ -66,12 +69,24 @@ fn file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 /// 启动时从磁盘载入历史统计（硬件监控线程开头调用一次）
 pub fn init(app: &tauri::AppHandle) {
+    let _guard = INIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if INITIALIZED.load(Ordering::SeqCst) {
+        return;
+    }
     let loaded: Option<HashMap<String, DayTraffic>> =
         file_path(app).ok().and_then(|p| read_json(&p));
     if let Some(map) = loaded {
         *TRAFFIC.lock().unwrap_or_else(|e| e.into_inner()) = map;
     }
     *LAST_PERSIST.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+    INITIALIZED.store(true, Ordering::SeqCst);
+}
+
+/// 确保流量统计已从磁盘载入。若前端查询早于硬件监控线程初始化，也能立即读到历史数据。
+pub fn ensure_loaded(app: &tauri::AppHandle) {
+    if !INITIALIZED.load(Ordering::SeqCst) {
+        init(app);
+    }
 }
 
 /// 硬件监控线程每秒调用：把 1s 内的上/下行字节数累计到当日
@@ -105,6 +120,7 @@ pub fn maybe_persist(app: &tauri::AppHandle) {
 
 /// 立即落盘（原子写）
 pub fn persist(app: &tauri::AppHandle) -> Result<(), String> {
+    ensure_loaded(app);
     let path = file_path(app)?;
     let data = {
         let map = TRAFFIC.lock().unwrap_or_else(|e| e.into_inner());
@@ -123,6 +139,7 @@ pub fn merge_legacy(
     app: &tauri::AppHandle,
     legacy: HashMap<String, DayTraffic>,
 ) -> Result<(), String> {
+    ensure_loaded(app);
     {
         let mut map = TRAFFIC.lock().unwrap_or_else(|e| e.into_inner());
         for (day, traffic) in legacy {

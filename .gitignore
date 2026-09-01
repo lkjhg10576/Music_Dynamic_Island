@@ -23,5 +23,21 @@ dist-ssr
 *.sln
 *.sw?
 
-# 本地指挥目录（仅本地使用，不纳入版本控制、不推送）
+# Tauri / Rust 编译产物
+src-tauri/target/
+*.pdb
+
+# 环境变量 / 密钥
+.env
+.env.*
+*.key
+*.pem
+
+# 本地工具目录（仅本地使用，不纳入版本控制、不推送）
+.mimosa/
 docs/
+
+# 操作系统
+Thumbs.db
+ehthumbs.db
+Desktop.ini

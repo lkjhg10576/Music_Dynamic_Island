@@ -466,7 +466,8 @@ fn is_widget_visible(app: tauri::AppHandle) -> bool {
 }
 
 #[tauri::command]
-fn get_traffic_stats() -> serde_json::Value {
+fn get_traffic_stats(app: tauri::AppHandle) -> serde_json::Value {
+    traffic_stats::ensure_loaded(&app);
     serde_json::to_value(traffic_stats::snapshot()).unwrap_or(serde_json::Value::Null)
 }
 
@@ -482,12 +483,14 @@ fn merge_legacy_traffic(
 // ===== 设置单一数据源（config.json + config-changed 广播） =====
 
 #[tauri::command]
-fn config_get(key: String) -> Option<serde_json::Value> {
+fn config_get(app: tauri::AppHandle, key: String) -> Option<serde_json::Value> {
+    config_store::ensure_loaded(&app);
     config_store::get(&key)
 }
 
 #[tauri::command]
-fn config_get_all() -> std::collections::HashMap<String, serde_json::Value> {
+fn config_get_all(app: tauri::AppHandle) -> std::collections::HashMap<String, serde_json::Value> {
+    config_store::ensure_loaded(&app);
     config_store::get_all()
 }
 
@@ -671,6 +674,8 @@ pub fn run() {
         .setup(|app| {
             // 设置单一数据源：载入 config.json + 落盘线程
             config_store::init(app.handle());
+            // 流量统计：尽早从磁盘载入历史数据，避免前端首屏查询时读到空快照
+            traffic_stats::init(app.handle());
             // B8: 注册 AppHandle 到 audio_spectrum 模块，支持 emit 频谱事件
             audio_spectrum::set_app_handle(Arc::new(app.handle().clone()));
             // B3: 启动常驻动画线程（单次创建）
@@ -744,8 +749,13 @@ pub fn run() {
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Music Dynamic Island")
                 .menu(&tray_menu)
-                .on_menu_event(move |_app_handle, event| {
-                    if event.id == "quit" { std::process::exit(0); }
+                .on_menu_event(move |app_handle, event| {
+                    if event.id == "quit" {
+                        // 退出前把尚未落盘的配置和流量统计立即写入磁盘，避免“改了设置/跑了流量但重启丢失”
+                        config_store::persist(app_handle).ok();
+                        traffic_stats::persist(app_handle).ok();
+                        std::process::exit(0);
+                    }
                 })
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
