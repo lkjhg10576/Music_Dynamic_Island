@@ -632,7 +632,7 @@ fn make_thumbnail(png: &[u8], thumb_path: &Path) -> (u32, u32, bool) {
             frame_enc.SetPixelFormat(&mut pixel_format)?;
 
             let stride = (tw * 3 + 3) / 4 * 4;
-            let mut buf = vec![0u8; stride as usize * th as usize];
+            let buf = vec![0u8; stride as usize * th as usize];
             // windows 0.58 的 WritePixels 签名为 (linecount, cbstride, &[u8])，prc 在该版元数据中不存在
             frame_enc.WritePixels(th, stride, &buf)?;
             frame_enc.Commit()?;
@@ -744,10 +744,11 @@ fn write_to_clipboard(app: &AppHandle, item: &ClipItem) -> Result<(), String> {
 /// 分配 GMEM_MOVEABLE 写入字节并 SetClipboardData；
 /// 成功后系统接管内存**不得释放**，失败时所有权未移交，手动 GlobalFree 回收
 unsafe fn set_clipboard_bytes(fmt: u32, bytes: &[u8]) -> bool {
-    // GlobalFree 不在 windows-sys 0.59 的 Memory 模块（rustc E0432 实证），
-    // 按项目规范剪贴板 Global* 一律走 winapi 0.3
+    // GlobalFree 不在 windows-sys 0.59 的 Memory 模块（rustc E0432 实证），且 winapi 的
+    // c_void 与 windows-sys 的 core::ffi::c_void 是不同类型，句柄不能跨 crate 直传，
+    // 故按项目规范整个写入块（Global* + SetClipboardData）统一走 winapi 0.3
     use winapi::um::winbase::{GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock};
-    use windows_sys::Win32::System::DataExchange::SetClipboardData;
+    use winapi::um::winuser::SetClipboardData;
 
     let h = GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1));
     if h.is_null() {
