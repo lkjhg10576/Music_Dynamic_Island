@@ -2696,11 +2696,7 @@ onMounted(async () => {
     // 监听番茄钟阶段切换事件（用于显示 toast 提示）
     await listen<any>('pomodoro-phase-change', async (event) => {
         const p = event.payload;
-        if (p.phase === 'break') {
-            showToast('专注结束，休息一下吧！', 'app');
-        } else {
-            showToast('休息结束，继续专注！', 'app');
-        }
+        showToast(p.message ?? (p.phase === 'break' ? '专注结束，休息一下吧！' : '休息结束，继续专注！'), 'app');
     });
 
     // 监听番茄钟完成事件

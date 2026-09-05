@@ -76,10 +76,21 @@ pub fn start_pomodoro_thread(app_handle: AppHandle) {
                         "remaining_cycles": remaining_cycles,
                         "total_secs": break_secs,
                     }));
+                    // REMAINING_CYCLES 在休息结束时才递减，所以要 +1 才是“刚完成的第几次专注”
+                    let completed_focus = POMO_TOTAL_CYCLES.load(Ordering::Relaxed)
+                        .saturating_sub(remaining_cycles) + 1;
+                    let message = if crate::health_reminder::is_water_enabled() {
+                        "专注结束，休息一下吧！记得喝口水~"
+                    } else {
+                        "专注结束，休息一下吧！"
+                    };
                     let _ = app_handle.emit("pomodoro-phase-change", serde_json::json!({
                         "phase": "break",
-                        "message": "专注结束，休息一下吧！",
+                        "message": message,
                     }));
+                    if crate::health_reminder::is_sitting_enabled() && completed_focus % 2 == 0 {
+                        crate::health_reminder::trigger_sitting_alert();
+                    }
                 } else {
                     // 休息结束 → 下一轮或完成
                     let remaining_cycles = POMO_REMAINING_CYCLES.load(Ordering::Relaxed);
@@ -87,6 +98,8 @@ pub fn start_pomodoro_thread(app_handle: AppHandle) {
                         // 所有轮次完成
                         POMO_ACTIVE.store(false, Ordering::Relaxed);
                         POMO_PAUSED.store(false, Ordering::Relaxed);
+                        // 退出接管：健康提醒计时器恢复完整间隔
+                        crate::health_reminder::reset_timers();
                         let _ = app_handle.emit("pomodoro-complete", serde_json::json!({
                             "message": "所有番茄钟已完成！",
                         }));
@@ -160,6 +173,16 @@ pub fn resume_pomodoro() {
 pub fn stop_pomodoro() {
     POMO_ACTIVE.store(false, Ordering::Relaxed);
     POMO_PAUSED.store(false, Ordering::Relaxed);
+    // 手动停止同样退出接管：健康提醒计时器恢复完整间隔
+    crate::health_reminder::reset_timers();
+}
+
+pub fn is_active() -> bool {
+    POMO_ACTIVE.load(Ordering::Relaxed)
+}
+
+pub fn is_paused() -> bool {
+    POMO_PAUSED.load(Ordering::Relaxed)
 }
 
 #[tauri::command]
