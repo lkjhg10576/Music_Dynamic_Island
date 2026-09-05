@@ -7,32 +7,11 @@
             <span v-if="rtActivities[currentRtIndex]" class="rt-chip-inner"
                 :key="rtActivities[currentRtIndex].id"
                 :style="{ color: rtActivities[currentRtIndex].accent || '#ffffff' }">
-                <!-- 硬件监控：显示动态小圆环 -->
-                <svg v-if="rtActivities[currentRtIndex].id === 'hardware'" viewBox="0 0 36 36" class="rt-chip-hw-ring">
-                <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="3" />
-                <template v-if="hwMode === 'dual'">
-                    <circle cx="18" cy="18" r="14" fill="none"
-                        :stroke="hwCpuPct >= 80 ? '#a855f7' : '#ffffff'" stroke-width="3"
-                        :stroke-dasharray="`${(hwCpuPct / 100) * 87.96} 87.96`"
-                        stroke-linecap="round" transform="rotate(-90 18 18)"
-                        style="transition: stroke-dasharray 0.5s ease;" />
-                    <circle cx="18" cy="18" r="8" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="2.5" />
-                    <circle cx="18" cy="18" r="8" fill="none"
-                        :stroke="hwMemPct >= 80 ? '#ff4757' : '#3b82f6'" stroke-width="2.5"
-                        :stroke-dasharray="`${(hwMemPct / 100) * 50.27} 50.27`"
-                        stroke-linecap="round" transform="rotate(-90 18 18)"
-                        style="transition: stroke-dasharray 0.5s ease;" />
-                </template>
-                <template v-else>
-                    <circle cx="18" cy="18" r="14" fill="none"
-                        :stroke="hwRingColor" stroke-width="3"
-                        :stroke-dasharray="`${(hwRingPct / 100) * 87.96} 87.96`"
-                        stroke-linecap="round" transform="rotate(-90 18 18)"
-                        style="transition: stroke-dasharray 0.5s ease;" />
-                </template>
-                </svg>
-                <!-- 其他实时活动：保留原有静态图标 -->
-                <span v-else class="rt-chip-icon" v-html="rtActivities[currentRtIndex]?.icon || ''"></span>
+                <!-- 注册表 chip 契约的组件形态（如硬件监控的动态小圆环） -->
+                <component v-if="chipContent.kind === 'component'" :is="chipContent.component"
+                    v-bind="chipContent.props" />
+                <!-- 缺省形态：活动注册的静态图标（stroke=currentColor 继承 accent 着色） -->
+                <span v-else class="rt-chip-icon" v-html="chipContent.icon"></span>
             </span>
         </transition>
     </div>
@@ -41,15 +20,13 @@
 <script setup lang="ts">
 import type { CSSProperties } from 'vue';
 import type { RtActivity } from './types';
+import type { ChipContent } from '../../activities/registry';
 
 defineProps<{
     rtActivities: RtActivity[];
     currentRtIndex: number;
-    hwMode: string;
-    hwCpuPct: number;
-    hwMemPct: number;
-    hwRingPct: number;
-    hwRingColor: string;
+    /** 当前预览活动的芯片内容（父组件按活动注册表 chip 契约解析） */
+    chipContent: ChipContent;
     coreContentStyle: CSSProperties;
 }>();
 
@@ -92,12 +69,6 @@ const emit = defineEmits<{
     width: 18px;
     height: 18px;
     /* stroke 使用 currentColor，自动继承 .rt-chip 的 color */
-}
-
-.rt-chip-hw-ring {
-    width: 24px;
-    height: 24px;
-    display: block;
 }
 
 /* 小图标内容包裹层：占满圆形区域并居中，accent 颜色随预览活动一起过渡 */

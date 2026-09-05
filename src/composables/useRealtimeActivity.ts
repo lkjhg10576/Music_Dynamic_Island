@@ -7,7 +7,9 @@
  *   - 硬件监控附属图标：开关/模式/指标数据 + 轮换定时器（startHwRotation/stopHwRotation，含兜底 watch）
  *   - 主岛轮换模式：网速/音乐 5s 轮换（startRotation/stopRotation）
  *   - 展示谓词：showPomodoroText / showCountdownText / showHardwareRing / isSplitMode，
- *     供主组件 displaySpeed / displayMusic 计算属性守卫使用（接入点必须位于其之前）
+ *     供主组件 displaySpeed / displayMusic 计算属性守卫使用（接入点必须位于其之前）。
+ *     守卫不再逐活动硬编码：各活动的文本态取数源由活动注册表（activities/registry.ts）
+ *     的 textSources 声明，这里统一遍历生成，新增文本态活动只改注册表。
  * 后端事件监听（pomodoro-tick / countdown-tick / health-reminder-tick / monitor-stats 等）与
  * 展开交互编排（clickRtChip / expandHardware / collapseAllExpandedActivities 等）留在主组件；
  * 岛尺寸恢复动画（animateIslandSize 等）通过主组件中转，不在本域重复实现。
@@ -15,6 +17,7 @@
 import { ref, computed, watch, type Ref, type ComputedRef } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { getSettingRaw, setSettingRaw } from '../utils/settings';
+import { RT_ACTIVITY_DEFS, type RtId, type ActivityGuardCtx, type TextSources } from '../activities/registry';
 import {
     NSD_POMODORO_VISIBLE,
     NSD_COUNTDOWN_VISIBLE,
@@ -30,12 +33,11 @@ export function useRealtimeActivity(deps: {
     displaySysToast: Ref<boolean>;
     isMusicExpanded: Ref<boolean>;
     isMusicExpanding: Ref<boolean>;
-    isExpandedSize: ComputedRef<boolean>;
     isMusicCtlEnabled: Ref<boolean>;
 }) {
     const {
         isMsgActive, displaySysToast, isMusicExpanded, isMusicExpanding,
-        isExpandedSize, isMusicCtlEnabled,
+        isMusicCtlEnabled,
     } = deps;
 
     // 番茄钟相关变量（由后端 pomodoro-tick 事件驱动）
@@ -57,6 +59,56 @@ export function useRealtimeActivity(deps: {
     const healthAlertLabel = ref('');
     const healthAlertType = ref<'sitting' | 'water'>('sitting');
 
+    // 硬件监控（灵动岛附属图标，由 LiveActive 的开关驱动；数据来自后端 monitor-stats 推送）
+    const hwEnabled = ref(getSettingRaw(NSD_HW_ENABLED) === 'true');
+    const hwMode = ref(getSettingRaw(NSD_HW_MODE) || 'single');
+    const hwDefaultMetric = ref(getSettingRaw(NSD_HW_DEFAULT_METRIC) || 'cpu');
+    const hwCpuPct = ref(0);
+    const hwMemPct = ref(0);
+    const isHardwareExpanded = ref(false);
+
+    // ===== 展示守卫（注册表统一遍历） =====
+    // 守卫谓词的取数源：全部为只读消费，展开态的写入经由主组件注入的 actions
+    const guardCtx: ActivityGuardCtx = {
+        isPomodoroVisible, isPomodoroExpanded,
+        isCountdownVisible, isCountdownExpanded,
+        hwEnabled, isHardwareExpanded, isHealthAlerting,
+    };
+
+    // 单个文本态的展示守卫：消息/toast/音乐展开让位；可见 且（无音乐控制 或 已展开）。
+    // （旧实现里的 isExpandedSize 分支不可达：isExpandedSize = isMusicExpanded || isMsgActive，
+    // 两者已被首位守卫拦截，随守卫统一化一并移除）
+    const makeTextGuard = (visible: Ref<boolean>, expanded: Ref<boolean>): ComputedRef<boolean> =>
+        computed(() => {
+            if (isMsgActive.value || displaySysToast.value || isMusicExpanded.value || isMusicExpanding.value) return false;
+            return visible.value && (!isMusicCtlEnabled.value || expanded.value);
+        });
+
+    // 文本态取数源由注册表声明（textSources），统一遍历生成展示守卫
+    const textGuards: Partial<Record<RtId, ComputedRef<boolean>>> = {};
+    for (const def of RT_ACTIVITY_DEFS) {
+        const src: TextSources | null | undefined = def.textSources?.(guardCtx);
+        // 声明了 textSources 的活动必为实时活动（sysmsg 无岛上形态），断言固化该不变式
+        if (src) textGuards[def.id as RtId] = makeTextGuard(src.visible, src.expanded);
+    }
+
+    // 文本态活动缺守卫 = 注册表配置缺失，不兜底、直接暴露
+    const showPomodoroText = textGuards['pomodoro']!;
+    const showCountdownText = textGuards['countdown']!;
+    const showHardwareRing = textGuards['hardware']!;
+
+    // 分屏布局：任一文本态活动"可见且未展开"即进入（硬件展开态除外，与旧实现一致）
+    const isSplitMode = computed(() => {
+        if (isMsgActive.value || displaySysToast.value || isMusicExpanded.value || isMusicExpanding.value) return false;
+        if (isHardwareExpanded.value) return false;
+        if (!isMusicCtlEnabled.value) return false;
+        for (const def of RT_ACTIVITY_DEFS) {
+            const src = def.textSources?.(guardCtx);
+            if (src && src.visible.value && !src.expanded.value) return true;
+        }
+        return false;
+    });
+
     // 番茄钟计算属性
     const formattedIslandPomoTime = computed(() => {
         const m = Math.floor(pomodoroRemainingSecs.value / 60).toString().padStart(2, '0');
@@ -68,44 +120,12 @@ export function useRealtimeActivity(deps: {
         return pomodoroPhase.value === 'focus' ? 'phase-focus' : 'phase-break';
     });
 
-    const showPomodoroText = computed(() => {
-        if (isMsgActive.value || displaySysToast.value || isMusicExpanded.value || isMusicExpanding.value) return false;
-        if (isPomodoroVisible.value && !isMusicCtlEnabled.value) return true;
-        if (isPomodoroVisible.value && isMusicCtlEnabled.value && isPomodoroExpanded.value) return true;
-        if (isExpandedSize.value) return true;
-        return false;
-    });
-
     // 倒计时计算属性
     const formattedIslandCdTime = computed(() => {
         const m = Math.floor(countdownRemainingSecs.value / 60).toString().padStart(2, '0');
         const s = (countdownRemainingSecs.value % 60).toString().padStart(2, '0');
         return `${m}:${s}`;
     });
-
-    const showCountdownText = computed(() => {
-        if (isMsgActive.value || displaySysToast.value || isMusicExpanded.value || isMusicExpanding.value) return false;
-        if (isCountdownVisible.value && !isMusicCtlEnabled.value) return true;
-        if (isCountdownVisible.value && isMusicCtlEnabled.value && isCountdownExpanded.value) return true;
-        if (isExpandedSize.value) return true;
-        return false;
-    });
-
-    const isSplitMode = computed(() => {
-        if (isMsgActive.value || displaySysToast.value || isMusicExpanded.value || isMusicExpanding.value) return false;
-        if (isHardwareExpanded.value) return false;
-        return isPomodoroVisible.value && isMusicCtlEnabled.value && !isPomodoroExpanded.value
-            || isCountdownVisible.value && isMusicCtlEnabled.value && !isCountdownExpanded.value
-            || hwEnabled.value && isMusicCtlEnabled.value && !isHardwareExpanded.value;
-    });
-
-    // 硬件监控（灵动岛附属图标，由 LiveActive 的开关驱动；数据来自后端 monitor-stats 推送）
-    const hwEnabled = ref(getSettingRaw(NSD_HW_ENABLED) === 'true');
-    const hwMode = ref(getSettingRaw(NSD_HW_MODE) || 'single');
-    const hwDefaultMetric = ref(getSettingRaw(NSD_HW_DEFAULT_METRIC) || 'cpu');
-    const hwCpuPct = ref(0);
-    const hwMemPct = ref(0);
-    const isHardwareExpanded = ref(false);
 
     // 轮换模式：当前显示的指标（CPU / 内存）
     const hwRotateMetric = ref<'cpu' | 'mem'>('cpu');
@@ -128,16 +148,6 @@ export function useRealtimeActivity(deps: {
             return hwCpuPct.value >= 80 ? '#a855f7' : '#ffffff';
         }
         return hwMemPct.value >= 80 ? '#ff4757' : '#3b82f6';
-    });
-
-    // 硬件监控主要显示（类似 showPomodoroText 模式）
-    const showHardwareRing = computed(() => {
-        if (isMsgActive.value || displaySysToast.value || isMusicExpanded.value || isMusicExpanding.value) return false;
-        if (!hwEnabled.value) return false;
-        if (!isMusicCtlEnabled.value) return true;
-        if (isHardwareExpanded.value) return true;
-        if (isExpandedSize.value) return true;
-        return false;
     });
 
     // 硬件监控轮换定时器：每 5 秒切换 CPU / 内存

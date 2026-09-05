@@ -536,6 +536,8 @@ import {
     NSD_SYSMSG_NETWORK_LATENCY_INTERVAL,
 } from '../constants/storageKeys';
 import { getSettingRaw, setSettingRaw } from '../utils/settings';
+// 活动注册表：卡片元数据（id/图标/文案/配色/默认优先级）与参与轮换的活动 id 的单一来源（阶段 G）
+import { RT_ACTIVITY_DEFS, RT_IDS } from '../activities/registry';
 
 // ===== 三步设置状态 =====
 const pomoStep = ref(0); // 0=专注时间, 1=休息时间, 2=循环轮数
@@ -993,80 +995,30 @@ function onWrTimeChange() {
     }
 }
 
-const activities = ref([
-    {
-        id: 'pomodoro',
-        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>',
-        title: '专注番茄钟',
-        desc: '沉浸工作时间管理',
-        accent: '#ff4757',
-        enabled: false,
-        disable: false,
-        priority: 1,
-    },
-    {
-        id: 'countdown',
-        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>',
-        title: '快捷倒计时',
-        desc: '自定义时长倒计时',
-        accent: '#ff9800',
-        enabled: false,
-        disable: false,
-        priority: 2,
-    },
-    {
-        id: 'hardware',
-        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" /><line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" /><line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" /><line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" /></svg>',
-        title: '硬件监控',
-        desc: '实时监测处理器与内存',
-        accent: '#3b82f6',
-        enabled: false,
-        disable: false,
-        priority: 3,
-    },
-    {
-        id: 'health',
-        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>',
-        title: '健康提醒',
-        desc: '久坐与喝水提醒',
-        accent: '#10b981',
-        enabled: false,
-        disable: false,
-        priority: 4,
-    },
-    {
-        id: 'sysmsg',
-        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>',
-        title: '系统动态感知',
-        desc: '实时捕捉软硬件生态变化',
-        accent: '#ff4757',
-        // 总闸改为任一分类开启即为启用（卡片右上角不再显示总开关）
-        enabled:
-            sysmsgVolume.value
+// 活动卡片元数据（id/图标/文案/配色/默认优先级）统一来自活动注册表，按注册表声明顺序排布；
+// enabled/disable/priority 为卡片本地状态（priority 启动时从 NSD_ACTIVITY_PRIORITY 回填，
+// sysmsg 总开关 = 任一分类开启，卡片右上角不再显示总开关，仅作内部一致性）
+const activities = ref(RT_ACTIVITY_DEFS.map(def => ({
+    id: def.id,
+    icon: def.icon,
+    title: def.title,
+    desc: def.desc,
+    accent: def.accent,
+    enabled: def.id === 'sysmsg'
+        ? sysmsgVolume.value
             || sysmsgPower.value
             || sysmsgBattery.value
             || sysmsgUnlock.value
             || sysmsgNetworkLatency.value
             || sysmsgNetworkDisconnect.value
-            || sysmsgNetworkRecovery.value,
-        disable: false,
-        priority: 99,
-    },
-    {
-        id: 'printer',
-        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>',
-        title: '打印机队列',
-        desc: '批量打印进度状态',
-        accent: '#8b5cf6',
-        enabled: false,
-        disable: false,
-        priority: 5,
-    },
-]);
+            || sysmsgNetworkRecovery.value
+        : false,
+    disable: false,
+    priority: def.defaultPriority,
+})));
 
 // ===== 实时活动优先级同步 =====
-// RT_IDS: 参与"多活动并行轮换"的实时活动 id（顺序固定，作为 priority 平局时的稳定排序键）
-const RT_IDS = ['pomodoro', 'countdown', 'hardware', 'health', 'printer'] as const;
+// RT_IDS（参与"多活动并行轮换"的实时活动 id）由活动注册表派生，此处直接引入
 
 // 当前正在编辑优先级的活动 id（用于显示提示文字）
 const focusedPriority = ref<string | null>(null);

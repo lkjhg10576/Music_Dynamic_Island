@@ -66,22 +66,10 @@
                 </div>
 
                 <transition mode="out-in" @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
-                    <!-- 倒计时展开态：暂停/开始 + 关闭 -->
-                    <IslandCdControls v-if="isCountdownExpanded" key="cd-controls" :cd-paused="cdPaused"
-                        @toggle="handleCdTogglePauseResume" @close="handleCdClose" />
-
-                    <!-- 番茄钟展开态：关闭 -->
-                    <IslandCloseButton v-else-if="isPomodoroExpanded" key="close-btn" @close="handlePomoClose()" />
-
-                    <!-- 健康提醒关闭按钮 -->
-                    <IslandCloseButton v-else-if="isHealthAlerting" key="health-close" @close="handleDismissHealthAlert" />
-
-                    <!-- 硬件监控展开态：CPU / 内存 详情 + 关闭 -->
-                    <IslandHwDetail v-else-if="isHardwareExpanded && hwEnabled" key="hw-detail" :hw-cpu-pct="hwCpuPct"
-                        :hw-mem-pct="hwMemPct" @close="collapseHardware" />
-
-                    <IslandPrintQueue v-else-if="isPrintQueueExpanded" key="print-queue" :jobs="printJobs"
-                        :default-printer="defaultPrinter" @close="collapsePrintQueue()" />
+                    <!-- 实时活动展开面板：由活动注册表按 panelRank 命中（复刻旧 v-else-if 链：
+                         countdown → pomodoro → health → hardware → printer） -->
+                    <component v-if="rtPanel" :is="rtPanel.component" :key="rtPanel.key"
+                        v-bind="rtPanel.props" v-on="rtPanel.events" />
 
                     <IslandSpectrum v-else-if="showSpectrumIndicator" key="spectrum" :bars="[...spectrumData]"
                         :is-playing="isPlaying" :is-music-expanded="isMusicExpanded" :bar-color="spectrumBarColor" />
@@ -93,8 +81,7 @@
                 <transition name="pop">
                     <!-- 多实时活动并行：单一常驻小图标（候选集按 priority 排序，点击展开当前预览活动 + 轮换到下一个） -->
                     <IslandRtChip v-if="showRtChip" :rt-activities="rtActivities" :current-rt-index="currentRtIndex"
-                        :hw-mode="hwMode" :hw-cpu-pct="hwCpuPct" :hw-mem-pct="hwMemPct" :hw-ring-pct="hwRingPct"
-                        :hw-ring-color="hwRingColor" :core-content-style="coreContentStyle" @activate="clickRtChip()" />
+                        :chip-content="previewChip" :core-content-style="coreContentStyle" @activate="clickRtChip()" />
                 </transition>
             </div>
 
@@ -156,13 +143,14 @@ import IslandSysToast from '../components/island/IslandSysToast.vue';
 import IslandHardwareRing from '../components/island/IslandHardwareRing.vue';
 import IslandRtChip from '../components/island/IslandRtChip.vue';
 import IslandMusic from '../components/island/IslandMusic.vue';
-import IslandCdControls from '../components/island/IslandCdControls.vue';
-import IslandCloseButton from '../components/island/IslandCloseButton.vue';
-import IslandHwDetail from '../components/island/IslandHwDetail.vue';
-import IslandPrintQueue from '../components/island/IslandPrintQueue.vue';
 import IslandSpectrum from '../components/island/IslandSpectrum.vue';
 import IslandStatusDot from '../components/island/IslandStatusDot.vue';
 import type { PrintJob, PrintQueueState } from '../components/island/types';
+// 活动注册表：候选 id / 元数据 / 活跃谓词 / 芯片与面板视图的单一来源（阶段 G）
+import {
+    RT_ACTIVITY_DEFS, RT_IDS, PANEL_DEFS_BY_RANK, getRtDef,
+    type IslandActivityCtx, type PanelView, type ChipContent,
+} from '../activities/registry';
 import { useIslandPointer } from '../composables/useIslandPointer';
 import { useIslandAutoHide } from '../composables/useIslandAutoHide';
 import { useIslandContextMenu } from '../composables/useIslandContextMenu';
@@ -188,54 +176,35 @@ const isPrintQueueExpanded = ref(false);
 // 硬件监控附属图标可见性已合并到 showRtChip（多活动并行轮换），原 isHwAccessoryVisible 不再单独使用
 
 // ===== 多实时活动并行：单图标轮换 + 点击展开 + X 回退 =====
-// RT_IDS: 参与轮换的四种实时活动 id（顺序固定，作为 priority 平局时的稳定排序键）
-const RT_IDS = ['pomodoro', 'countdown', 'hardware', 'health', 'printer'] as const;
-type RtId = typeof RT_IDS[number];
+// 活动的 id 集、图标/配色、默认优先级与活跃谓词统一来自活动注册表（activities/registry.ts）；
+// 本组件只负责：候选集过滤（activityConfig × rtActive）、轮换下标、展开编排与尺寸动画。
+// 岛上下文在 useRealtimeActivity 接入点之后赋值；候选集/面板等计算属性均为惰性求值，
+// 首次求值（watch/渲染）晚于赋值，不存在使用早于初始化的问题
+let islandCtx: IslandActivityCtx;
 
-// 各活动的图标与配色（与 LiveActive 的 activities 对应保持一致）
-const RT_META: Record<RtId, { icon: string; accent: string }> = {
-    pomodoro: {
-        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>',
-        accent: '#ff4757',
-    },
-    countdown: {
-        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>',
-        accent: '#ff9800',
-    },
-    hardware: {
-        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" /><line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" /><line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" /><line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" /></svg>',
-        accent: '#3b82f6',
-    },
-    health: {
-        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>',
-        accent: '#10b981',
-    },
-    printer: {
-        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>',
-        accent: '#8b5cf6',
-    },
-};
+// 各活动的"当前活跃"谓词（沿用现有事件驱动标志；由注册表按 id 派发）
+const rtActive = computed<Record<string, boolean>>(() => {
+    const map: Record<string, boolean> = {};
+    for (const def of RT_ACTIVITY_DEFS) {
+        if (def.realtime) map[def.id] = def.isActive(islandCtx);
+    }
+    return map;
+});
 
 // 跨窗口同步来的配置（由 LiveActive emit('control-activity-config') 推送；启动时也从 localStorage 兜底读取）
 const activityConfig = ref<Record<string, { enabled: boolean; priority: number }>>({});
 
-// 各活动的"当前活跃"谓词（沿用现有事件驱动标志）
-const rtActive = computed(() => ({
-    pomodoro: isPomodoroVisible.value,
-    countdown: isCountdownVisible.value,
-    hardware: hwEnabled.value,            // 硬件"活跃" = 监控开启
-    health:   isHealthAlerting.value,
-    printer: isPrintQueueActive.value,
-}));
-
-// 候选集（enabled && active，按 priority 升序 + 固定顺序平局打破）
+// 候选集（enabled && active，按 priority 升序 + 注册表声明顺序平局打破）
 const rtActivities = computed(() => {
     return RT_IDS
         .filter(id => activityConfig.value[id]?.enabled && rtActive.value[id])
-        .map(id => ({ id, priority: activityConfig.value[id].priority, ...RT_META[id] }))
+        .map(id => {
+            const def = getRtDef(id);
+            return { id, priority: activityConfig.value[id].priority, icon: def.icon, accent: def.accent };
+        })
         .sort((a, b) => {
             const pa = a.priority, pb = b.priority;
-            return pa !== pb ? pa - pb : RT_IDS.indexOf(a.id as RtId) - RT_IDS.indexOf(b.id as RtId);
+            return pa !== pb ? pa - pb : RT_IDS.indexOf(a.id) - RT_IDS.indexOf(b.id);
         });
 });
 
@@ -263,6 +232,7 @@ const showRtChip = computed(() => {
 
 // 点击小图标展开当前预览活动；若传入 targetId（如硬件环点击），则展开指定活动
 // 同时推进 currentRtIndex 到下一个候选（用于下次小图标显示）
+// 展开动作（展开态标记 + 尺寸动画）由活动注册表按 id 派发，本函数不再逐活动分支
 function clickRtChip(targetId?: string) {
     const list = rtActivities.value;
     if (!list.length) return;
@@ -276,11 +246,11 @@ function clickRtChip(targetId?: string) {
     if (targetId) {
         idx = list.findIndex(a => a.id === targetId);
         if (idx < 0) {
-            // targetId 不在候选集中（如用户未在控制台启用该活动），但仍允许展开（兜底）
+            // targetId 不在候选集中（如用户未在控制台启用该活动），但仍允许展开（兜底）；
+            // 未注册的活动无展开动作，仅标记展开态
             expandedRtId.value = targetId;
             previousContext.value = isPlaying.value ? 'music' : 'chip';
-            if (targetId === 'hardware') expandHardware();
-            if (targetId === 'printer') expandPrintQueue();
+            RT_ACTIVITY_DEFS.find(def => def.id === targetId)?.expand?.(islandCtx);
             return;
         }
     } else {
@@ -290,23 +260,9 @@ function clickRtChip(targetId?: string) {
     previousContext.value = isPlaying.value ? 'music' : 'chip';
     // 推进到下一个候选（下次小图标显示）
     currentRtIndex.value = (idx + 1) % list.length;
-    // 触发展开
+    // 触发展开：health 无手动展开（alerting 时由 health-reminder-tick 自动驱动，注册表不注册 expand）
     expandedRtId.value = target.id;
-    if (target.id === 'hardware') {
-        expandHardware();
-    } else if (target.id === 'pomodoro') {
-        isPomodoroExpanded.value = true;
-        // 展开时宽度不低于最小展开宽度（过窄时临时回调），只按需调整高度，避免岛宽被缩窄
-        const { h } = getBaseSize();
-        animateIslandSize(getExpandTargetWidth(), h);
-    } else if (target.id === 'countdown') {
-        isCountdownExpanded.value = true;
-        const { h } = getBaseSize();
-        animateIslandSize(getExpandTargetWidth(), h);
-    } else if (target.id === 'printer') {
-        expandPrintQueue();
-    }
-    // 'health' 无需手动展开（alerting 时由 health-reminder-tick 自动驱动 isHealthAlerting）
+    getRtDef(target.id).expand?.(islandCtx);
 }
 
 function revertRealtime() {
@@ -337,8 +293,8 @@ function loadActivityConfigFromStorage() {
     }
 
     const map: Record<string, { enabled: boolean; priority: number }> = {};
-    RT_IDS.forEach((id, idx) => {
-        const defaultPriority = idx + 1;
+    RT_IDS.forEach((id) => {
+        const defaultPriority = getRtDef(id).defaultPriority;
         const entry = parsed ? parsed[id] : undefined;
         if (typeof entry === 'number' && Number.isFinite(entry)) {
             // 现行格式：纯数字优先级
@@ -648,20 +604,12 @@ const collapsePrintQueue = (restore = true) => {
 };
 
 // 统一折叠所有已展开的实时活动，避免多活动并行时状态残留导致关闭按钮/切换异常
+// （折叠动作同样由注册表派发：collapseHardware/collapsePrintQueue 自带未展开短路，等价旧的条件调用；
+//   health 由 isHealthAlerting 事件驱动，注册表不注册折叠）
 const collapseAllExpandedActivities = () => {
-    if (isPomodoroExpanded.value) {
-        isPomodoroExpanded.value = false;
+    for (const def of RT_ACTIVITY_DEFS) {
+        def.collapse?.(islandCtx);
     }
-    if (isCountdownExpanded.value) {
-        isCountdownExpanded.value = false;
-    }
-    if (isHardwareExpanded.value) {
-        collapseHardware();
-    }
-    if (isPrintQueueExpanded.value) {
-        collapsePrintQueue(false);
-    }
-    // health 由 isHealthAlerting 事件驱动，不在此处手动置位
 };
 
 // 音乐控制功能开关
@@ -877,7 +825,49 @@ const {
     isRotationEnabled, currentRotIndex, startRotation, stopRotation,
     restorePomodoroState, restoreCountdownState,
 } = useRealtimeActivity({
-    isMsgActive, displaySysToast, isMusicExpanded, isMusicExpanding, isExpandedSize, isMusicCtlEnabled,
+    isMsgActive, displaySysToast, isMusicExpanded, isMusicExpanding, isMusicCtlEnabled,
+});
+
+// ===== 活动注册表的岛上上下文（见顶部 islandCtx 声明） =====
+// 动作一律以闭包注入：引用的处理器/getBaseSize 声明位置可能晚于本赋值，
+// 但调用点全部在交互期/渲染期，不存在时序问题
+islandCtx = {
+    isPomodoroVisible, isPomodoroExpanded, isCountdownVisible, isCountdownExpanded,
+    hwEnabled, isHardwareExpanded, isHealthAlerting,
+    cdPaused, hwMode, hwCpuPct, hwMemPct, hwRingPct, hwRingColor,
+    printJobs, defaultPrinter, isPrintQueueExpanded,
+    actions: {
+        animateExpandSize: () => {
+            const { h } = getBaseSize();
+            animateIslandSize(getExpandTargetWidth(), h);
+        },
+        setPomodoroExpanded: expanded => { isPomodoroExpanded.value = expanded; },
+        setCountdownExpanded: expanded => { isCountdownExpanded.value = expanded; },
+        expandHardware: () => { expandHardware(); },
+        collapseHardware: () => { collapseHardware(); },
+        expandPrintQueue: () => { expandPrintQueue(); },
+        collapsePrintQueue: restore => { collapsePrintQueue(restore ?? true); },
+        toggleCountdownPauseResume: () => { handleCdTogglePauseResume(); },
+        closeCountdownPanel: () => { handleCdClose(); },
+        closePomodoroPanel: () => { handlePomoClose(); },
+        dismissHealthAlert: () => { handleDismissHealthAlert(); },
+    },
+};
+
+// 右侧展开面板：注册表按 panelRank 命中，返回首个命中的视图（null = 无面板，回落频谱/状态灯）
+const rtPanel = computed<PanelView | null>(() => {
+    for (const { panel } of PANEL_DEFS_BY_RANK) {
+        const view = panel(islandCtx);
+        if (view) return view;
+    }
+    return null;
+});
+
+// 芯片预览内容：注册表 chip 契约优先（硬件监控的动态圆环），缺省渲染活动静态图标
+const previewChip = computed<ChipContent>(() => {
+    const cur = rtActivities.value[currentRtIndex.value];
+    if (!cur) return { kind: 'icon', icon: '' };
+    return getRtDef(cur.id).chip?.(islandCtx) ?? { kind: 'icon', icon: cur.icon };
 });
 // 候选集收缩保护：若 expandedRtId 已不在候选集，则回退
 watch(rtActivities, (list) => {
