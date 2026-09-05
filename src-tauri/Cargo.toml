@@ -42,7 +42,9 @@ windows-sys = { version = "0.59", features = [
 ] }
 # 锁屏检测 / MessageBeep：OpenInputDesktop/CloseDesktop/MessageBeep 在 windows-sys 0.59
 # 的 win32metadata 中已被移除（docs.rs 0.59.0 查证不存在），按项目规范这些 API 一律走 winapi 0.3。
-winapi = { version = "0.3", features = ["winuser"] }
+# 剪贴板写回的 GlobalFree 同样不在 windows-sys 0.59 的 Memory 模块（rustc E0432 实证），
+# 一并走 winapi::um::winbase。
+winapi = { version = "0.3", features = ["winuser", "winbase"] }
 tauri-plugin-single-instance = "2.0.0" # 根据你的Tauri2版本调整具体小版本
 tokio = { version = "1", features = ["rt", "sync", "time", "net"] }
 urlencoding = "2.1.3"
@@ -72,6 +74,10 @@ windows = { version = "0.58.0", features = [
     "Win32_Networking_NetworkListManager",
     # 剪贴板历史：WIC 解码 PNG / 生成 JPEG 缩略图
     "Win32_Graphics_Imaging",
+    # 剪贴板历史：IWICBitmapEncoder::CreateNewFrame / IWICBitmapFrameEncode::Initialize 的
+    # IPropertyBag2 参数位于 Win32::System::Com::StructuredStorage 模块，缺此 feature 时
+    # 上述方法会被 cfg 门控掉（v0.58.0 源码查证）
+    "Win32_System_Com_StructuredStorage",
 ] }
 cpal = "0.15"
 rustfft = "6.2"

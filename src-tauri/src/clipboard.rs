@@ -544,7 +544,7 @@ fn make_thumbnail(png: &[u8], thumb_path: &Path) -> (u32, u32, bool) {
     use windows::Win32::Graphics::Imaging::{
         CLSID_WICImagingFactory, GUID_WICPixelFormat24bppBGR, GUID_ContainerFormatJpeg, IWICImagingFactory,
         WICBitmapDitherTypeNone, WICBitmapEncoderNoCache, WICBitmapInterpolationModeFant, WICBitmapPaletteTypeCustom,
-        WICDecodeMetadataCacheOnDemand, WICRect,
+        WICDecodeMetadataCacheOnDemand,
     };
     use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 
@@ -557,7 +557,7 @@ fn make_thumbnail(png: &[u8], thumb_path: &Path) -> (u32, u32, bool) {
             // 输入：内存流 → 解码器 → 第 0 帧 → 原图尺寸
             let in_stream = factory.CreateStream()?;
             in_stream.InitializeFromMemory(png)?;
-            let decoder = factory.CreateDecoderFromStream(&in_stream, None, WICDecodeMetadataCacheOnDemand)?;
+            let decoder = factory.CreateDecoderFromStream(&in_stream, std::ptr::null(), WICDecodeMetadataCacheOnDemand)?;
             let frame = decoder.GetFrame(0)?;
             let mut w = 0u32;
             let mut h = 0u32;
@@ -619,10 +619,10 @@ fn make_thumbnail(png: &[u8], thumb_path: &Path) -> (u32, u32, bool) {
                 .collect();
             out_stream.InitializeFromFilename(windows::core::PCWSTR::from_raw(path_w.as_ptr()), GENERIC_WRITE)?;
 
-            let encoder = factory.CreateEncoder(&GUID_ContainerFormatJpeg, None)?;
+            let encoder = factory.CreateEncoder(&GUID_ContainerFormatJpeg, std::ptr::null())?;
             encoder.Initialize(&out_stream, WICBitmapEncoderNoCache)?;
             let mut frame_enc = None;
-            encoder.CreateNewFrame(&mut frame_enc, None)?;
+            encoder.CreateNewFrame(&mut frame_enc, std::ptr::null_mut())?;
             let Some(frame_enc) = frame_enc else {
                 return Ok((w, h, false));
             };
@@ -633,8 +633,8 @@ fn make_thumbnail(png: &[u8], thumb_path: &Path) -> (u32, u32, bool) {
 
             let stride = (tw * 3 + 3) / 4 * 4;
             let mut buf = vec![0u8; stride as usize * th as usize];
-            let rect = WICRect { X: 0, Y: 0, Width: tw as i32, Height: th as i32 };
-            frame_enc.WritePixels(th, &rect, stride, buf.len() as u32, buf.as_mut_ptr())?;
+            // windows 0.58 的 WritePixels 签名为 (linecount, cbstride, &[u8])，prc 在该版元数据中不存在
+            frame_enc.WritePixels(th, stride, &buf)?;
             frame_enc.Commit()?;
             encoder.Commit()?;
             Ok((w, h, true))
@@ -744,7 +744,9 @@ fn write_to_clipboard(app: &AppHandle, item: &ClipItem) -> Result<(), String> {
 /// 分配 GMEM_MOVEABLE 写入字节并 SetClipboardData；
 /// 成功后系统接管内存**不得释放**，失败时所有权未移交，手动 GlobalFree 回收
 unsafe fn set_clipboard_bytes(fmt: u32, bytes: &[u8]) -> bool {
-    use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock};
+    // GlobalFree 不在 windows-sys 0.59 的 Memory 模块（rustc E0432 实证），
+    // 按项目规范剪贴板 Global* 一律走 winapi 0.3
+    use winapi::um::winbase::{GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock};
     use windows_sys::Win32::System::DataExchange::SetClipboardData;
 
     let h = GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1));
