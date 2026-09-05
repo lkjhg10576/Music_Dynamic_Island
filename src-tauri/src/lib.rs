@@ -293,12 +293,29 @@ static HW_LAST_RX: AtomicU64 = AtomicU64::new(0);
 static HW_LAST_TX: AtomicU64 = AtomicU64::new(0);
 static HW_TOTAL_RX: AtomicU64 = AtomicU64::new(0);
 static HW_TOTAL_TX: AtomicU64 = AtomicU64::new(0);
+static HW_LAST_SAMPLE_AT: AtomicU64 = AtomicU64::new(0);
+
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
 
 // B1 后台线程：默认每 1s 刷新 CPU / 内存统计，写入原子变量供 command 零阻塞读取；
 // 同时每 2s emit "monitor-stats" 事件，推送网速差值 + CPU/内存。
 // §6.1 动态间隔：仅当硬件实时活动开启或主窗口可见时全量轮询；
 // 否则进入 30s 一次的流量统计保活模式（保证省内存/静默自启下统计不中断，同时大幅降低 CPU 消耗）。
 fn is_hardware_realtime_needed(app: &tauri::AppHandle) -> bool {
+    // 岛的网速/硬件依赖 monitor-stats 推送，保活路径不 emit；
+    // widget 可见时必须全量轮询，否则省内存模式销毁 main 后灵动岛网速会冻结。
+    if app
+        .get_webview_window("widget")
+        .map(|w| w.is_visible().unwrap_or(false))
+        .unwrap_or(false)
+    {
+        return true;
+    }
     if let Some(value) = config_store::get("nsd_hw_enabled") {
         let enabled = match &value {
             serde_json::Value::Bool(b) => *b,
@@ -346,12 +363,14 @@ fn start_hardware_monitor(app_handle: tauri::AppHandle) {
                     total_rx += data.total_received();
                     total_tx += data.total_transmitted();
                 }
+                let now_secs = unix_now_secs();
                 let prev_rx = HW_LAST_RX.load(Ordering::Relaxed);
                 let prev_tx = HW_LAST_TX.load(Ordering::Relaxed);
-                let (rx_speed, tx_speed) = if prev_rx > 0 {
-                    let rx_diff = total_rx.saturating_sub(prev_rx);
-                    let tx_diff = total_tx.saturating_sub(prev_tx);
-                    ((rx_diff as f64).round() as u64, (tx_diff as f64).round() as u64)
+                let (rx_diff, tx_diff) = if prev_rx > 0 {
+                    (
+                        total_rx.saturating_sub(prev_rx),
+                        total_tx.saturating_sub(prev_tx),
+                    )
                 } else {
                     (0, 0)
                 };
@@ -359,7 +378,8 @@ fn start_hardware_monitor(app_handle: tauri::AppHandle) {
                 HW_LAST_TX.store(total_tx, Ordering::Relaxed);
                 HW_TOTAL_RX.store(total_rx, Ordering::Relaxed);
                 HW_TOTAL_TX.store(total_tx, Ordering::Relaxed);
-                traffic_stats::accumulate(tx_speed, rx_speed);
+                HW_LAST_SAMPLE_AT.store(now_secs, Ordering::Relaxed);
+                traffic_stats::accumulate(tx_diff, rx_diff);
                 traffic_stats::maybe_persist(&app_handle);
                 // 清空实时推送缓存，避免恢复全量轮询时把空闲前的旧样本混入新均值
                 pending_rx = 0;
@@ -403,28 +423,36 @@ fn start_hardware_monitor(app_handle: tauri::AppHandle) {
                 total_rx += data.total_received();
                 total_tx += data.total_transmitted();
             }
-            // 计算瞬时速度 (bytes/s)，避免除零
+            // 计算瞬时速度 (bytes/s)，避免除零；跨采样间隔用实际秒数归一化，
+            // 防止从 30s 保活切回 1s 全量轮询的第一帧产生约 30 倍的虚假峰值。
+            let now_secs = unix_now_secs();
+            let prev_sample_at = HW_LAST_SAMPLE_AT.load(Ordering::Relaxed);
+            let elapsed_secs = now_secs.saturating_sub(prev_sample_at).max(1);
             let prev_rx = HW_LAST_RX.load(Ordering::Relaxed);
             let prev_tx = HW_LAST_TX.load(Ordering::Relaxed);
-            let (rx_speed, tx_speed) = if prev_rx > 0 {
-                let rx_diff = total_rx.saturating_sub(prev_rx);
-                let tx_diff = total_tx.saturating_sub(prev_tx);
-                ((rx_diff as f64).round() as u64, (tx_diff as f64).round() as u64)
+            let (rx_diff, tx_diff) = if prev_rx > 0 {
+                (
+                    total_rx.saturating_sub(prev_rx),
+                    total_tx.saturating_sub(prev_tx),
+                )
             } else {
                 (0, 0)
             };
+            let rx_speed = ((rx_diff as f64) / elapsed_secs as f64).round() as u64;
+            let tx_speed = ((tx_diff as f64) / elapsed_secs as f64).round() as u64;
             HW_LAST_RX.store(total_rx, Ordering::Relaxed);
             HW_LAST_TX.store(total_tx, Ordering::Relaxed);
             HW_TOTAL_RX.store(total_rx, Ordering::Relaxed);
             HW_TOTAL_TX.store(total_tx, Ordering::Relaxed);
+            HW_LAST_SAMPLE_AT.store(now_secs, Ordering::Relaxed);
 
             // 累计本推送周期内的网速样本（每 1s 一次）
             pending_rx += rx_speed;
             pending_tx += tx_speed;
             sample_count += 1;
 
-            // 流量统计：按天累计本秒上/下行字节量，节流落盘（主窗口关闭后仍持续统计）
-            traffic_stats::accumulate(tx_speed, rx_speed);
+            // 流量统计：按天累计实际字节增量（diff），节流落盘（主窗口关闭后仍持续统计）
+            traffic_stats::accumulate(tx_diff, rx_diff);
             traffic_stats::maybe_persist(&app_handle);
 
             // 每 2s 推送 monitor-stats 事件（实时硬件监控开启时推送，控制台图表依赖此事件）
