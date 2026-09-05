@@ -24,8 +24,11 @@ import {
     NSD_HW_ENABLED,
     NSD_HW_MODE,
     NSD_HW_DEFAULT_METRIC,
+    NSD_HW_RING_OUTER,
+    NSD_HW_RING_INNER,
     NSD_ROTATION_MODE,
 } from '../constants/storageKeys';
+import { HW_BATTERY_UNAVAILABLE, HW_METRICS, hwMetricClamp, hwMetricColor, hwMetricPctOf, type HwMetric } from '../utils/hwMetrics';
 
 export function useRealtimeActivity(deps: {
     // 跨域守卫：消息通知 / 系统 toast / 音乐展开态优先级高于实时活动展示
@@ -62,9 +65,20 @@ export function useRealtimeActivity(deps: {
     // 硬件监控（灵动岛附属图标，由 LiveActive 的开关驱动；数据来自后端 monitor-stats 推送）
     const hwEnabled = ref(getSettingRaw(NSD_HW_ENABLED) === 'true');
     const hwMode = ref(getSettingRaw(NSD_HW_MODE) || 'single');
-    const hwDefaultMetric = ref(getSettingRaw(NSD_HW_DEFAULT_METRIC) || 'cpu');
+    // E1：指标统一为 cpu/mem/battery/disk 四选；localStorage 存量值校验，非法值回落默认
+    const loadHwMetric = (key: string, fallback: HwMetric): HwMetric => {
+        const raw = getSettingRaw(key);
+        return raw && (HW_METRICS as readonly string[]).includes(raw) ? (raw as HwMetric) : fallback;
+    };
+    const hwDefaultMetric = ref<HwMetric>(loadHwMetric(NSD_HW_DEFAULT_METRIC, 'cpu'));
+    // 双圆环外/内环独立指标（默认 cpu+mem 保持既有观感）
+    const hwRingOuter = ref<HwMetric>(loadHwMetric(NSD_HW_RING_OUTER, 'cpu'));
+    const hwRingInner = ref<HwMetric>(loadHwMetric(NSD_HW_RING_INNER, 'mem'));
     const hwCpuPct = ref(0);
     const hwMemPct = ref(0);
+    // monitor-stats 扩展数据源：电池推送前按"无电池"哨兵兜底，磁盘默认 0
+    const hwBatteryPct = ref<number>(HW_BATTERY_UNAVAILABLE);
+    const hwDiskPct = ref(0);
     const isHardwareExpanded = ref(false);
 
     // ===== 展示守卫（注册表统一遍历） =====
@@ -131,23 +145,29 @@ export function useRealtimeActivity(deps: {
     const hwRotateMetric = ref<'cpu' | 'mem'>('cpu');
     let hwRotationTimer: number | null = null;
 
-    // 当前激活的指标
-    const hwActiveMetric = computed(() => {
+    // 当前激活的指标（四指标统一口径）
+    const hwActiveMetric = computed<HwMetric>(() => {
         if (hwMode.value === 'rotation') return hwRotateMetric.value;
         return hwDefaultMetric.value;
     });
 
-    // 单圆环/轮换模式的进度百分比
+    // 实时值集合：统一传给指标工具函数
+    const hwVals = computed(() => ({
+        cpu: hwCpuPct.value,
+        mem: hwMemPct.value,
+        battery: hwBatteryPct.value,
+        disk: hwDiskPct.value,
+    }));
+
+    // 单圆环/轮换模式的进度百分比（电池不可用时按 0 渲染空环）
     const hwRingPct = computed(() => {
-        return hwActiveMetric.value === 'cpu' ? hwCpuPct.value : hwMemPct.value;
+        return hwMetricClamp(hwMetricPctOf(hwActiveMetric.value, hwVals.value));
     });
 
-    // 圆环颜色
+    // 圆环颜色（不可用指标置灰）
     const hwRingColor = computed(() => {
-        if (hwActiveMetric.value === 'cpu') {
-            return hwCpuPct.value >= 80 ? '#a855f7' : '#ffffff';
-        }
-        return hwMemPct.value >= 80 ? '#ff4757' : '#3b82f6';
+        const unavailable = hwMetricPctOf(hwActiveMetric.value, hwVals.value) === null;
+        return hwMetricColor(hwActiveMetric.value, hwRingPct.value, unavailable);
     });
 
     // 硬件监控轮换定时器：每 5 秒切换 CPU / 内存
@@ -249,8 +269,12 @@ export function useRealtimeActivity(deps: {
         hwEnabled,
         hwMode,
         hwDefaultMetric,
+        hwRingOuter,
+        hwRingInner,
         hwCpuPct,
         hwMemPct,
+        hwBatteryPct,
+        hwDiskPct,
         isHardwareExpanded,
         hwActiveMetric,
         hwRingPct,

@@ -91,6 +91,14 @@ pub fn start_pomodoro_thread(app_handle: AppHandle) {
                     if crate::health_reminder::is_sitting_enabled() && completed_focus % 2 == 0 {
                         crate::health_reminder::trigger_sitting_alert();
                     }
+                    // D2：完成一次专注 → 按天累计落盘，并把统计快照推给控制台卡片
+                    crate::pomodoro_stats::record_focus(&app_handle, POMO_FOCUS_SECS.load(Ordering::Relaxed));
+                    let (date, today, total) = crate::pomodoro_stats::snapshot();
+                    let _ = app_handle.emit("pomodoro-stats-changed", serde_json::json!({
+                        "date": date,
+                        "today": today,
+                        "total": total,
+                    }));
                 } else {
                     // 休息结束 → 下一轮或完成
                     let remaining_cycles = POMO_REMAINING_CYCLES.load(Ordering::Relaxed);

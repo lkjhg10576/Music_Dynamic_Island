@@ -11,7 +11,7 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-blue?logo=tauri)](https://tauri.app)
 [![Vue 3](https://img.shields.io/badge/Vue-3.x-green?logo=vue.js)](https://vuejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?logo=typescript)](https://www.typescriptlang.org)
-[![Version](https://img.shields.io/badge/version-0.6.0--2-4-blue)](https://github.com/lkjhg10576/Music_Dynamic_Island)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/lkjhg10576/Music_Dynamic_Island)
 
 </div>
 
@@ -77,6 +77,8 @@
 - **六大模块**：专注番茄钟 / 快捷倒计时 / 硬件监控 / 健康提醒 / 系统动态感知 / 打印机队列监控
 - **后台持续运行**：专注番茄钟、快捷倒计时、健康提醒都在系统后台计时，即便关闭主控制台窗口（开启省内存模式）也能准时提醒，不依赖前端界面
 - **卡片展开**：点击卡片自动展开详情面板，居中显示
+- **专注统计**：番茄钟卡片底部小字显示「今天 X 次 · Y 分钟」，点箭头可切换「总计 X 次 · Y 分钟」历史累计口径（当日统计次日归零，总计不自动清零）
+- **倒计时提示音**：倒计时结束后每 5 秒重复响铃提醒，点击关闭即消音；后台线程驱动，省内存模式下依然有效
 - **进度指示器**：滚动边缘渐变遮罩提示可滚动方向
 - **动态感知与打印机队列**：均已完整实现，可在面板中逐项配置
 
@@ -96,7 +98,8 @@
 
 ### 系统硬件监控
 
-- **CPU/内存**：实时显示占用率
+- **CPU/内存/电池/磁盘**：实时显示占用率；台式机无电池时电池指标自动置灰不可选
+- **单圆环 / 双圆环 / 轮换**三种显示模式，双圆环外环与内环可各自独立选择显示指标
 - **高占用预警**：≥90% 时自动红色警示
 - **主题自适应**：支持暗色/亮色主题
 - **历史曲线**：控制台「实时状态」下拉切换网速 / CPU / 内存，绘制趋势折线图
@@ -156,6 +159,7 @@ Music_Dynamic_Island/
 │   │   └── useNotifications.ts   # 消息通知 / toast 状态机
 │   ├── utils/
 │   │   ├── settings.ts           # 设置统一存取层（Rust config.json 单一数据源）
+│   │   ├── hwMetrics.ts          # 硬件指标元数据（四指标配色 / 模式槽位映射）
 │   │   └── format.ts             # 格式化工具
 │   └── assets/                   # 静态资源（图标、截图、捐赠码）
 ├── src-tauri/                    # 桌面后端（Rust）
@@ -167,7 +171,8 @@ Music_Dynamic_Island/
 │   │   ├── notification.rs       # 系统通知捕获
 │   │   ├── system_events.rs      # 系统动态感知
 │   │   ├── pomodoro.rs           # 专注番茄钟
-│   │   ├── countdown.rs          # 快捷倒计时
+│   │   ├── pomodoro_stats.rs     # 专注统计（按天累计 + 落盘）
+│   │   ├── countdown.rs          # 快捷倒计时（含结束响铃）
 │   │   ├── health_reminder.rs    # 健康提醒
 │   │   ├── print_queue.rs        # 打印机队列监控
 │   │   ├── storage.rs            # 落盘基建（应用数据目录 / 原子写）
@@ -188,7 +193,7 @@ Music_Dynamic_Island/
 - Node.js >= 18
 - Rust >= 1.70
 - Tauri 2 CLI
-- 当前版本：`0.5.0`（正式版）`0.6.0-4`（测试版）
+- 当前版本：`0.6.0`（正式版）
 
 ### 安装与运行
 

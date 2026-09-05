@@ -6,7 +6,6 @@ use serde::Deserialize;
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Win32::Media::Audio::{eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
-use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 // 锁屏检测：OpenInputDesktop/CloseDesktop 已从 windows-sys 0.59 的 win32metadata 中移除
 // （docs.rs 0.59.0 查证不存在），按项目规范锁屏检测一律用 winapi 0.3；GENERIC_READ 同源取自 winnt。
 use winapi::um::winnt::GENERIC_READ;
@@ -295,19 +294,9 @@ pub fn start_monitor(app: AppHandle) {
     });
 }
 
-// 辅助函数：同时获取电源插入状态和剩余电量
+// 辅助函数：同时获取电源插入状态和剩余电量（实现收口到 win32_utils::power_status 共享封装）
 fn get_power_status() -> Option<(u8, u8)> {
-    unsafe {
-        let mut status: SYSTEM_POWER_STATUS = std::mem::zeroed();
-        if GetSystemPowerStatus(&mut status).is_ok() {
-            // 返回元组: (ACLineStatus, BatteryLifePercent)
-            // ACLineStatus: 0 = 使用电池, 1 = 插入电源
-            // BatteryLifePercent: 0 ~ 100
-            Some((status.ACLineStatus, status.BatteryLifePercent))
-        } else {
-            None
-        }
-    }
+    crate::win32_utils::power_status()
 }
 
 // 辅助函数：通过 OpenInputDesktop 判断当前会话是否处于锁定状态。

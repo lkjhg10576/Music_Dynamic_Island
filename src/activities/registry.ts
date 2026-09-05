@@ -29,6 +29,7 @@ import IslandHwDetail from '../components/island/IslandHwDetail.vue';
 import IslandHwChipRing from '../components/island/IslandHwChipRing.vue';
 import IslandPrintQueue from '../components/island/IslandPrintQueue.vue';
 import type { PrintJob } from '../components/island/types';
+import { hwMetricPctOf, hwModeSlots, type HwMetric } from '../utils/hwMetrics';
 
 /** 参与岛上多活动并行轮换的实时活动 id */
 export type RtId = 'pomodoro' | 'countdown' | 'hardware' | 'health' | 'printer';
@@ -71,8 +72,13 @@ export interface IslandActivityActions {
 export interface IslandActivityCtx extends ActivityGuardCtx {
     cdPaused: Ref<boolean>;
     hwMode: Ref<string>;
+    hwDefaultMetric: Ref<HwMetric>;
     hwCpuPct: Ref<number>;
     hwMemPct: Ref<number>;
+    hwRingOuter: Ref<HwMetric>;
+    hwRingInner: Ref<HwMetric>;
+    hwBatteryPct: Ref<number>;
+    hwDiskPct: Ref<number>;
     hwRingPct: ComputedRef<number>;
     hwRingColor: ComputedRef<string>;
     printJobs: Ref<PrintJob[]>;
@@ -211,14 +217,34 @@ export const RT_ACTIVITY_DEFS: RtActivityDef[] = [
                 hwMemPct: ctx.hwMemPct.value,
                 hwRingPct: ctx.hwRingPct.value,
                 hwRingColor: ctx.hwRingColor.value,
+                hwRingOuter: ctx.hwRingOuter.value,
+                hwRingInner: ctx.hwRingInner.value,
+                hwBatteryPct: ctx.hwBatteryPct.value,
+                hwDiskPct: ctx.hwDiskPct.value,
             },
         }),
         panel: ctx => {
             if (!ctx.isHardwareExpanded.value || !ctx.hwEnabled.value) return null;
+            // E：详情行跟随当前模式的圆环槽位（dual = 外/内环；rotation = CPU/内存；single = 选中指标）
+            const vals = {
+                cpu: ctx.hwCpuPct.value,
+                mem: ctx.hwMemPct.value,
+                battery: ctx.hwBatteryPct.value,
+                disk: ctx.hwDiskPct.value,
+            };
+            const [outer, inner] = hwModeSlots(
+                ctx.hwMode.value,
+                ctx.hwRingOuter.value,
+                ctx.hwRingInner.value,
+                ctx.hwDefaultMetric.value,
+            );
+            const slots = [outer, inner]
+                .filter((metric): metric is HwMetric => metric !== null)
+                .map(metric => ({ metric, pct: hwMetricPctOf(metric, vals) }));
             return {
                 key: 'hw-detail',
                 component: IslandHwDetail,
-                props: { hwCpuPct: ctx.hwCpuPct.value, hwMemPct: ctx.hwMemPct.value },
+                props: { slots },
                 events: { close: () => ctx.actions.collapseHardware() },
             };
         },

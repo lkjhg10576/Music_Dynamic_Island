@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crate::storage::{app_data_dir, atomic_write, read_json};
+use crate::storage::{app_data_dir, atomic_write, local_date_string, read_json};
 
 const FILE_NAME: &str = "traffic_stats.json";
 /// 落盘节流间隔：异常退出最多丢 30s 数据
@@ -26,42 +26,6 @@ static TRAFFIC: Lazy<Mutex<HashMap<String, DayTraffic>>> = Lazy::new(|| Mutex::n
 static LAST_PERSIST: Lazy<Mutex<Option<Instant>>> = Lazy::new(|| Mutex::new(None));
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 static INIT_LOCK: Mutex<()> = Mutex::new(());
-
-/// 本地日期（YYYY-MM-DD）。仅 Windows 下为真本地时区，其余平台用 UTC 近似。
-fn local_date_string() -> String {
-    #[cfg(target_os = "windows")]
-    unsafe {
-        use windows_sys::Win32::Foundation::SYSTEMTIME;
-        use windows_sys::Win32::System::SystemInformation::GetLocalTime;
-        let mut st: SYSTEMTIME = std::mem::zeroed();
-        GetLocalTime(&mut st);
-        format!("{:04}-{:02}-{:02}", st.wYear, st.wMonth, st.wDay)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        civil_from_days((secs / 86400) as i64)
-    }
-}
-
-/// 天数（自 1970-01-01）转 YYYY-MM-DD（Howard Hinnant civil_from_days 算法）
-#[cfg(not(target_os = "windows"))]
-fn civil_from_days(days: i64) -> String {
-    let z = days + 719468;
-    let era = z.div_euclid(146097);
-    let doe = z.rem_euclid(146097);
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{:04}-{:02}-{:02}", y, m, d)
-}
 
 fn file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join(FILE_NAME))

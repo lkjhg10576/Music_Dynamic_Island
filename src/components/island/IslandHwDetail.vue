@@ -1,12 +1,10 @@
 <template>
     <div class="hw-expanded-detail">
-        <div class="hw-detail-row">
-            <span class="hw-detail-label">CPU</span>
-            <span class="hw-detail-val" :class="{ 'high': hwCpuPct >= 80 }">{{ Math.round(hwCpuPct) }}%</span>
-        </div>
-        <div class="hw-detail-row">
-            <span class="hw-detail-label">RAM</span>
-            <span class="hw-detail-val" :class="{ 'high': hwMemPct >= 80 }">{{ Math.round(hwMemPct) }}%</span>
+        <div class="hw-detail-row" v-for="slot in slots" :key="slot.metric">
+            <span class="hw-detail-label">{{ HW_METRIC_LABEL[slot.metric] }}</span>
+            <span class="hw-detail-val" :class="{ 'high': slot.pct !== null && slot.pct >= 80 }">
+                {{ slot.pct === null ? '--' : Math.round(slot.pct) + '%' }}
+            </span>
         </div>
         <div class="hw-close-btn-x" @click.stop="emit('close')">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -19,9 +17,11 @@
 </template>
 
 <script setup lang="ts">
+// 硬件监控展开态详情：行随当前模式的圆环槽位变化（阶段 E，槽位由注册表面板契约解析）
+import { HW_METRIC_LABEL, type HwMetric } from '../../utils/hwMetrics';
+
 defineProps<{
-    hwCpuPct: number;
-    hwMemPct: number;
+    slots: { metric: HwMetric; pct: number | null }[];
 }>();
 
 const emit = defineEmits<{
@@ -30,7 +30,7 @@ const emit = defineEmits<{
 </script>
 
 <style scoped>
-/* 硬件监控展开态：CPU / 内存 详情 */
+/* 硬件监控展开态：按当前槽位渲染指标详情 */
 .hw-expanded-detail {
     display: flex;
     align-items: center;

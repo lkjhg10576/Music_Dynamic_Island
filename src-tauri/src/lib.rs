@@ -2,6 +2,7 @@ mod audio_spectrum;
 mod music_controller;
 mod notification;
 mod pomodoro;
+mod pomodoro_stats;
 mod countdown;
 mod health_reminder;
 mod system_events;
@@ -20,7 +21,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TrySendError};
 use tauri::{Manager, Emitter, WebviewWindowBuilder, WebviewUrl};
-use sysinfo::{Networks, System};
+use sysinfo::{Disks, Networks, System};
 use std::time::Duration;
 use tauri_plugin_autostart::MacosLauncher;
 use tauri::menu::{Menu, MenuItem};
@@ -335,6 +336,8 @@ fn start_hardware_monitor(app_handle: tauri::AppHandle) {
     thread_mgr::spawn_managed("hardware_monitor", move |exit| {
         let mut sys = System::new();
         let mut networks = Networks::new_with_refreshed_list();
+        // E2：磁盘占用率数据源（全量轮询分支内 refresh，保活分支不推送无需刷新）
+        let mut disks = Disks::new_with_refreshed_list();
         let mut last_emit = std::time::Instant::now();
         let mut tick_count: u64 = 0; // 计数器：定期重建 Networks 防止内部 hash 膨胀
         // 跨推送周期累计网速样本，推送时取均值，使显示更连贯（避免单 1s 快照跳变）
@@ -407,12 +410,37 @@ fn start_hardware_monitor(app_handle: tauri::AppHandle) {
             HW_MEM_USED.store(used_mem, Ordering::Relaxed);
             HW_MEM_TOTAL.store(total_mem, Ordering::Relaxed);
 
+            // E2：电池电量 + 磁盘占用率（monitor-stats 扩展数据源）
+            // 电池复用 win32_utils::power_status 共享封装（与 system_events 电量提醒同源）；
+            // 无电池时 BatteryLifePercent 为 255，原样上报，由前端做"置灰不可选"兜底。
+            let battery_pct: u8 = win32_utils::power_status()
+                .map(|(_, pct)| pct)
+                .unwrap_or(255);
+            // 磁盘占用率：全盘汇总 已用/总容量（排除 available > total 的异常项防溢出）
+            disks.refresh();
+            let mut disk_total: u64 = 0;
+            let mut disk_used: u64 = 0;
+            for disk in disks.list() {
+                let (total_space, available) = (disk.total_space(), disk.available_space());
+                if total_space > 0 && available <= total_space {
+                    disk_total += total_space;
+                    disk_used += total_space - available;
+                }
+            }
+            let disk_pct: f64 = if disk_total > 0 {
+                (disk_used as f64 / disk_total as f64) * 100.0
+            } else {
+                0.0
+            };
+
             // 刷新网络统计并计算差值
             networks.refresh();
             // 每15分钟重建一次 Networks 对象，防止长期运行后虚拟网卡增删导致内部 hash 膨胀
             tick_count += 1;
             if tick_count % 900 == 0 {
                 networks = Networks::new_with_refreshed_list();
+                // 同步刷新磁盘列表（U 盘等挂载点变化），容量数值仍每秒 refresh
+                disks.refresh_list();
                 // 重置累计缓存避免重建后首次速度计算出现异常负值
                 HW_LAST_RX.store(0, Ordering::Relaxed);
                 HW_LAST_TX.store(0, Ordering::Relaxed);
@@ -467,6 +495,8 @@ fn start_hardware_monitor(app_handle: tauri::AppHandle) {
                     "mem_pct": mem_pct,
                     "used_mem": used_mem,
                     "total_mem": total_mem,
+                    "battery_pct": battery_pct,
+                    "disk_pct": disk_pct,
                     "upload_bytes": total_tx,
                     "download_bytes": total_rx,
                 });
@@ -497,6 +527,18 @@ fn is_widget_visible(app: tauri::AppHandle) -> bool {
 fn get_traffic_stats(app: tauri::AppHandle) -> serde_json::Value {
     traffic_stats::ensure_loaded(&app);
     serde_json::to_value(traffic_stats::snapshot()).unwrap_or(serde_json::Value::Null)
+}
+
+/// 番茄钟专注统计快照：当日 + 历史总计（总计不自动清零）
+#[tauri::command]
+fn get_pomodoro_stats(app: tauri::AppHandle) -> serde_json::Value {
+    pomodoro_stats::ensure_loaded(&app);
+    let (date, today, total) = pomodoro_stats::snapshot();
+    serde_json::json!({
+        "date": date,
+        "today": today,
+        "total": total,
+    })
 }
 
 /// 一次性迁移：前端把 localStorage 里的历史流量数据合并到后端落盘
@@ -676,6 +718,7 @@ pub fn run() {
             countdown::pause_countdown,
             countdown::resume_countdown,
             countdown::stop_countdown,
+            countdown::stop_countdown_alarm,
             countdown::get_countdown_state,
             health_reminder::start_sitting_reminder,
             health_reminder::stop_sitting_reminder,
@@ -691,6 +734,7 @@ pub fn run() {
             save_csv_file,
             get_traffic_stats,
             merge_legacy_traffic,
+            get_pomodoro_stats,
             config_get,
             config_get_all,
             config_set,
@@ -704,6 +748,8 @@ pub fn run() {
             config_store::init(app.handle());
             // 流量统计：尽早从磁盘载入历史数据，避免前端首屏查询时读到空快照
             traffic_stats::init(app.handle());
+            // 番茄钟专注统计：同上，尽早载入历史按天数据
+            pomodoro_stats::init(app.handle());
             // B8: 注册 AppHandle 到 audio_spectrum 模块，支持 emit 频谱事件
             audio_spectrum::set_app_handle(Arc::new(app.handle().clone()));
             // B3: 启动常驻动画线程（单次创建）

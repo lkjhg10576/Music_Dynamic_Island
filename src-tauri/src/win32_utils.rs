@@ -242,3 +242,19 @@ pub fn message_beep(kind: u32) {
         MessageBeep(kind);
     }
 }
+
+/// 读取系统电源状态：(ACLineStatus, BatteryLifePercent)。
+/// ACLineStatus: 0=使用电池 1=已接电源；BatteryLifePercent: 0~100，无电池（台式机）为 255。
+/// 共享封装：system_events（电量提醒）与 lib.rs 硬件监控线程（monitor-stats 电池环）共用，
+/// 避免两处各自轮询 GetSystemPowerStatus。
+pub fn power_status() -> Option<(u8, u8)> {
+    // SAFETY: SYSTEM_POWER_STATUS is a plain output struct zeroed before the call.
+    unsafe {
+        let mut status: windows::Win32::System::Power::SYSTEM_POWER_STATUS = std::mem::zeroed();
+        if windows::Win32::System::Power::GetSystemPowerStatus(&mut status).is_ok() {
+            Some((status.ACLineStatus, status.BatteryLifePercent))
+        } else {
+            None
+        }
+    }
+}

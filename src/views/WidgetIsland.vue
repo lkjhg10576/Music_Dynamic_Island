@@ -44,6 +44,8 @@
                         <IslandHardwareRing v-else-if="showHardwareRing" key="hardware" :hw-mode="hwMode"
                             :hw-cpu-pct="hwCpuPct" :hw-mem-pct="hwMemPct" :hw-ring-pct="hwRingPct"
                             :hw-ring-color="hwRingColor" :hw-active-metric="hwActiveMetric"
+                            :hw-ring-outer="hwRingOuter" :hw-ring-inner="hwRingInner"
+                            :hw-battery-pct="hwBatteryPct" :hw-disk-pct="hwDiskPct"
                             :is-hardware-expanded="isHardwareExpanded" @expand="clickRtChip('hardware')" />
 
                         <IslandMusic v-else-if="displayMusic" :key="'music_' + musicBoxKey" ref="islandMusicRef"
@@ -114,6 +116,8 @@ import {
     NSD_HW_ENABLED,
     NSD_HW_MODE,
     NSD_HW_DEFAULT_METRIC,
+    NSD_HW_RING_OUTER,
+    NSD_HW_RING_INNER,
     NSD_ACTIVITY_PRIORITY,
     NSD_SYSMSG_ENABLED,
     NSD_SPECTRUM_COLOR_MODE,
@@ -362,9 +366,9 @@ const handleCdTogglePauseResume = async () => {
 
 const handleCdClose = async () => {
     if (isCountdownFinished.value) {
-        // 倒计时已结束 → 仅让后端停止，由 countdown-tick idle 事件处理UI清理
+        // 倒计时已结束 → 点击关闭即消音（终止重复响铃），由 countdown-tick idle 事件处理UI清理
         // 不直接操作 UI 状态，避免与自动隐藏等功能冲突
-        await invoke('stop_countdown');
+        await invoke('stop_countdown_alarm');
         isCountdownExpanded.value = false;
         if (!isMsgActive.value && !displaySysToast.value && !isMusicExpanded.value && !isMusicExpanding.value) {
             const { h } = getBaseSize();
@@ -821,6 +825,7 @@ const {
     formattedIslandCdTime, showCountdownText, isSplitMode,
     isHealthAlerting, healthAlertLabel, healthAlertType,
     hwEnabled, hwMode, hwDefaultMetric, hwCpuPct, hwMemPct, isHardwareExpanded,
+    hwRingOuter, hwRingInner, hwBatteryPct, hwDiskPct,
     hwActiveMetric, hwRingPct, hwRingColor, showHardwareRing, startHwRotation, stopHwRotation,
     isRotationEnabled, currentRotIndex, startRotation, stopRotation,
     restorePomodoroState, restoreCountdownState,
@@ -834,7 +839,8 @@ const {
 islandCtx = {
     isPomodoroVisible, isPomodoroExpanded, isCountdownVisible, isCountdownExpanded,
     hwEnabled, isHardwareExpanded, isHealthAlerting,
-    cdPaused, hwMode, hwCpuPct, hwMemPct, hwRingPct, hwRingColor,
+    cdPaused, hwMode, hwDefaultMetric, hwCpuPct, hwMemPct, hwRingPct, hwRingColor,
+    hwRingOuter, hwRingInner, hwBatteryPct, hwDiskPct,
     printJobs, defaultPrinter, isPrintQueueExpanded,
     actions: {
         animateExpandSize: () => {
@@ -2023,6 +2029,15 @@ onMounted(async () => {
             hwDefaultMetric.value = p.defaultMetric;
             setSettingRaw(NSD_HW_DEFAULT_METRIC, p.defaultMetric);
         }
+        // E：双圆环外/内环指标随事件同步（存 localStorage 的值已在 composable 做合法性校验兜底）
+        if (typeof p.ringOuter === 'string') {
+            hwRingOuter.value = p.ringOuter;
+            setSettingRaw(NSD_HW_RING_OUTER, p.ringOuter);
+        }
+        if (typeof p.ringInner === 'string') {
+            hwRingInner.value = p.ringInner;
+            setSettingRaw(NSD_HW_RING_INNER, p.ringInner);
+        }
         // 控制轮换定时器
         if (hwEnabled.value && hwMode.value === 'rotation') {
             startHwRotation();
@@ -2050,6 +2065,9 @@ onMounted(async () => {
         const p = event.payload;
         if (typeof p.cpu_pct === 'number') hwCpuPct.value = p.cpu_pct;
         if (typeof p.mem_pct === 'number') hwMemPct.value = p.mem_pct;
+        // E：电池/磁盘扩展数据源（battery_pct=255 表示无电池，由指标工具置灰兜底）
+        if (typeof p.battery_pct === 'number') hwBatteryPct.value = p.battery_pct;
+        if (typeof p.disk_pct === 'number') hwDiskPct.value = p.disk_pct;
         if (typeof p.download_speed === 'number') {
             downloadSpeed.value = formatSpeed(p.download_speed);
         }

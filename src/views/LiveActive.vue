@@ -199,6 +199,24 @@
                                     <label class="custom-switch mini"><input type="checkbox"><span
                                             class="slider"></span></label>
                                 </div>
+
+                                <!-- 专注统计（D2）：低对比度小字置于卡片最下方；
+                                     默认"今天"口径（当日统计、次日归零），点右侧箭头切到"总计"（历史累计、不自动清零），
+                                     总计态点左侧箭头返回 -->
+                                <button class="pomo-stats-row" @click.stop="togglePomoStatsMode"
+                                    :title="pomoStatsMode === 'today' ? '查看历史总计' : '返回今日统计'">
+                                    <svg v-if="pomoStatsMode === 'total'" class="pomo-stats-arrow" viewBox="0 0 24 24"
+                                        fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                        stroke-linejoin="round">
+                                        <polyline points="15 18 9 12 15 6"></polyline>
+                                    </svg>
+                                    <span>{{ pomoStatsText }}</span>
+                                    <svg v-if="pomoStatsMode === 'today'" class="pomo-stats-arrow" viewBox="0 0 24 24"
+                                        fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                                        stroke-linejoin="round">
+                                        <polyline points="9 18 15 12 9 6"></polyline>
+                                    </svg>
+                                </button>
                             </template>
 
                             <template v-else-if="item.id === 'countdown'">
@@ -281,43 +299,62 @@
                                         </div>
                                     </div>
 
-                                    <!-- 默认指标选择（仅单圆环模式显示） -->
+                                    <!-- 默认指标选择（仅单圆环模式显示；无电池时电池项置灰不可选） -->
                                     <div class="hw-metric-section" v-if="hwEnabled && hwMode === 'single'">
                                         <div class="hw-section-label">默认指标</div>
                                         <div class="hw-metric-row">
-                                            <label class="hw-radio-label">
-                                                <input type="radio" value="cpu" v-model="hwDefaultMetric" @change="saveHwConfig(); syncHwToWidget()">
-                                                <span class="radio-text">CPU</span>
-                                            </label>
-                                            <label class="hw-radio-label">
-                                                <input type="radio" value="mem" v-model="hwDefaultMetric" @change="saveHwConfig(); syncHwToWidget()">
-                                                <span class="radio-text">内存</span>
+                                            <label class="hw-radio-label" v-for="opt in hwMetricOptions"
+                                                :key="opt.value" :class="{ 'is-unavailable': !opt.available }">
+                                                <input type="radio" :value="opt.value" v-model="hwDefaultMetric"
+                                                    :disabled="!opt.available"
+                                                    @change="saveHwConfig(); syncHwToWidget()" />
+                                                <span class="radio-text">{{ opt.label }}</span>
                                             </label>
                                         </div>
                                     </div>
 
-                                    <!-- 实时预览 -->
+                                    <!-- 双圆环指标选择（E：外/内环各自独立选指标；无电池时电池项置灰） -->
+                                    <div class="hw-metric-section" v-if="hwEnabled && hwMode === 'dual'">
+                                        <div class="hw-section-label">双圆环指标</div>
+                                        <div class="hw-dual-metric-row">
+                                            <label class="hw-select-label">
+                                                <span class="hw-select-name">外环</span>
+                                                <select class="hw-metric-select" v-model="hwRingOuter"
+                                                    @change="saveHwConfig(); syncHwToWidget()">
+                                                    <option v-for="opt in hwMetricOptions" :key="opt.value"
+                                                        :value="opt.value" :disabled="!opt.available">
+                                                        {{ opt.label }}{{ opt.available ? '' : '（不可用）' }}
+                                                    </option>
+                                                </select>
+                                            </label>
+                                            <label class="hw-select-label">
+                                                <span class="hw-select-name">内环</span>
+                                                <select class="hw-metric-select" v-model="hwRingInner"
+                                                    @change="saveHwConfig(); syncHwToWidget()">
+                                                    <option v-for="opt in hwMetricOptions" :key="opt.value"
+                                                        :value="opt.value" :disabled="!opt.available">
+                                                        {{ opt.label }}{{ opt.available ? '' : '（不可用）' }}
+                                                    </option>
+                                                </select>
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <!-- 实时预览：槽位随显示模式联动 -->
                                     <div class="hw-live-preview" v-if="hwEnabled">
                                         <div class="hw-section-label">实时预览</div>
-                                        <div class="hw-ring-preview">
+                                        <div class="hw-ring-preview" v-for="slot in hwPreviewSlots"
+                                            :key="slot.metric">
                                             <svg viewBox="0 0 60 60" class="hw-preview-svg">
-                                                <circle cx="30" cy="30" r="24" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="5" />
-                                                <circle cx="30" cy="30" r="24" fill="none" :stroke="hwCpuPct >= 80 ? '#a855f7' : '#ffffff'" stroke-width="5"
-                                                    :stroke-dasharray="`${(hwCpuPct / 100) * 150.8} 150.8`"
+                                                <circle cx="30" cy="30" r="24" fill="none"
+                                                    stroke="rgba(255,255,255,0.1)" stroke-width="5" />
+                                                <circle cx="30" cy="30" r="24" fill="none"
+                                                    :stroke="previewColor(slot)" stroke-width="5"
+                                                    :stroke-dasharray="`${(previewPct(slot) / 100) * 150.8} 150.8`"
                                                     stroke-linecap="round" transform="rotate(-90 30 30)"
                                                     style="transition: stroke-dasharray 0.5s ease;" />
                                             </svg>
-                                            <span class="hw-preview-label">CPU {{ Math.round(hwCpuPct) }}%</span>
-                                        </div>
-                                        <div class="hw-ring-preview">
-                                            <svg viewBox="0 0 60 60" class="hw-preview-svg">
-                                                <circle cx="30" cy="30" r="24" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="5" />
-                                                <circle cx="30" cy="30" r="24" fill="none" :stroke="hwMemPct >= 80 ? '#ff4757' : '#3b82f6'" stroke-width="5"
-                                                    :stroke-dasharray="`${(hwMemPct / 100) * 150.8} 150.8`"
-                                                    stroke-linecap="round" transform="rotate(-90 30 30)"
-                                                    style="transition: stroke-dasharray 0.5s ease;" />
-                                            </svg>
-                                            <span class="hw-preview-label">RAM {{ Math.round(hwMemPct) }}%</span>
+                                            <span class="hw-preview-label">{{ previewLabel(slot) }}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -517,6 +554,8 @@ import {
     NSD_HW_ENABLED,
     NSD_HW_MODE,
     NSD_HW_DEFAULT_METRIC,
+    NSD_HW_RING_OUTER,
+    NSD_HW_RING_INNER,
     NSD_HW_ROTATION,
     NSD_HW_DUAL_RING,
     NSD_SITTING_REMINDER_ENABLED,
@@ -536,6 +575,8 @@ import {
     NSD_SYSMSG_NETWORK_LATENCY_INTERVAL,
 } from '../constants/storageKeys';
 import { getSettingRaw, setSettingRaw } from '../utils/settings';
+// E：硬件指标元数据（四指标下拉/预览配色与模式槽位映射的单一来源）
+import { HW_METRICS, HW_METRIC_LABEL, hwMetricColor, hwMetricPctOf, hwModeSlots, type HwMetric } from '../utils/hwMetrics';
 // 活动注册表：卡片元数据（id/图标/文案/配色/默认优先级）与参与轮换的活动 id 的单一来源（阶段 G）
 import { RT_ACTIVITY_DEFS, RT_IDS } from '../activities/registry';
 
@@ -563,6 +604,42 @@ const pomoFormattedRemaining = computed(() => {
     return `${m}:${s}`;
 });
 
+// ===== 专注统计（D2）：今日 / 历史总计两种口径，卡片底部小字 + 箭头切换 =====
+const pomoStatsMode = ref<'today' | 'total'>('today');
+const pomoTodayCount = ref(0);
+const pomoTodaySecs = ref(0);
+const pomoTotalCount = ref(0);
+const pomoTotalSecs = ref(0);
+
+/** 本地日期键（YYYY-MM-DD），与后端落盘的按天键同构 */
+function localTodayKey(): string {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** 应用统计快照（get_pomodoro_stats 首查 / pomodoro-stats-changed 增量共用）；
+ * 快照日期非本地今天（控制台跨零点挂着）时，"今日"口径显示归零 */
+function applyPomoStats(p: { date?: string; today?: { count?: number; secs?: number }; total?: { count?: number; secs?: number } }) {
+    if (p.date === localTodayKey()) {
+        pomoTodayCount.value = p.today?.count ?? 0;
+        pomoTodaySecs.value = p.today?.secs ?? 0;
+    } else {
+        pomoTodayCount.value = 0;
+        pomoTodaySecs.value = 0;
+    }
+}
+
+function togglePomoStatsMode() {
+    pomoStatsMode.value = pomoStatsMode.value === 'today' ? 'total' : 'today';
+}
+
+const pomoStatsText = computed(() => {
+    const isToday = pomoStatsMode.value === 'today';
+    const count = isToday ? pomoTodayCount.value : pomoTotalCount.value;
+    const mins = Math.round((isToday ? pomoTodaySecs.value : pomoTotalSecs.value) / 60);
+    return `${isToday ? '今天' : '总计'} ${count} 次 · ${mins} 分钟`;
+});
+
 // ===== 倒计时状态 =====
 const cdRunning = ref(false);
 const cdPaused = ref(false);
@@ -582,9 +659,46 @@ const cdFormattedRemaining = computed(() => {
 // ===== 硬件监控配置 =====
 const hwEnabled = ref(getSettingRaw(NSD_HW_ENABLED) === 'true');
 const hwMode = ref(getSettingRaw(NSD_HW_MODE) || 'single');
-const hwDefaultMetric = ref(getSettingRaw(NSD_HW_DEFAULT_METRIC) || 'cpu');
+// E：指标统一四选（cpu/mem/battery/disk），localStorage 非法值回落默认
+const loadHwMetric = (key: string, fallback: HwMetric): HwMetric => {
+    const raw = getSettingRaw(key);
+    return raw && (HW_METRICS as readonly string[]).includes(raw) ? (raw as HwMetric) : fallback;
+};
+const hwDefaultMetric = ref<HwMetric>(loadHwMetric(NSD_HW_DEFAULT_METRIC, 'cpu'));
+// 双圆环外/内环独立指标（默认 cpu+mem 保持既有观感）
+const hwRingOuter = ref<HwMetric>(loadHwMetric(NSD_HW_RING_OUTER, 'cpu'));
+const hwRingInner = ref<HwMetric>(loadHwMetric(NSD_HW_RING_INNER, 'mem'));
 const hwCpuPct = ref(0);
 const hwMemPct = ref(0);
+// monitor-stats 扩展数据源：电池推送前按"无电池"哨兵兜底，磁盘默认 0
+const hwBatteryPct = ref(255);
+const hwDiskPct = ref(0);
+
+// 指标下拉/单选选项：无电池（255）时电池项置灰不可选（E4）
+const hwMetricOptions = computed(() => HW_METRICS.map(metric => ({
+    value: metric,
+    label: HW_METRIC_LABEL[metric],
+    available: metric !== 'battery' || hwBatteryPct.value !== 255,
+})));
+
+// 实时预览槽位：随显示模式联动（dual = 外/内环；rotation = CPU/内存；single = 选中指标）
+const hwPreviewVals = computed(() => ({
+    cpu: hwCpuPct.value,
+    mem: hwMemPct.value,
+    battery: hwBatteryPct.value,
+    disk: hwDiskPct.value,
+}));
+const hwPreviewSlots = computed(() => {
+    const [outer, inner] = hwModeSlots(hwMode.value, hwRingOuter.value, hwRingInner.value, hwDefaultMetric.value);
+    return [outer, inner]
+        .filter((metric): metric is HwMetric => metric !== null)
+        .map(metric => ({ metric, pct: hwMetricPctOf(metric, hwPreviewVals.value) }));
+});
+const previewPct = (slot: { pct: number | null }): number => (slot.pct === null ? 0 : Math.max(0, Math.min(100, slot.pct)));
+const previewColor = (slot: { metric: HwMetric; pct: number | null }): string =>
+    hwMetricColor(slot.metric, previewPct(slot), slot.pct === null);
+const previewLabel = (slot: { metric: HwMetric; pct: number | null }): string =>
+    `${HW_METRIC_LABEL[slot.metric]} ${slot.pct === null ? '--' : Math.round(previewPct(slot)) + '%'}`;
 
 // ===== 健康提醒配置 =====
 const srEnabled = ref(getSettingRaw(NSD_SITTING_REMINDER_ENABLED) === 'true');
@@ -804,6 +918,9 @@ function saveHwConfig() {
     setSettingRaw(NSD_HW_ENABLED, String(hwEnabled.value));
     setSettingRaw(NSD_HW_MODE, hwMode.value);
     setSettingRaw(NSD_HW_DEFAULT_METRIC, hwDefaultMetric.value);
+    // E：双圆环外/内环指标持久化
+    setSettingRaw(NSD_HW_RING_OUTER, hwRingOuter.value);
+    setSettingRaw(NSD_HW_RING_INNER, hwRingInner.value);
     setSettingRaw(NSD_HW_ROTATION, String(hwMode.value === 'rotation'));
     setSettingRaw(NSD_HW_DUAL_RING, String(hwMode.value === 'dual'));
 }
@@ -828,6 +945,9 @@ function syncHwToWidget() {
             enabled: hwEnabled.value,
             mode: hwMode.value,
             defaultMetric: hwDefaultMetric.value,
+            // E：双圆环外/内环指标随事件同步
+            ringOuter: hwRingOuter.value,
+            ringInner: hwRingInner.value,
         });
     } catch (_e) {
         // 忽略
@@ -1190,6 +1310,14 @@ onMounted(async () => {
         // 后端 pomodoro 模块不存在或未初始化，忽略
     }
 
+    // D2：拉取一次专注统计快照（今日 + 总计），并监听后端每次专注完成时的增量推送
+    try {
+        applyPomoStats(await invoke<any>('get_pomodoro_stats'));
+    } catch (_e) {}
+    await listen<any>('pomodoro-stats-changed', (event) => {
+        applyPomoStats(event.payload);
+    });
+
     // 监听倒计时 tick 事件
     await listen<any>('countdown-tick', (event) => {
         const p = event.payload;
@@ -1229,6 +1357,9 @@ onMounted(async () => {
         const p = event.payload;
         if (typeof p.cpu_pct === 'number') hwCpuPct.value = p.cpu_pct;
         if (typeof p.mem_pct === 'number') hwMemPct.value = p.mem_pct;
+        // E：电池/磁盘扩展数据源（battery_pct=255 表示无电池，下拉项随之置灰）
+        if (typeof p.battery_pct === 'number') hwBatteryPct.value = p.battery_pct;
+        if (typeof p.disk_pct === 'number') hwDiskPct.value = p.disk_pct;
     });
 
     // 监听健康提醒 tick 事件
@@ -2139,6 +2270,34 @@ onUnmounted(() => {
     font-weight: 700;
 }
 
+/* ===== 专注统计行（D2）：卡片最下方低对比度小字，点击箭头在 今天/总计 口径间切换 ===== */
+.pomo-stats-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    width: 100%;
+    margin-top: 10px;
+    padding: 2px 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--item-desc-color);
+    transition: color 0.2s ease;
+}
+
+.pomo-stats-row:hover {
+    color: var(--item-title-color);
+}
+
+.pomo-stats-arrow {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+}
+
 .pomo-ready-state {
     display: flex;
     flex-direction: column;
@@ -2463,6 +2622,54 @@ onUnmounted(() => {
 
 .hw-radio-label input[type="radio"] {
     accent-color: var(--accent-color, #3b82f6);
+}
+
+/* 不可用指标（无电池）：整项置灰且不可选（E4） */
+.hw-radio-label.is-unavailable {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* ===== 双圆环指标下拉（E3） ===== */
+.hw-dual-metric-row {
+    display: flex;
+    gap: 16px;
+}
+
+.hw-select-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--item-title-color);
+}
+
+.hw-select-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--item-desc-color);
+}
+
+.hw-metric-select {
+    padding: 4px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--control-border);
+    background: var(--card-bg);
+    color: var(--item-title-color);
+    font-size: 12px;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.2s ease;
+}
+
+.hw-metric-select:hover,
+.hw-metric-select:focus {
+    border-color: var(--accent-color, #3b82f6);
+}
+
+.hw-metric-select option:disabled {
+    color: var(--item-desc-color);
+    opacity: 0.5;
 }
 
 .hw-live-preview {

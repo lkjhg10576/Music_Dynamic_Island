@@ -70,7 +70,9 @@ export const NSD_CHECK_BETA = 'nsd_check_beta'; // 是否检测 Pre-release / Be
 // 硬件监控配置（后端推送模式下）
 export const NSD_HW_ENABLED = 'nsd_hw_enabled';
 export const NSD_HW_MODE = 'nsd_hw_mode'; // 'dual' | 'rotation' | 'single'
-export const NSD_HW_DEFAULT_METRIC = 'nsd_hw_default_metric'; // 'cpu' | 'mem'
+export const NSD_HW_DEFAULT_METRIC = 'nsd_hw_default_metric'; // 'cpu' | 'mem' | 'battery' | 'disk'
+export const NSD_HW_RING_OUTER = 'nsd_hw_ring_outer'; // 双圆环外环指标（阶段 E）
+export const NSD_HW_RING_INNER = 'nsd_hw_ring_inner'; // 双圆环内环指标（阶段 E）
 export const NSD_HW_ROTATION = 'nsd_hw_rotation'; // 轮换模式开关（兼容旧名）
 export const NSD_HW_DUAL_RING = 'nsd_hw_dual_ring'; // 双圆环模式开关（兼容旧名）
 export const NSD_PRINTER_MONITOR_ENABLED = 'nsd_printer_monitor_enabled';
