@@ -193,6 +193,12 @@ pub fn is_paused() -> bool {
     POMO_PAUSED.load(Ordering::Relaxed)
 }
 
+/// 专注期免打扰判定：番茄钟运行中且处于专注阶段（含暂停）。
+/// 休息阶段、未启动时均返回 false；供通知/系统动态感知的拦截点调用。
+pub fn is_focus_phase_active() -> bool {
+    POMO_ACTIVE.load(Ordering::Relaxed) && POMO_PHASE.load(Ordering::Relaxed) == 0
+}
+
 #[tauri::command]
 pub fn get_pomodoro_state() -> serde_json::Value {
     let active = POMO_ACTIVE.load(Ordering::Relaxed);

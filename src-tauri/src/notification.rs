@@ -124,6 +124,14 @@ fn fetch_incremental(first_run: bool) -> Result<NotificationBatch, String> {
             continue;
         }
 
+        // 番茄钟专注期免打扰：与微信过滤同构，仅跳过本条；
+        // 循环末尾的 max_id 推进不受 continue 影响 → 通知永久丢弃，专注结束后不回放
+        if crate::pomodoro::is_focus_phase_active()
+            && crate::config_store::get_bool("nsd_pomodoro_dnd", false)
+        {
+            continue;
+        }
+
         if !first_run {
             batch.push(ToastItem {
                 id,

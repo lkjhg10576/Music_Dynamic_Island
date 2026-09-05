@@ -11,7 +11,7 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-blue?logo=tauri)](https://tauri.app)
 [![Vue 3](https://img.shields.io/badge/Vue-3.x-green?logo=vue.js)](https://vuejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?logo=typescript)](https://www.typescriptlang.org)
-[![Version](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/lkjhg10576/Music_Dynamic_Island)
+[![Version](https://img.shields.io/badge/version-0.7.0-blue)](https://github.com/lkjhg10576/Music_Dynamic_Island)
 
 </div>
 
@@ -78,6 +78,7 @@
 - **后台持续运行**：专注番茄钟、快捷倒计时、健康提醒都在系统后台计时，即便关闭主控制台窗口（开启省内存模式）也能准时提醒，不依赖前端界面
 - **卡片展开**：点击卡片自动展开详情面板，居中显示
 - **专注统计**：番茄钟卡片底部小字显示「今天 X 次 · Y 分钟」，点箭头可切换「总计 X 次 · Y 分钟」历史累计口径（当日统计次日归零，总计不自动清零）
+- **专注期免打扰**：番茄钟卡片可开启「免打扰模式」，专注阶段（含暂停）自动屏蔽应用通知与系统动态感知全部类别（含网络断连提醒），休息阶段自动恢复；被屏蔽的通知在专注结束后不会回放，健康提醒的既有联动机制不受影响
 - **倒计时提示音**：倒计时结束后每 5 秒重复响铃提醒，点击关闭即消音；后台线程驱动，省内存模式下依然有效
 - **进度指示器**：滚动边缘渐变遮罩提示可滚动方向
 - **动态感知与打印机队列**：均已完整实现，可在面板中逐项配置
@@ -202,7 +203,7 @@ Music_Dynamic_Island/
 - Node.js >= 18
 - Rust >= 1.70
 - Tauri 2 CLI
-- 当前版本：`0.6.0`（正式版）
+- 当前版本：`0.7.0`（正式版）
 
 ### 安装与运行
 

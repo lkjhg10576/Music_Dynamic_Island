@@ -318,15 +318,8 @@ fn is_hardware_realtime_needed(app: &tauri::AppHandle) -> bool {
     {
         return true;
     }
-    if let Some(value) = config_store::get("nsd_hw_enabled") {
-        let enabled = match &value {
-            serde_json::Value::Bool(b) => *b,
-            serde_json::Value::String(s) => s == "true",
-            _ => false,
-        };
-        if enabled {
-            return true;
-        }
+    if config_store::get_bool("nsd_hw_enabled", false) {
+        return true;
     }
     app.get_webview_window("main")
         .map(|w| w.is_visible().unwrap_or(false))

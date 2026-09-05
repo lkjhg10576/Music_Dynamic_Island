@@ -195,9 +195,12 @@
                                 <div class="pro-setting-item" style="padding-top: 6px;">
                                     <div class="pro-meta">
                                         <span class="pro-title">免打扰模式</span>
+                                        <span class="pro-desc">专注期间屏蔽应用通知与系统动态感知</span>
                                     </div>
-                                    <label class="custom-switch mini"><input type="checkbox"><span
-                                            class="slider"></span></label>
+                                    <label class="custom-switch mini" @click.stop>
+                                        <input type="checkbox" v-model="pomoDnd">
+                                        <span class="slider"></span>
+                                    </label>
                                 </div>
 
                                 <!-- 专注统计（D2）：低对比度小字置于卡片最下方；
@@ -612,6 +615,7 @@ import {
     NSD_POMODORO_FOCUS_SECS,
     NSD_POMODORO_BREAK_SECS,
     NSD_POMODORO_CYCLES,
+    NSD_POMODORO_DND,
     NSD_COUNTDOWN_SECS,
     NSD_HW_ENABLED,
     NSD_HW_MODE,
@@ -653,6 +657,10 @@ const pomoBreakM = ref(Number(getSettingRaw(NSD_POMODORO_BREAK_SECS + '_m')) || 
 const pomoBreakS = ref(Number(getSettingRaw(NSD_POMODORO_BREAK_SECS + '_s')) || 0);
 const pomoCycles = ref(Number(getSettingRaw(NSD_POMODORO_CYCLES)) || 4);
 const pomoConfigDone = ref(false);
+
+// 专注期免打扰（番茄钟卡片开关）：设置写入 config.json，拦截判定在 Rust 侧执行
+const pomoDnd = ref(getSettingRaw(NSD_POMODORO_DND) === 'true');
+watch(pomoDnd, (v) => setSettingRaw(NSD_POMODORO_DND, String(v)));
 
 // ===== 运行中状态（由后端事件驱动） =====
 const isPomoRunning = ref(false);
@@ -2076,6 +2084,14 @@ onUnmounted(() => {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.pro-desc {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--item-desc-color, #94a3b8);
+    line-height: 1.35;
+    word-break: break-word;
 }
 
 .mt-10 {

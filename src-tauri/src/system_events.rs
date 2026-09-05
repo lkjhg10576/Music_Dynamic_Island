@@ -71,6 +71,13 @@ fn emit_sys_event(app: &AppHandle, kind: &str, level: &str, text: &str) {
     if !SYS_EVT_ENABLED.load(Ordering::Relaxed) {
         return;
     }
+    // 番茄钟专注期免打扰：全部类别（含网络断连）直接拦截，事件不产生（零 IPC），
+    // 省内存模式（主窗口销毁）下同样生效
+    if crate::pomodoro::is_focus_phase_active()
+        && crate::config_store::get_bool("nsd_pomodoro_dnd", false)
+    {
+        return;
+    }
     let payload = SysEventPayload {
         kind: kind.to_string(),
         level: level.to_string(),

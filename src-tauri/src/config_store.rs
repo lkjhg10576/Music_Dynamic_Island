@@ -70,6 +70,19 @@ pub fn get(key: &str) -> Option<Value> {
     CONFIG.lock().unwrap_or_else(|e| e.into_inner()).get(key).cloned()
 }
 
+/// 布尔值便捷读取：兼容旧数据把布尔存成字符串 "true"/"false" 的写法
+pub fn get_bool(key: &str, default: bool) -> bool {
+    match get(key) {
+        Some(Value::Bool(b)) => b,
+        Some(Value::String(s)) => match s.as_str() {
+            "true" => true,
+            "false" => false,
+            _ => default,
+        },
+        _ => default,
+    }
+}
+
 pub fn get_all() -> HashMap<String, Value> {
     CONFIG.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
