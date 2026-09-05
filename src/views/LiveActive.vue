@@ -55,7 +55,7 @@
                                 <button class="pomo-btn" @click="handlePomoStop">停止</button>
                             </template>
                         </div>
-                        <label v-else-if="item.id !== 'countdown' && item.id !== 'hardware' && item.id !== 'health' && item.id !== 'sysmsg' && item.id !== 'printer'" class="custom-switch" @click.stop>
+                        <label v-else-if="item.id !== 'countdown' && item.id !== 'hardware' && item.id !== 'health' && item.id !== 'sysmsg' && item.id !== 'printer' && item.id !== 'calendar'" class="custom-switch" @click.stop>
                             <input type="checkbox" v-model="item.enabled" :disabled="item.disable">
                             <span class="slider"></span>
                         </label>
@@ -526,6 +526,68 @@
                                 </div>
                             </template>
 
+                            <template v-else-if="item.id === 'calendar'">
+                                <div class="calendar-config-panel">
+                                    <div class="health-reminder-row">
+                                        <div class="health-reminder-header">
+                                            <span class="health-reminder-icon">📅</span>
+                                            <div class="health-reminder-info">
+                                                <span class="health-reminder-title">下一个日程</span>
+                                                <span class="health-reminder-desc">系统日历 + 手动提醒 · 未来 24 小时</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="health-status-row">
+                                        <span class="health-status-text" v-if="calUpcoming.length > 0">
+                                            {{ calNextText }}
+                                        </span>
+                                        <span class="health-status-text" v-else>未来 24 小时无日程</span>
+                                    </div>
+                                    <div class="health-status-row" v-if="!calSystemOk">
+                                        <span class="health-countdown-text">系统日历不可用，仅手动提醒生效</span>
+                                    </div>
+
+                                    <div class="health-divider"></div>
+
+                                    <!-- 手动提醒兜底：无系统日历权限也能用 -->
+                                    <div class="health-reminder-row">
+                                        <div class="health-reminder-header">
+                                            <span class="health-reminder-icon">⏰</span>
+                                            <div class="health-reminder-info">
+                                                <span class="health-reminder-title">添加手动提醒</span>
+                                                <span class="health-reminder-desc">一次性或每日重复的时间点提醒</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="cal-input-row">
+                                        <input class="cal-title-input" v-model="calNewTitle" maxlength="30"
+                                            placeholder="提醒内容（如：站会）" />
+                                        <input type="time" class="cal-time-input" v-model="calNewTime" />
+                                    </div>
+                                    <div class="cal-input-row">
+                                        <label class="cal-daily-toggle">
+                                            <input type="checkbox" v-model="calNewDaily" />
+                                            <span>每日重复</span>
+                                        </label>
+                                        <div class="cal-duration-group">
+                                            <input type="number" min="1" max="999" v-model.number="calNewDuration"
+                                                class="health-time-input" />
+                                            <span class="health-time-unit">分钟</span>
+                                        </div>
+                                        <button class="cd-start-btn cal-add-btn" @click="handleCalAdd"
+                                            :disabled="!calAddReady">＋ 添加</button>
+                                    </div>
+                                    <div class="cal-manual-list" v-if="calManualList.length > 0">
+                                        <div class="cal-manual-row" v-for="ev in calManualList" :key="ev.id">
+                                            <span class="cal-manual-title" :title="ev.title">{{ ev.title }}</span>
+                                            <span class="cal-manual-meta">{{ calManualMeta(ev) }}</span>
+                                            <button class="cal-remove-btn" title="删除提醒"
+                                                @click.stop="handleCalRemove(ev.id)">✕</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+
                             <template v-else>
                                 <div class="pro-coming-soon">
                                     <div class="loader-line"></div>
@@ -579,6 +641,9 @@ import { getSettingRaw, setSettingRaw } from '../utils/settings';
 import { HW_METRICS, HW_METRIC_LABEL, hwMetricColor, hwMetricPctOf, hwModeSlots, type HwMetric } from '../utils/hwMetrics';
 // 活动注册表：卡片元数据（id/图标/文案/配色/默认优先级）与参与轮换的活动 id 的单一来源（阶段 G）
 import { RT_ACTIVITY_DEFS, RT_IDS } from '../activities/registry';
+// F：日程同步载荷类型与展示格式化
+import type { CalendarEventInfo, ManualCalendarEvent } from '../components/island/types';
+import { formatEventCountdown, formatEventHhmm } from '../utils/calendarDisplay';
 
 // ===== 三步设置状态 =====
 const pomoStep = ref(0); // 0=专注时间, 1=休息时间, 2=循环轮数
@@ -721,6 +786,70 @@ const wrActive = ref(false);
 const wrAlerting = ref(false);
 const wrRemainingSeconds = ref(0);
 const wrCanSkip = ref(true);
+
+// ===== 日程同步（阶段 F）：系统日历 + 手动提醒 =====
+const calUpcoming = ref<CalendarEventInfo[]>([]);
+const calManualList = ref<ManualCalendarEvent[]>([]);
+const calSystemOk = ref(false);
+// 岛上候选开关跟随"是否有日程"，用计算属性避免 30s tick 全量触发配置推送
+const calHasEvents = computed(() => calUpcoming.value.length > 0);
+
+const calNextText = computed(() => {
+    const ev = calUpcoming.value[0];
+    if (!ev) return '';
+    const nowSecs = Math.floor(Date.now() / 1000);
+    if (ev.all_day) return `全天：${ev.title}`;
+    if (ev.start_secs <= nowSecs) {
+        return `进行中：${ev.title}（${formatEventHhmm(ev.start_secs)} 开始）`;
+    }
+    return `下一个：${ev.title} ${formatEventHhmm(ev.start_secs)} · ${formatEventCountdown(ev, nowSecs)}`;
+});
+
+// 手动提醒添加表单
+const calNewTitle = ref('');
+const calNewTime = ref('09:00');
+const calNewDuration = ref(30);
+const calNewDaily = ref(false);
+const calAddReady = computed(() => calNewTitle.value.trim().length > 0 && /^\d{2}:\d{2}$/.test(calNewTime.value));
+
+/** 应用后端日程快照（calendar-tick / calendar_get_state 共用） */
+function applyCalendarState(p: { system_ok?: boolean; upcoming?: CalendarEventInfo[]; manual?: ManualCalendarEvent[] }) {
+    if (!p) return;
+    calSystemOk.value = p.system_ok === true;
+    if (Array.isArray(p.upcoming)) calUpcoming.value = p.upcoming;
+    if (Array.isArray(p.manual)) calManualList.value = p.manual;
+}
+
+async function handleCalAdd() {
+    if (!calAddReady.value) return;
+    const [h, m] = calNewTime.value.split(':').map(Number);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return;
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    // 一次性提醒选了已过去的时间点 → 顺延到明天，避免添加即被后端过期清理
+    if (!calNewDaily.value && d.getTime() <= Date.now()) {
+        d.setDate(d.getDate() + 1);
+    }
+    try {
+        await invoke('calendar_add_manual_event', {
+            title: calNewTitle.value.trim(),
+            startSecs: Math.floor(d.getTime() / 1000),
+            durationMins: Math.min(999, Math.max(1, Math.round(calNewDuration.value) || 30)),
+            repeatDaily: calNewDaily.value,
+        });
+        calNewTitle.value = '';
+    } catch (_e) {}
+}
+
+async function handleCalRemove(id: number) {
+    try {
+        await invoke('calendar_remove_manual_event', { id });
+    } catch (_e) {}
+}
+
+function calManualMeta(ev: ManualCalendarEvent): string {
+    return `${ev.repeat_daily ? '每日 ' : ''}${formatEventHhmm(ev.start_secs)} · ${ev.duration_mins} 分钟`;
+}
 
 // ===== 系统动态感知（sysmsg）分类开关 =====
 // 卡片总开关已移除：各分类独立控制。未写过分类键时跟随旧总开关，避免「移除总开关后默认全开」误弹通知
@@ -1177,6 +1306,7 @@ function buildActivityConfig(): Record<string, { enabled: boolean; priority: num
         hardware: hwEnabled.value,
         health: srEnabled.value || wrEnabled.value,
         printer: printerEnabled.value,
+        calendar: calHasEvents.value,
     };
     for (const id of RT_IDS) {
         const item = activities.value.find(a => a.id === id);
@@ -1352,6 +1482,14 @@ onMounted(async () => {
         }
     } catch (_e) {}
 
+    // F：监听日程同步 tick 事件，并拉取一次快照（系统日历 + 手动提醒）
+    await listen<any>('calendar-tick', (event) => {
+        applyCalendarState(event.payload);
+    });
+    try {
+        applyCalendarState(await invoke<any>('calendar_get_state'));
+    } catch (_e) {}
+
     // 监听后端硬件监控推送事件
     await listen<any>('monitor-stats', (event) => {
         const p = event.payload;
@@ -1448,7 +1586,7 @@ onMounted(async () => {
 
     // 监听各活动 enabled 状态变化，自动同步配置到灵动岛
     watch(
-        [isPomoRunning, cdRunning, hwEnabled, srEnabled, wrEnabled, printerEnabled],
+        [isPomoRunning, cdRunning, hwEnabled, srEnabled, wrEnabled, printerEnabled, calHasEvents],
         async () => {
             setSettingRaw(NSD_PRINTER_MONITOR_ENABLED, String(printerEnabled.value));
             try {
@@ -2825,6 +2963,122 @@ onUnmounted(() => {
     font-size: 11px;
     line-height: 1.5;
     color: var(--item-desc-color, rgba(255,255,255,0.5));
+}
+
+/* ===== 日程同步设置（阶段 F） ===== */
+.calendar-config-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.cal-input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.cal-title-input {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 8px;
+    font-size: 11px;
+    border-radius: 6px;
+    border: 1px solid var(--control-border, rgba(255,255,255,0.15));
+    background: transparent;
+    color: var(--item-title-color, #fff);
+    outline: none;
+}
+
+.cal-time-input {
+    padding: 4px 6px;
+    font-size: 11px;
+    border-radius: 6px;
+    border: 1px solid var(--control-border, rgba(255,255,255,0.15));
+    background: transparent;
+    color: var(--item-title-color, #fff);
+    outline: none;
+}
+
+.cal-daily-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--item-desc-color, rgba(255,255,255,0.6));
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.cal-duration-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.cal-duration-group .health-time-input {
+    width: 56px;
+}
+
+.cal-add-btn {
+    margin-left: auto;
+    padding: 5px 12px;
+    font-size: 11px;
+}
+
+.cal-manual-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.cal-manual-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: rgba(6, 182, 212, 0.08);
+}
+
+.cal-manual-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--item-title-color, #fff);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cal-manual-meta {
+    flex-shrink: 0;
+    font-size: 10px;
+    color: var(--item-desc-color, rgba(255,255,255,0.55));
+    white-space: nowrap;
+}
+
+.cal-remove-btn {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    font-size: 10px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--item-desc-color, rgba(255,255,255,0.5));
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.cal-remove-btn:hover {
+    background: rgba(255, 71, 87, 0.18);
+    color: #ff4757;
 }
 
 .health-skip-btn {

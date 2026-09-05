@@ -23,16 +23,17 @@
  *     注册表消费的是其投影（active / 文本态 / 面板数据），见下方 ctx 定义。
  */
 import type { Component, ComputedRef, Ref } from 'vue';
+import IslandCalendarPanel from '../components/island/IslandCalendarPanel.vue';
 import IslandCdControls from '../components/island/IslandCdControls.vue';
 import IslandCloseButton from '../components/island/IslandCloseButton.vue';
 import IslandHwDetail from '../components/island/IslandHwDetail.vue';
 import IslandHwChipRing from '../components/island/IslandHwChipRing.vue';
 import IslandPrintQueue from '../components/island/IslandPrintQueue.vue';
-import type { PrintJob } from '../components/island/types';
+import type { CalendarEventInfo, PrintJob } from '../components/island/types';
 import { hwMetricPctOf, hwModeSlots, type HwMetric } from '../utils/hwMetrics';
 
 /** 参与岛上多活动并行轮换的实时活动 id */
-export type RtId = 'pomodoro' | 'countdown' | 'hardware' | 'health' | 'printer';
+export type RtId = 'pomodoro' | 'countdown' | 'hardware' | 'health' | 'printer' | 'calendar';
 
 /** 控制台活动卡片 id：实时活动 + 仅控制台的 sysmsg（无岛上形态） */
 export type ActivityId = RtId | 'sysmsg';
@@ -62,6 +63,8 @@ export interface IslandActivityActions {
     expandPrintQueue: () => void;
     /** restore 缺省 true：面板关闭时还原岛尺寸；候选切换等内部路径传 false 跳过还原 */
     collapsePrintQueue: (restore?: boolean) => void;
+    expandCalendar: () => void;
+    collapseCalendar: () => void;
     toggleCountdownPauseResume: () => void;
     closeCountdownPanel: () => void;
     closePomodoroPanel: () => void;
@@ -84,6 +87,9 @@ export interface IslandActivityCtx extends ActivityGuardCtx {
     printJobs: Ref<PrintJob[]>;
     defaultPrinter: Ref<string>;
     isPrintQueueExpanded: Ref<boolean>;
+    /** F 日程同步：未来 24h 内的日程列表（calendar-tick 驱动，系统日历 + 手动提醒合并） */
+    calUpcoming: Ref<CalendarEventInfo[]>;
+    isCalendarExpanded: Ref<boolean>;
     actions: IslandActivityActions;
 }
 
@@ -306,6 +312,29 @@ export const RT_ACTIVITY_DEFS: RtActivityDef[] = [
         panelRank: 5,
         expand: ctx => ctx.actions.expandPrintQueue(),
         collapse: ctx => ctx.actions.collapsePrintQueue(false),
+    },
+    {
+        id: 'calendar',
+        title: '日程同步',
+        desc: '系统日历与手动提醒',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>',
+        accent: '#06b6d4',
+        defaultPriority: 6,
+        realtime: true,
+        // F：日程"活跃" = 未来 24h 内存在日程（系统日历 + 手动提醒，calendar-tick 驱动）
+        isActive: ctx => ctx.calUpcoming.value.length > 0,
+        panel: ctx => {
+            if (!ctx.isCalendarExpanded.value || ctx.calUpcoming.value.length === 0) return null;
+            return {
+                key: 'calendar-panel',
+                component: IslandCalendarPanel,
+                props: { events: ctx.calUpcoming.value },
+                events: { close: () => ctx.actions.collapseCalendar() },
+            };
+        },
+        panelRank: 6,
+        expand: ctx => ctx.actions.expandCalendar(),
+        collapse: ctx => ctx.actions.collapseCalendar(),
     },
 ];
 

@@ -149,7 +149,7 @@ import IslandRtChip from '../components/island/IslandRtChip.vue';
 import IslandMusic from '../components/island/IslandMusic.vue';
 import IslandSpectrum from '../components/island/IslandSpectrum.vue';
 import IslandStatusDot from '../components/island/IslandStatusDot.vue';
-import type { PrintJob, PrintQueueState } from '../components/island/types';
+import type { CalendarEventInfo, PrintJob, PrintQueueState } from '../components/island/types';
 // 活动注册表：候选 id / 元数据 / 活跃谓词 / 芯片与面板视图的单一来源（阶段 G）
 import {
     RT_ACTIVITY_DEFS, RT_IDS, PANEL_DEFS_BY_RANK, getRtDef,
@@ -176,6 +176,10 @@ const printJobs = ref<PrintJob[]>([]);
 const defaultPrinter = ref('');
 const isPrintQueueActive = computed(() => printJobs.value.length > 0);
 const isPrintQueueExpanded = ref(false);
+
+// 日程同步相关变量（F：由后端 calendar-tick 事件驱动；系统日历 + 手动提醒的未来 24h 列表）
+const calUpcoming = ref<CalendarEventInfo[]>([]);
+const isCalendarExpanded = ref(false);
 
 // 硬件监控附属图标可见性已合并到 showRtChip（多活动并行轮换），原 isHwAccessoryVisible 不再单独使用
 
@@ -607,6 +611,34 @@ const collapsePrintQueue = (restore = true) => {
     setTimeout(() => { suppressContentWatch = false; }, 600);
 };
 
+// 日程同步展开/折叠（F）：与硬件详情同款宽度兜底，列表在面板内滚动
+const expandCalendar = () => {
+    if (isCalendarExpanded.value) return;
+    suppressContentWatch = true;
+    isCalendarExpanded.value = true;
+    expandedRtId.value = 'calendar';
+    const { h } = getBaseSize();
+    animateIslandSize(getExpandTargetWidth(), h);
+    setTimeout(() => { suppressContentWatch = false; }, 600);
+};
+
+const collapseCalendar = () => {
+    if (!isCalendarExpanded.value) return;
+    suppressContentWatch = true;
+    isCalendarExpanded.value = false;
+    if (expandedRtId.value === 'calendar') {
+        expandedRtId.value = null;
+        // 与 revertRealtime 一致：小图标回到最高优先级候选，保证顺序设置生效
+        currentRtIndex.value = 0;
+    }
+    const { h } = getBaseSize();
+    const savedWidth = restoreIslandWidth();
+    const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
+    animateIslandSize(targetWidth, h);
+    setTimeout(() => { suppressContentWatch = false; }, 600);
+    scheduleAutoHide();
+};
+
 // 统一折叠所有已展开的实时活动，避免多活动并行时状态残留导致关闭按钮/切换异常
 // （折叠动作同样由注册表派发：collapseHardware/collapsePrintQueue 自带未展开短路，等价旧的条件调用；
 //   health 由 isHealthAlerting 事件驱动，注册表不注册折叠）
@@ -842,6 +874,7 @@ islandCtx = {
     cdPaused, hwMode, hwDefaultMetric, hwCpuPct, hwMemPct, hwRingPct, hwRingColor,
     hwRingOuter, hwRingInner, hwBatteryPct, hwDiskPct,
     printJobs, defaultPrinter, isPrintQueueExpanded,
+    calUpcoming, isCalendarExpanded,
     actions: {
         animateExpandSize: () => {
             const { h } = getBaseSize();
@@ -853,6 +886,8 @@ islandCtx = {
         collapseHardware: () => { collapseHardware(); },
         expandPrintQueue: () => { expandPrintQueue(); },
         collapsePrintQueue: restore => { collapsePrintQueue(restore ?? true); },
+        expandCalendar: () => { expandCalendar(); },
+        collapseCalendar: () => { collapseCalendar(); },
         toggleCountdownPauseResume: () => { handleCdTogglePauseResume(); },
         closeCountdownPanel: () => { handleCdClose(); },
         closePomodoroPanel: () => { handlePomoClose(); },
@@ -1916,6 +1951,16 @@ onMounted(async () => {
         isCountdownFinished.value = true;
         showToast('⏰ 倒计时结束', 'app');
     });
+
+    // 监听日程同步 tick 事件（F：系统日历 + 手动提醒的未来 24h 列表，列表变化或每 30 秒推送）
+    await listen<{ upcoming: CalendarEventInfo[] }>('calendar-tick', (event) => {
+        calUpcoming.value = Array.isArray(event.payload?.upcoming) ? event.payload.upcoming : [];
+    });
+    // 启动恢复：拉取一次日程快照（窗口重建后无需等待下一个 30s tick）
+    try {
+        const state: any = await invoke('calendar_get_state');
+        calUpcoming.value = Array.isArray(state?.upcoming) ? state.upcoming : [];
+    } catch (_e) {}
 
     // 监听健康提醒 tick 事件
     await listen<any>('health-reminder-tick', async (event) => {

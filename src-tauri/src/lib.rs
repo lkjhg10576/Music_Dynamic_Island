@@ -4,6 +4,7 @@ mod notification;
 mod pomodoro;
 mod pomodoro_stats;
 mod countdown;
+mod calendar;
 mod health_reminder;
 mod system_events;
 mod print_queue;
@@ -720,6 +721,9 @@ pub fn run() {
             countdown::stop_countdown,
             countdown::stop_countdown_alarm,
             countdown::get_countdown_state,
+            calendar::calendar_add_manual_event,
+            calendar::calendar_remove_manual_event,
+            calendar::calendar_get_state,
             health_reminder::start_sitting_reminder,
             health_reminder::stop_sitting_reminder,
             health_reminder::dismiss_sitting_alert,
@@ -760,6 +764,8 @@ pub fn run() {
             system_events::start_network_monitor(app.handle().clone());
             pomodoro::start_pomodoro_thread(app.handle().clone());
             countdown::start_countdown_thread(app.handle().clone());
+            // 日程同步：系统日历（WinRT 只读）+ 手动提醒，每 5 分钟重查 / 30 秒推送
+            calendar::start_calendar_thread(app.handle().clone());
             health_reminder::start_health_reminder_thread(app.handle().clone());
             print_queue::start_print_queue_monitor(app.handle().clone());
             start_hardware_monitor(app.handle().clone());

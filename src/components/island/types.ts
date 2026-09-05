@@ -28,3 +28,21 @@ export type RtActivity = {
     icon: string;
     accent: string;
 };
+
+/** 日程同步单条日程（calendar-tick / calendar_get_state 载荷字段，阶段 F） */
+export type CalendarEventInfo = {
+    title: string;
+    start_secs: number;
+    end_secs: number;
+    all_day: boolean;
+    source: 'system' | 'manual';
+};
+
+/** 手动提醒条目（calendar-tick / calendar_get_state 的 manual 字段，供控制台卡片增删） */
+export type ManualCalendarEvent = {
+    id: number;
+    title: string;
+    start_secs: number;
+    duration_mins: number;
+    repeat_daily: boolean;
+};
