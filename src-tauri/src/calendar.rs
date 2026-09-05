@@ -84,7 +84,8 @@ fn unix_now() -> u64 {
 fn local_tz_offset_secs(now_utc: u64) -> i64 {
     #[cfg(target_os = "windows")]
     unsafe {
-        use windows_sys::Win32::System::SystemInformation::{GetLocalTime, SYSTEMTIME};
+        use windows_sys::Win32::Foundation::SYSTEMTIME;
+        use windows_sys::Win32::System::SystemInformation::GetLocalTime;
         let mut st: SYSTEMTIME = std::mem::zeroed();
         GetLocalTime(&mut st);
         let local_sod = st.wHour as i64 * 3600 + st.wMinute as i64 * 60 + st.wSecond as i64;
