@@ -16,6 +16,7 @@ mod lyrics_cache;
 mod print_utils;
 mod thread_mgr;
 mod win32_utils;
+mod clipboard;
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicBool, Ordering};
@@ -739,6 +740,12 @@ pub fn run() {
             config_migrate_legacy,
             print_queue::set_printer_monitor_enabled,
             print_queue::get_printer_state,
+            clipboard::clipboard_set_enabled,
+            clipboard::clipboard_get_history,
+            clipboard::clipboard_copy_item,
+            clipboard::clipboard_toggle_pin,
+            clipboard::clipboard_delete_item,
+            clipboard::clipboard_clear,
         ])
         .setup(|app| {
             // 设置单一数据源：载入 config.json + 落盘线程

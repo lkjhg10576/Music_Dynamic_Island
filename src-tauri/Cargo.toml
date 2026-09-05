@@ -33,6 +33,12 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Shell",
     # CreateEventW（print_utils.rs）参数含 SECURITY_ATTRIBUTES，必须启用 Security feature
     "Win32_Security",
+    # 剪贴板历史：OpenClipboard / SetClipboardData / GetClipboardSequenceNumber 等
+    "Win32_System_DataExchange",
+    # 剪贴板历史：GlobalAlloc / GlobalLock（读写剪贴板内存块）
+    "Win32_System_Memory",
+    # 剪贴板历史：WideCharToMultiByte（CF_TEXT ANSI 转换）
+    "Win32_Globalization",
 ] }
 # 锁屏检测 / MessageBeep：OpenInputDesktop/CloseDesktop/MessageBeep 在 windows-sys 0.59
 # 的 win32metadata 中已被移除（docs.rs 0.59.0 查证不存在），按项目规范这些 API 一律走 winapi 0.3。
@@ -64,6 +70,8 @@ windows = { version = "0.58.0", features = [
     "Storage_Streams",
     "Win32_System_Power",
     "Win32_Networking_NetworkListManager",
+    # 剪贴板历史：WIC 解码 PNG / 生成 JPEG 缩略图
+    "Win32_Graphics_Imaging",
 ] }
 cpal = "0.15"
 rustfft = "6.2"

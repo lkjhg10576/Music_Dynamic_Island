@@ -289,6 +289,10 @@
             <template v-else-if="currentView === 'lyrics'">
                 <LyricsManager ref="lyricsManagerRef" />
             </template>
+
+            <template v-else-if="currentView === 'clipboard'">
+                <ClipboardManager />
+            </template>
         </div>
 
         <footer class="panel-footer">
@@ -373,6 +377,7 @@ import DynamicSet from '../components/DynamicSet.vue';
 import LiveActive from './LiveActive.vue';
 import PersonalizeCenter from '../components/PersonalizeCenter.vue';
 import LyricsManager from '../components/LyricsManager.vue';
+import ClipboardManager from '../components/ClipboardManager.vue';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -401,13 +406,14 @@ const appVersion = ref('1.0.0');
 
 const isDynamicSet = computed(() => currentView.value !== 'main');
 
-// 视图注册表：下拉列表直接跳转（第 5 项为歌词配置，LyricsManager 组件交付）
+// 视图注册表：下拉列表直接跳转（歌词配置 / 剪贴板历史为独立管理页）
 const VIEW_ITEMS = [
     { id: 'main', label: '主控制台' },
     { id: 'island', label: '灵动岛设置' },
     { id: 'live', label: 'LiveActive' },
     { id: 'personalize', label: '个性化' },
     { id: 'lyrics', label: '歌词配置' },
+    { id: 'clipboard', label: '剪贴板历史' },
 ] as const;
 type ViewId = typeof VIEW_ITEMS[number]['id'];
 

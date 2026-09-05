@@ -99,3 +99,7 @@ export const NSD_SYSMSG_NETWORK_DISCONNECT_ENABLED = 'nsd_sysmsg_network_disconn
 export const NSD_SYSMSG_NETWORK_RECOVERY_ENABLED = 'nsd_sysmsg_network_recovery_enabled';
 /** 网络延迟探测间隔（秒），范围 1~60，默认 30 */
 export const NSD_SYSMSG_NETWORK_LATENCY_INTERVAL = 'nsd_sysmsg_network_latency_interval';
+
+// 剪贴板历史
+export const NSD_CLIPBOARD_ENABLED = 'nsd_clipboard_enabled';
+export const NSD_CLIPBOARD_ISLAND_TOAST = 'nsd_clipboard_island_toast';

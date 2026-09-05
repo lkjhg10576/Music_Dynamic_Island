@@ -131,6 +131,8 @@ import {
     NSD_MSG_EXPANDED_WIDTH,
     NSD_APP_SCALE,
     NSD_LYRIC_DELAY,
+    NSD_CLIPBOARD_ENABLED,
+    NSD_CLIPBOARD_ISLAND_TOAST,
 } from '../constants/storageKeys';
 import { getSettingRaw, setSettingRaw } from '../utils/settings';
 import { useMusicSync } from '../composables/useMusicSync';
@@ -2236,6 +2238,20 @@ onMounted(async () => {
     // 启动即触发后端监听（若用户开启了消息通知），由后端状态机负责增量推送 + 轮询兜底
     if (getSettingRaw(NSD_MSG_NOTIFY) === 'true') {
         invoke('set_notification_listening', { enabled: true }).catch(() => {});
+    }
+
+    // 剪贴板历史新条目：可选岛提示（默认关闭）。连续复制由 showToast 合并续期，
+    // 且 noWake 保证绝不把隐藏的岛弹出来（高频操作）
+    unlistenFns.push(await listen<{ kind: string; char_len: number }>('clipboard-changed', (e) => {
+        if (getSettingRaw(NSD_CLIPBOARD_ISLAND_TOAST) !== 'true') return;
+        const { kind, char_len } = e.payload;
+        showToast(kind === 'image' ? '已复制图片' : `已复制文本 ${char_len} 字`, 'clipboard', { noWake: true });
+    }));
+
+    // 启动即触发剪贴板监听（若用户开启），由后端命令幂等保证只有一个监听线程。
+    // 监听线程的启停不能只挂在控制台页面——省内存模式下主窗口会被销毁
+    if (getSettingRaw(NSD_CLIPBOARD_ENABLED) === 'true') {
+        invoke('clipboard_set_enabled', { enabled: true }).catch(() => {});
     }
 
     // 初始化时的折叠态滚动测量已随 IslandMusic 子组件的 onMounted 处理

@@ -27,7 +27,7 @@ export interface ToastItem {
 // 通知权限状态
 export type AccessStatus = 'ok' | 'denied' | 'unavailable';
 
-export type SysToastType = 'app' | 'sys' | 'volume' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' | 'notify-permission';
+export type SysToastType = 'app' | 'sys' | 'volume' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' | 'notify-permission' | 'clipboard';
 
 export function useNotifications(deps: {
     isIslandVisible: Ref<boolean>;
@@ -63,10 +63,13 @@ export function useNotifications(deps: {
     let isProcessingMsg = false;
 
     // 系统操作通知专用变量
-    // volume：可合并续期的音量 toast；其它类型走普通队列
+    // volume：可合并续期的音量 toast；clipboard：可合并续期的剪贴板 toast（高频，必须 noWake）；
+    // 其它类型走普通队列
     interface SysToastItem {
         text: string;
         type: SysToastType;
+        /** 高频操作（剪贴板复制）专用：不唤醒隐藏的岛，避免每次复制都弹出岛 */
+        noWake?: boolean;
     }
 
     const displaySysToast = ref(false);
@@ -187,9 +190,9 @@ export function useNotifications(deps: {
         const rtChipExtra = showRtChip() ? 44 : 0;
         const raw = horizontalPadding + iconOccupy + textGap + textW + rightIndicator + rtChipExtra;
 
-        // 音量文本短，给较窄下限；电源/电池长文本给更宽下限
+        // 音量/剪贴板文本短，给较窄下限；电源/电池长文本给更宽下限
         // 例：「已接入电源，当前电量 100%」约 13 字 ≈ 162px + 图标/边距/频谱 ≈ 280+
-        const minW = type === 'volume'
+        const minW = (type === 'volume' || type === 'clipboard')
             ? 210
             : (type === 'battery-charge' || type === 'battery-low' ? 300 : 240);
         const maxW = 420;
@@ -223,8 +226,9 @@ export function useNotifications(deps: {
             toastDeadlineAt = Date.now() + (nextToast.type === 'notify-permission' ? 6000 : TOAST_DWELL_MS);
             applySysToastIslandSize(nextToast.text, nextToast.type);
 
-            // 自动恢复显示：当有系统通知时，如果灵动岛被隐藏，则自动恢复显示
-            if (!isIslandVisible.value) {
+            // 自动恢复显示：当有系统通知时，如果灵动岛被隐藏，则自动恢复显示。
+            // 剪贴板复制是高频操作：noWake 项跳过该逻辑，绝不把隐藏的岛弹出来
+            if (!nextToast.noWake && !isIslandVisible.value) {
                 getCurrentWindow().show();
                 isIslandVisible.value = true;
             }
@@ -349,7 +353,7 @@ export function useNotifications(deps: {
     };
 
     // 暴露给外部调用的触发函数
-    const showToast = (text: string, type: SysToastType = 'app') => {
+    const showToast = (text: string, type: SysToastType = 'app', opts?: { noWake?: boolean }) => {
         // 音量：合并到当前显示或队列中的唯一 volume 项，并续期显示截止时间
         // 表现：单次弹出后数字随实际调节实时更新，不反复进场/离场
         if (type === 'volume') {
@@ -368,6 +372,29 @@ export function useNotifications(deps: {
             }
             // 3) 其余情况（含 leave 动画窗口）正常入队；leave 结束后会立即接上
             toastQueue.value.push({ text, type: 'volume' });
+            processToastQueue();
+            return;
+        }
+
+        // 剪贴板：连续复制合并成一条并续期（同 volume 机制），否则复制 10 次岛就抖 10 次；
+        // 且必须 noWake：绝不因复制把隐藏的岛弹出来
+        if (type === 'clipboard') {
+            const item: SysToastItem = { text, type: 'clipboard', noWake: opts?.noWake ?? true };
+            // 1) 正在显示剪贴板提示：只更新文案 + 续期
+            if (displaySysToast.value && sysToastType.value === 'clipboard') {
+                sysToastText.value = text;
+                toastDeadlineAt = Date.now() + TOAST_DWELL_MS;
+                return;
+            }
+            // 2) 已在队列中：原地更新为最新文案，避免堆积
+            const queuedIdx = toastQueue.value.findIndex((t) => t.type === 'clipboard');
+            if (queuedIdx >= 0) {
+                toastQueue.value[queuedIdx] = item;
+                processToastQueue();
+                return;
+            }
+            // 3) 其余情况（含 leave 动画窗口）正常入队；leave 结束后会立即接上
+            toastQueue.value.push(item);
             processToastQueue();
             return;
         }
