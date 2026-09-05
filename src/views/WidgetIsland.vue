@@ -25,406 +25,76 @@
                 <div class="left-capsule" :class="{ 'is-split': isSplitMode }">
                     <div class="inner-wrapper">
                     <transition mode="out-in" @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
-                        <div v-if="isMsgActive" class="msg-box" key="msg" @click="handleNotificationClick"
-                            style="cursor: pointer;">
-                            <div class="msg-avatar">
-                                <img :src="currentMsgIcon" alt="消息图标" class="msg-avatar-img">
-                            </div>
-                            <div class="msg-text-wrapper">
-                                <div class="msg-title">
-                                    <span class="sender-name">{{ msgTitle }}</span>
-                                    <span class="app-name">{{ msgAppName }}</span>
-                                </div>
-                                <div class="msg-body">{{ msgBody }}</div>
-                            </div>
-                        </div>
+                        <IslandMsg v-if="isMsgActive" key="msg" :msg-title="msgTitle" :msg-app-name="msgAppName"
+                            :msg-body="msgBody" :current-msg-icon="currentMsgIcon" @select="handleNotificationClick" />
 
-                        <div v-else-if="displaySysToast" class="system-toast-box" key="systoast" @click="onSysToastClick">
+                        <IslandSysToast v-else-if="displaySysToast" key="systoast" :sys-toast-type="sysToastType"
+                            :sys-toast-text="sysToastText" @select="onSysToastClick" />
 
-                            <div v-if="sysToastType === 'app'" class="toast-icon app-icon">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                                    <circle cx="12" cy="12" r="10" stroke-width="2" stroke-linecap="round"
-                                        stroke-linejoin="round" opacity="0.3" />
-                                    <path d="M8 12.5l3 3 5-6" stroke-width="2.5" stroke-linecap="round"
-                                        stroke-linejoin="round" />
-                                </svg>
-                            </div>
+                        <IslandHealthAlert v-else-if="isHealthAlerting" key="health-alert"
+                            :health-alert-label="healthAlertLabel" />
 
-                            <div v-else-if="sysToastType === 'lock'" class="toast-icon sys-icon">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                                    <rect x="4" y="12" width="16" height="8" rx="2" ry="2" stroke-width="2"
-                                        stroke-linecap="round" stroke-linejoin="round" />
-                                    <path d="M8 12V9a4 4 0 0 1 8 0v3" stroke-width="2" stroke-linecap="round"
-                                        stroke-linejoin="round" />
-                                </svg>
-                            </div>
+                        <IslandCountdown v-else-if="showCountdownText" key="countdown"
+                            :formatted-island-cd-time="formattedIslandCdTime" :is-countdown-finished="isCountdownFinished" />
 
-                            <div v-else-if="sysToastType === 'unlock'" class="toast-icon sys-icon">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                                    <rect x="4" y="12" width="16" height="8" rx="2" ry="2" stroke-width="2"
-                                        stroke-linecap="round" stroke-linejoin="round" />
-                                    <path d="M8 12V9a4 4 0 0 1 8 0" stroke-width="2" stroke-linecap="round"
-                                        stroke-linejoin="round" />
-                                </svg>
-                            </div>
+                        <IslandPomodoro v-else-if="showPomodoroText" key="pomodoro"
+                            :formatted-island-pomo-time="formattedIslandPomoTime" :pomodoro-phase-class="pomodoroPhaseClass"
+                            :pomodoro-remaining-cycles="pomodoroRemainingCycles" />
 
-                            <div v-else-if="sysToastType === 'battery-charge'" class="toast-icon battery-charge-icon">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                                    <rect x="2" y="7" width="16" height="10" rx="2" ry="2" stroke-width="2"
-                                        stroke-linecap="round" stroke-linejoin="round" />
-                                    <line x1="22" y1="11" x2="22" y2="13" stroke-width="2" stroke-linecap="round"
-                                        stroke-linejoin="round" />
-                                    <polygon points="11 7 8 12 12 12 11 17 14 12 10 12 11 7" stroke-width="1.5"
-                                        stroke-linejoin="round" />
-                                </svg>
-                            </div>
+                        <IslandHardwareRing v-else-if="showHardwareRing" key="hardware" :hw-mode="hwMode"
+                            :hw-cpu-pct="hwCpuPct" :hw-mem-pct="hwMemPct" :hw-ring-pct="hwRingPct"
+                            :hw-ring-color="hwRingColor" :hw-active-metric="hwActiveMetric"
+                            :is-hardware-expanded="isHardwareExpanded" @expand="clickRtChip('hardware')" />
 
-                            <div v-else-if="sysToastType === 'battery-low'" class="toast-icon battery-low-icon">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                                    <rect x="2" y="7" width="16" height="10" rx="2" ry="2" stroke-width="2"
-                                        stroke-linecap="round" stroke-linejoin="round" />
-                                    <line x1="22" y1="11" x2="22" y2="13" stroke-width="2" stroke-linecap="round"
-                                        stroke-linejoin="round" />
-                                    <line x1="6" y1="12" x2="9" y2="12" stroke-width="4" stroke-linecap="round"
-                                        stroke-linejoin="round" />
-                                </svg>
-                            </div>
+                        <IslandMusic v-else-if="displayMusic" :key="'music_' + musicBoxKey" ref="islandMusicRef"
+                            :is-music-expanded="isMusicExpanded" :is-playing="isPlaying" :display-cover-url="displayCoverUrl"
+                            :current-lyric-text="currentLyricText" :collapsed-track-text="collapsedTrackText"
+                            :expanded-lyric-text="expandedLyricText" :expanded-sub-text="expandedSubText"
+                            :is-video-like-source="isVideoLikeSource" :display-music="displayMusic"
+                            :current-track-info="currentTrackInfo" :timeline-status="timelineStatus"
+                            :progress-position="progressPosition" :progress-end="progressEnd"
+                            :can-seek="musicTimeline.canSeek" :progress-percent="progressPercent"
+                            :is-dragging-progress="isDraggingProgress"
+                            @activate="expandMusic" @prev="prevTrack" @toggle-play="togglePlay" @next="nextTrack"
+                            @progress-pointerdown="onProgressPointerDown" @progress-pointermove="onProgressPointerMove"
+                            @progress-pointerup="onProgressPointerUp" @progress-pointercancel="onProgressPointerCancel" />
 
-                            <div v-else class="toast-icon sys-icon">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                                    <circle cx="12" cy="12" r="10" stroke-width="2" stroke-linecap="round"
-                                        stroke-linejoin="round" opacity="0.3" />
-                                    <g transform="translate(6, 5.5) scale(0.5)">
-                                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" stroke-width="4"
-                                            stroke-linecap="round" stroke-linejoin="round" />
-                                        <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke-width="4" stroke-linecap="round"
-                                            stroke-linejoin="round" />
-                                    </g>
-                                </svg>
-                            </div>
-                            <div class="toast-text">{{ sysToastText }}</div>
-                        </div>
-
-                        <div v-else-if="isHealthAlerting" class="health-alert-box" key="health-alert">
-                            <span class="health-alert-icon">⏰</span>
-                            <span class="health-alert-text">{{ healthAlertLabel }}</span>
-                        </div>
-
-                        <div v-else-if="showCountdownText" class="countdown-text-box" key="countdown">
-                            <svg viewBox="0 0 24 24" class="countdown-svg"
-                                fill="none" stroke="currentColor" stroke-width="2"
-                                stroke-linecap="round" stroke-linejoin="round">
-                                <circle cx="12" cy="12" r="10"></circle>
-                                <polyline points="12 6 12 12 16 14"></polyline>
-                            </svg>
-                            <div class="countdown-info">
-                                <span v-if="isCountdownFinished" class="countdown-finished-text">倒计时结束</span>
-                                <span v-else class="countdown-time">{{ formattedIslandCdTime }}</span>
-                            </div>
-                        </div>
-
-                        <div v-else-if="showPomodoroText" class="pomodoro-text-box" key="pomodoro">
-                            <svg viewBox="0 0 24 24" class="pomodoro-svg"
-                                :class="pomodoroPhaseClass" fill="none" stroke="currentColor"
-                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <circle cx="12" cy="12" r="10"></circle>
-                                <polyline points="12 6 12 12 16 14"></polyline>
-                            </svg>
-                            <div class="pomodoro-info">
-                                <span class="pomodoro-time" :class="pomodoroPhaseClass">{{ formattedIslandPomoTime }}</span>
-                                <span class="pomodoro-cycle-badge" v-if="pomodoroRemainingCycles > 0">{{ pomodoroRemainingCycles }}</span>
-                            </div>
-                        </div>
-
-                        <div v-else-if="showHardwareRing" class="hardware-ring-box" key="hardware"
-                            :class="{ 'is-hw-expanded': isHardwareExpanded }"
-                            @click.stop="() => clickRtChip('hardware')" style="cursor: pointer;">
-                            <svg viewBox="0 0 36 36" class="hw-ring-svg">
-                                <!-- 背景圆环 -->
-                                <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="3" />
-                                <!-- 双圆环模式 -->
-                                <template v-if="hwMode === 'dual'">
-                                    <circle cx="18" cy="18" r="14" fill="none"
-                                        :stroke="hwCpuPct >= 80 ? '#a855f7' : '#ffffff'" stroke-width="3"
-                                        :stroke-dasharray="`${(hwCpuPct / 100) * 87.96} 87.96`"
-                                        stroke-linecap="round" transform="rotate(-90 18 18)"
-                                        style="transition: stroke-dasharray 0.5s ease;" />
-                                    <circle cx="18" cy="18" r="8" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2.5" />
-                                    <circle cx="18" cy="18" r="8" fill="none"
-                                        :stroke="hwMemPct >= 80 ? '#ff4757' : '#3b82f6'" stroke-width="2.5"
-                                        :stroke-dasharray="`${(hwMemPct / 100) * 50.27} 50.27`"
-                                        stroke-linecap="round" transform="rotate(-90 18 18)"
-                                        style="transition: stroke-dasharray 0.5s ease;" />
-                                </template>
-                                <!-- 单圆环 / 轮换模式 -->
-                                <template v-else>
-                                    <circle cx="18" cy="18" r="14" fill="none"
-                                        :stroke="hwRingColor" stroke-width="3"
-                                        :stroke-dasharray="`${(hwRingPct / 100) * 87.96} 87.96`"
-                                        stroke-linecap="round" transform="rotate(-90 18 18)"
-                                        style="transition: stroke-dasharray 0.5s ease;" />
-                                </template>
-                            </svg>
-                            <!-- 折叠态才显示标签文字，展开态只保留圆环（避免与右侧 CPU/RAM 详情重叠） -->
-                            <template v-if="!isHardwareExpanded">
-                                <span class="hw-ring-label" v-if="hwMode !== 'dual'">
-                                    <span class="hw-metric-name">{{ hwActiveMetric === 'cpu' ? 'CPU' : 'RAM' }}</span>
-                                    <span class="hw-metric-val" :class="{ 'high': hwRingPct >= 80 }">{{ Math.round(hwRingPct) }}%</span>
-                                </span>
-                                <span class="hw-ring-label hw-dual-label" v-else>
-                                    <span class="hw-dual-item" :class="{ 'high': hwCpuPct >= 80 }">C{{ Math.round(hwCpuPct) }}</span>
-                                    <span class="hw-dual-item" :class="{ 'high': hwMemPct >= 80 }">M{{ Math.round(hwMemPct) }}</span>
-                                </span>
-                            </template>
-                        </div>
-
-                        <div v-else-if="displayMusic" class="music-ctl-box" :class="{ 'expanded': isMusicExpanded }"
-                            :key="'music_' + musicBoxKey" @click="expandMusic" style="cursor: pointer;">
-                            <div class="music-top-row">
-                                <div class="album-cover" :class="{ 'is-playing': isPlaying }">
-                                    <div class="cover-inner"
-                                        :style="displayCoverUrl ? { backgroundImage: `url(${displayCoverUrl})`, backgroundSize: 'cover' } : {}">
-                                    </div>
-                                </div>
-                                <div class="music-info-mask-box" ref="maskBoxRef">
-                                    <div class="music-info-text single-line" :class="{ 'fade-out': isMusicExpanded }"
-                                        style="position: relative; width: 100%; height: 100%;">
-                                        <transition name="lyric-fade">
-                                            <span class="lyric-render-text" :key="currentLyricText || collapsedTrackText">
-                                                <span class="scroll-inner" ref="textInnerRef"
-                                                    :class="{ 'is-scrolling': scrollDist > 0 }"
-                                                    :style="scrollDist > 0 ? { '--scroll-dist': scrollDist + 'px', '--scroll-duration': scrollDuration } : {}">
-                                                    {{ currentLyricText || collapsedTrackText }}
-                                                </span>
-                                            </span>
-                                        </transition>
-                                    </div>
-                                    <div class="music-info-text double-line" :class="{ 'fade-in': isMusicExpanded }">
-                                        <div class="song-title" ref="expandedLyricBoxRef">
-                                            <transition name="lyric-fade">
-                                                <span class="lyric-render-text" :key="expandedLyricText">
-                                                    <span class="scroll-inner" ref="expandedLyricRef"
-                                                        :class="{ 'is-scrolling': expandedLyricScrollDist > 0 }"
-                                                        :style="expandedLyricScrollDist > 0 ? { '--scroll-dist': expandedLyricScrollDist + 'px', '--scroll-duration': expandedLyricScrollDuration } : {}">
-                                                        {{ expandedLyricText }}
-                                                    </span>
-                                                </span>
-                                            </transition>
-                                        </div>
-                                        <div class="song-artist" ref="expandedArtistBoxRef" v-show="!isVideoLikeSource">
-                                            <span class="scroll-inner" ref="expandedArtistInnerRef"
-                                                :class="{ 'is-scrolling': expandedArtistScrollDist > 0 }"
-                                                :style="expandedArtistScrollDist > 0 ? { '--scroll-dist': expandedArtistScrollDist + 'px', '--scroll-duration': expandedArtistScrollDuration } : {}">
-                                                {{ expandedSubText }}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <transition name="fade">
-                                <div class="music-controls" v-show="isMusicExpanded">
-                                    <button class="ctl-btn" @click.stop="prevTrack">
-                                        <svg viewBox="0 0 24 24" fill="currentColor">
-                                            <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
-                                        </svg>
-                                    </button>
-                                    <button class="ctl-btn play-btn" @click.stop="togglePlay">
-                                        <svg v-if="isPlaying" viewBox="0 0 24 24" fill="currentColor">
-                                            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-                                        </svg>
-                                        <svg v-else viewBox="0 0 24 24" fill="currentColor"
-                                            style="transform: translateX(1px);">
-                                            <path d="M8 5v14l11-7z" />
-                                        </svg>
-                                    </button>
-                                    <button class="ctl-btn" @click.stop="nextTrack">
-                                        <svg viewBox="0 0 24 24" fill="currentColor">
-                                            <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
-                                        </svg>
-                                    </button>
-                                </div>
-                            </transition>
-                            <transition name="fade">
-                                <div class="music-progress" v-show="isMusicExpanded" @click.stop>
-                                    <template v-if="timelineStatus === 'available'">
-                                        <div class="progress-time-row">
-                                            <span class="progress-time">{{ formatTime(progressPosition) }}</span>
-                                            <span class="progress-time">{{ formatTime(progressEnd) }}</span>
-                                        </div>
-                                        <div class="progress-bar" ref="progressBarRef"
-                                            :class="{ disabled: !musicTimeline.canSeek }"
-                                            :aria-disabled="!musicTimeline.canSeek"
-                                            @pointerdown.stop="onProgressPointerDown"
-                                            @pointermove="onProgressPointerMove"
-                                            @pointerup="onProgressPointerUp"
-                                            @pointercancel="onProgressPointerCancel"
-                                            @lostpointercapture="onProgressPointerCancel">
-                                            <div class="progress-filled" :class="{ dragging: isDraggingProgress }"
-                                                :style="{ width: progressPercent + '%' }"></div>
-                                            <div class="progress-thumb" :style="{ left: progressPercent + '%' }"></div>
-                                        </div>
-                                        <div class="progress-remaining">-{{ formatTime(progressEnd - progressPosition) }}</div>
-                                    </template>
-                                    <div v-else class="progress-placeholder">
-                                        {{ timelineStatus === 'loading' ? '正在读取播放进度…' : '当前播放器未提供播放进度' }}
-                                    </div>
-                                </div>
-                            </transition>
-                        </div>
-
-                        <div v-else-if="displaySpeed" class="speed-box" key="speed">
-                            <transition name="speed-fade" mode="out-in">
-                                <div v-if="isShowingUpload" class="speed-item" key="upload">
-                                    <span :class="['label', { 'high-traffic': isHighUpload }]">⬆</span>
-                                    <span class="value">{{ uploadSpeed }}</span>
-                                </div>
-                                <div v-else class="speed-item" key="download">
-                                    <span :class="['label', { 'high-traffic': isHighDownload }]">⬇</span>
-                                    <span class="value">{{ downloadSpeed }}</span>
-                                </div>
-                            </transition>
-                        </div>
+                        <IslandSpeed v-else-if="displaySpeed" key="speed" :is-showing-upload="isShowingUpload"
+                            :upload-speed="uploadSpeed" :download-speed="downloadSpeed" :is-high-upload="isHighUpload"
+                            :is-high-download="isHighDownload" />
                     </transition>
                 </div>
 
                 <transition mode="out-in" @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
                     <!-- 倒计时展开态：暂停/开始 + 关闭 -->
-                    <div v-if="isCountdownExpanded" class="cd-expanded-controls" key="cd-controls">
-                        <button class="cd-pause-btn" @click.stop="handleCdTogglePauseResume" :title="cdPaused ? '继续' : '暂停'">
-                            <svg v-if="cdPaused" viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-                                <path d="M8 5v14l11-7z" />
-                            </svg>
-                            <svg v-else viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-                                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-                            </svg>
-                        </button>
-                        <div class="island-close-btn cd-close-btn" @click.stop="handleCdClose">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                stroke-linecap="round" stroke-linejoin="round">
-                                <line x1="18" y1="6" x2="6" y2="18"></line>
-                                <line x1="6" y1="6" x2="18" y2="18"></line>
-                            </svg>
-                        </div>
-                    </div>
+                    <IslandCdControls v-if="isCountdownExpanded" key="cd-controls" :cd-paused="cdPaused"
+                        @toggle="handleCdTogglePauseResume" @close="handleCdClose" />
 
                     <!-- 番茄钟展开态：关闭 -->
-                    <div v-else-if="isPomodoroExpanded" class="island-close-btn" @click.stop="handlePomoClose()" key="close-btn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                            stroke-linecap="round" stroke-linejoin="round">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                    </div>
+                    <IslandCloseButton v-else-if="isPomodoroExpanded" key="close-btn" @close="handlePomoClose()" />
 
                     <!-- 健康提醒关闭按钮 -->
-                    <div v-else-if="isHealthAlerting" class="island-close-btn" @click.stop="handleDismissHealthAlert" key="health-close">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                            stroke-linecap="round" stroke-linejoin="round">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                    </div>
+                    <IslandCloseButton v-else-if="isHealthAlerting" key="health-close" @close="handleDismissHealthAlert" />
 
                     <!-- 硬件监控展开态：CPU / 内存 详情 + 关闭 -->
-                    <div v-else-if="isHardwareExpanded && hwEnabled" class="hw-expanded-detail" key="hw-detail">
-                        <div class="hw-detail-row">
-                            <span class="hw-detail-label">CPU</span>
-                            <span class="hw-detail-val" :class="{ 'high': hwCpuPct >= 80 }">{{ Math.round(hwCpuPct) }}%</span>
-                        </div>
-                        <div class="hw-detail-row">
-                            <span class="hw-detail-label">RAM</span>
-                            <span class="hw-detail-val" :class="{ 'high': hwMemPct >= 80 }">{{ Math.round(hwMemPct) }}%</span>
-                        </div>
-                        <div class="hw-close-btn-x" @click.stop="collapseHardware">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                stroke-linecap="round" stroke-linejoin="round">
-                                <line x1="18" y1="6" x2="6" y2="18"></line>
-                                <line x1="6" y1="6" x2="18" y2="18"></line>
-                            </svg>
-                        </div>
-                    </div>
+                    <IslandHwDetail v-else-if="isHardwareExpanded && hwEnabled" key="hw-detail" :hw-cpu-pct="hwCpuPct"
+                        :hw-mem-pct="hwMemPct" @close="collapseHardware" />
 
-                    <div v-else-if="isPrintQueueExpanded" class="print-queue-detail" key="print-queue">
-                        <div class="print-queue-head">
-                            <div class="print-queue-title">
-                                <span>打印队列</span>
-                                <small>{{ defaultPrinter || '默认打印机' }} · {{ printJobs.length }} 项</small>
-                            </div>
-                            <button class="print-queue-close" type="button" title="关闭打印队列" @click.stop="collapsePrintQueue()">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                                </svg>
-                            </button>
-                        </div>
-                        <div class="print-job-list">
-                            <div v-for="job in printJobs" :key="job.jobId" class="print-job-row">
-                                <div class="print-job-main">
-                                    <span class="print-job-document" :title="job.document">{{ job.document || '未命名文档' }}</span>
-                                    <span class="print-job-status">{{ job.status || '排队中' }}</span>
-                                </div>
-                                <div class="print-job-meta">
-                                    <span>{{ job.pagesPrinted }} / {{ job.totalPages || '?' }} 页</span>
-                                    <span v-if="job.printer && job.printer !== defaultPrinter">{{ job.printer }}</span>
-                                </div>
-                                <div class="print-job-progress" :class="{ 'unknown': job.totalPages <= 0 }">
-                                    <span :style="{ width: `${printJobProgress(job)}%` }"></span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    <IslandPrintQueue v-else-if="isPrintQueueExpanded" key="print-queue" :jobs="printJobs"
+                        :default-printer="defaultPrinter" @close="collapsePrintQueue()" />
 
-                    <div v-else-if="showSpectrumIndicator" class="audio-spectrum"
-                        :class="{ 'is-playing': isPlaying, 'expanded': isMusicExpanded }" key="spectrum">
-                        <span class="bar" v-for="(val, index) in spectrumData" :key="index"
-                            :style="{ transform: `scaleY(${val})`, backgroundColor: spectrumBarColor, transition: 'transform 0.08s ease-out, background-color 0.08s linear' }"></span>
-                    </div>
+                    <IslandSpectrum v-else-if="showSpectrumIndicator" key="spectrum" :bars="[...spectrumData]"
+                        :is-playing="isPlaying" :is-music-expanded="isMusicExpanded" :bar-color="spectrumBarColor" />
 
-                    <div v-else :class="['status-dot', networkStatus]" key="dot"></div>
+                    <IslandStatusDot v-else :network-status="networkStatus" key="dot" />
                 </transition>
                 </div>
 
                 <transition name="pop">
                     <!-- 多实时活动并行：单一常驻小图标（候选集按 priority 排序，点击展开当前预览活动 + 轮换到下一个） -->
-                    <div class="right-circle rt-chip"
-                        v-if="showRtChip"
-                        @click.stop="clickRtChip()"
-                        :style="{ ...coreContentStyle, cursor: 'pointer' }"
-                        :title="rtActivities[currentRtIndex] ? ('点击展开：' + rtActivities[currentRtIndex].id) : ''">
-                        <!-- 预览活动变化时（新活动加入/轮换/优先级重排）做缩小+淡入过渡，避免图标瞬间替换 -->
-                        <transition name="rt-swap" mode="out-in">
-                            <span v-if="rtActivities[currentRtIndex]" class="rt-chip-inner"
-                                :key="rtActivities[currentRtIndex].id"
-                                :style="{ color: rtActivities[currentRtIndex].accent || '#ffffff' }">
-                                <!-- 硬件监控：显示动态小圆环 -->
-                                <svg v-if="rtActivities[currentRtIndex].id === 'hardware'" viewBox="0 0 36 36" class="rt-chip-hw-ring">
-                                <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="3" />
-                                <template v-if="hwMode === 'dual'">
-                                    <circle cx="18" cy="18" r="14" fill="none"
-                                        :stroke="hwCpuPct >= 80 ? '#a855f7' : '#ffffff'" stroke-width="3"
-                                        :stroke-dasharray="`${(hwCpuPct / 100) * 87.96} 87.96`"
-                                        stroke-linecap="round" transform="rotate(-90 18 18)"
-                                        style="transition: stroke-dasharray 0.5s ease;" />
-                                    <circle cx="18" cy="18" r="8" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="2.5" />
-                                    <circle cx="18" cy="18" r="8" fill="none"
-                                        :stroke="hwMemPct >= 80 ? '#ff4757' : '#3b82f6'" stroke-width="2.5"
-                                        :stroke-dasharray="`${(hwMemPct / 100) * 50.27} 50.27`"
-                                        stroke-linecap="round" transform="rotate(-90 18 18)"
-                                        style="transition: stroke-dasharray 0.5s ease;" />
-                                </template>
-                                <template v-else>
-                                    <circle cx="18" cy="18" r="14" fill="none"
-                                        :stroke="hwRingColor" stroke-width="3"
-                                        :stroke-dasharray="`${(hwRingPct / 100) * 87.96} 87.96`"
-                                        stroke-linecap="round" transform="rotate(-90 18 18)"
-                                        style="transition: stroke-dasharray 0.5s ease;" />
-                                </template>
-                                </svg>
-                                <!-- 其他实时活动：保留原有静态图标 -->
-                                <span v-else class="rt-chip-icon" v-html="rtActivities[currentRtIndex]?.icon || ''"></span>
-                            </span>
-                        </transition>
-                    </div>
+                    <IslandRtChip v-if="showRtChip" :rt-activities="rtActivities" :current-rt-index="currentRtIndex"
+                        :hw-mode="hwMode" :hw-cpu-pct="hwCpuPct" :hw-mem-pct="hwMemPct" :hw-ring-pct="hwRingPct"
+                        :hw-ring-color="hwRingColor" :core-content-style="coreContentStyle" @activate="clickRtChip()" />
                 </transition>
             </div>
 
@@ -438,9 +108,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, shallowRef, triggerRef, onMounted, onUnmounted, computed, watch, nextTick, type CSSProperties } from 'vue';
+import { ref, shallowRef, triggerRef, onMounted, onUnmounted, computed, watch, type CSSProperties } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWindow, currentMonitor, PhysicalPosition, LogicalPosition, PhysicalSize } from '@tauri-apps/api/window'; import { Menu, MenuItem } from '@tauri-apps/api/menu';
+import { getCurrentWindow, currentMonitor, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window';
 import { listen, emit } from '@tauri-apps/api/event';
 import { formatSpeed } from '../utils/format';
 import {
@@ -450,8 +120,8 @@ import {
     NSD_MUSIC_CTRL, NSD_GLOW_BORDER,
     NSD_PIN_TASKBAR, NSD_POSITION_LOCKED,
     NSD_MSG_MODE,
-    NSD_ISLAND_WIDTH, NSD_ISLAND_POSITION, NSD_MSG_NOTIFY,
-    NSD_TARGET_PLAYER, NSD_AUTO_HIDE_FS,
+    NSD_ISLAND_POSITION, NSD_MSG_NOTIFY,
+    NSD_TARGET_PLAYER,
     NSD_POMODORO_VISIBLE,
     NSD_COUNTDOWN_VISIBLE,
     NSD_HW_ENABLED,
@@ -471,15 +141,33 @@ import {
     NSD_APP_SCALE,
     NSD_LYRIC_DELAY,
 } from '../constants/storageKeys';
-import { getSettingRaw, setSettingRaw, removeSetting } from '../utils/settings';
+import { getSettingRaw, setSettingRaw } from '../utils/settings';
 import { useMusicSync } from '../composables/useMusicSync';
 import { useLyrics } from '../composables/useLyrics';
 import { useIslandAnimation } from '../composables/useIslandAnimation';
 import { useRealtimeActivity } from '../composables/useRealtimeActivity';
 import { useNotifications, type ToastItem, type AccessStatus } from '../composables/useNotifications';
+import IslandSpeed from '../components/island/IslandSpeed.vue';
+import IslandPomodoro from '../components/island/IslandPomodoro.vue';
+import IslandCountdown from '../components/island/IslandCountdown.vue';
+import IslandHealthAlert from '../components/island/IslandHealthAlert.vue';
+import IslandMsg from '../components/island/IslandMsg.vue';
+import IslandSysToast from '../components/island/IslandSysToast.vue';
+import IslandHardwareRing from '../components/island/IslandHardwareRing.vue';
+import IslandRtChip from '../components/island/IslandRtChip.vue';
+import IslandMusic from '../components/island/IslandMusic.vue';
+import IslandCdControls from '../components/island/IslandCdControls.vue';
+import IslandCloseButton from '../components/island/IslandCloseButton.vue';
+import IslandHwDetail from '../components/island/IslandHwDetail.vue';
+import IslandPrintQueue from '../components/island/IslandPrintQueue.vue';
+import IslandSpectrum from '../components/island/IslandSpectrum.vue';
+import IslandStatusDot from '../components/island/IslandStatusDot.vue';
+import type { PrintJob, PrintQueueState } from '../components/island/types';
+import { useIslandPointer } from '../composables/useIslandPointer';
+import { useIslandAutoHide } from '../composables/useIslandAutoHide';
+import { useIslandContextMenu } from '../composables/useIslandContextMenu';
 
 const isIslandVisible = ref(false);
-const isMenuOpen = ref(false);
 // 记录是否开启了置于任务栏 / 锁定了位置（原声明在位置持久化区块，前移供尺寸动画 composable 接入）
 const isPinnedToTaskbar = ref(getSettingRaw(NSD_PIN_TASKBAR) === 'true');
 const isPositionLocked = ref(getSettingRaw(NSD_POSITION_LOCKED) === 'true');
@@ -491,33 +179,11 @@ const {
     isCustomDragging, startCustomHorizontalDrag, handleCustomDragEnd, cleanupIslandAnimation,
 } = useIslandAnimation({ isPinnedToTaskbar });
 
-// 打印队列相关变量（由后端 print-queue-tick 事件驱动）
-type PrintJob = {
-    jobId: number;
-    document: string;
-    printer: string;
-    pagesPrinted: number;
-    totalPages: number;
-    position: number;
-    status: string;
-    submitted: number;
-};
-
-type PrintQueueState = {
-    hasJobs: boolean;
-    defaultPrinter: string;
-    jobs: PrintJob[];
-};
-
+// 打印队列相关变量（由后端 print-queue-tick 事件驱动；类型定义在 components/island/types.ts）
 const printJobs = ref<PrintJob[]>([]);
 const defaultPrinter = ref('');
 const isPrintQueueActive = computed(() => printJobs.value.length > 0);
 const isPrintQueueExpanded = ref(false);
-
-// 全屏自动隐藏相关
-const isAutoHideFullscreen = ref(getSettingRaw(NSD_AUTO_HIDE_FS) === 'true');
-let wasVisibleBeforeFullscreen = false;
-let isHidingForFullscreen = false;
 
 // 硬件监控附属图标可见性已合并到 showRtChip（多活动并行轮换），原 isHwAccessoryVisible 不再单独使用
 
@@ -770,17 +436,6 @@ const handleCdClose = async () => {
     }
 };
 
-// 自动隐藏相关变量
-const isMouseOver = ref(false);
-let autoHideTimer: number | null = null;
-const autoHideDelay = ref(Number(getSettingRaw(NSD_AUTO_HIDE_DELAY) || '2000')); // 默认2秒
-const isAutoHideEnabled = ref(getSettingRaw(NSD_AUTO_HIDE_ENABLED) === 'true'); // 自动隐藏功能开关
-
-// 自动折叠相关变量（灵动岛展开后，鼠标离开自动折叠回小岛状态）
-let autoCollapseTimer: number | null = null;
-const autoCollapseDelay = ref(Number(getSettingRaw(NSD_AUTO_COLLAPSE_DELAY) || '2000')); // 默认2秒
-const isAutoCollapseEnabled = ref(getSettingRaw(NSD_AUTO_COLLAPSE_ENABLED) === 'true'); // 自动折叠功能开关
-
 // 记录当前是否显示上行网速（用于轮换）
 const isShowingUpload = ref(false);
 let speedCycleTimer: number | null = null;
@@ -805,6 +460,18 @@ const {
     getBaseSize: () => getBaseSize(),
     showSpectrumIndicator: () => showSpectrumIndicator.value,
     showRtChip: () => showRtChip.value,
+});
+
+// ===== 指针交互 composable 接入（宽度调整手柄 + 边缘光标 + 拖拽判定路由，逻辑从本组件拆出） =====
+// mouseDownX / mouseDownY 供 expandMusic 做点击位移判定；定时器/文档级监听清理随 composable
+const {
+    mouseNearEdge, mouseDownX, mouseDownY,
+    handleMouseDown, handleMouseMove, handleMouseUp, handleResizeStart,
+} = useIslandPointer({
+    isPositionLocked, isMusicExpanded, isMusicExpanding, isMsgActive, displaySysToast,
+    isSizeAnimating, isPinnedToTaskbar, currentWidth, currentHeight,
+    minWidth: MIN_WIDTH, maxWidth: MAX_WIDTH,
+    startCustomHorizontalDrag, handleCustomDragEnd, saveIslandWidth,
 });
 
 // ===== 系统动态感知（sysmsg）=====
@@ -950,11 +617,6 @@ const collapseHardware = () => {
     scheduleAutoHide();
 };
 
-const printJobProgress = (job: PrintJob) => {
-    if (job.totalPages <= 0) return 0;
-    return Math.min(100, Math.round((job.pagesPrinted / job.totalPages) * 100));
-};
-
 const expandPrintQueue = () => {
     if (!isPrintQueueActive.value || isPrintQueueExpanded.value) return;
     suppressContentWatch = true;
@@ -1006,6 +668,23 @@ const collapseAllExpandedActivities = () => {
 const isMusicCtlEnabled = ref(getSettingRaw(NSD_MUSIC_CTRL) === 'true');
 // 流光边框默认状态完全镜像音乐控制器（只要音乐控制器开着它就开，关了就一起关闭）。
 const isGlowBorderEnabled = ref(getSettingRaw(NSD_GLOW_BORDER) === 'true');
+
+// ===== 自动隐藏 / 自动折叠 / 全屏隐藏 composable 接入（逻辑从本组件拆出） =====
+// isPlaying（useMusicSync 输出）与 collapseMusic（音乐域）定义在后，经访问器晚绑定；
+// isPendingCollapse 属于音乐展开域，由本组件持有 ref、与 composable 共享
+const isPendingCollapse = ref(false);
+const {
+    isMouseOver, isAutoHideEnabled, autoHideDelay,
+    isAutoCollapseEnabled, autoCollapseDelay,
+    isAutoHideFullscreen, isAutoHiding, isHidingForFullscreen,
+    scheduleAutoHide, handleMouseLeave, handleMouseEnter,
+} = useIslandAutoHide({
+    isIslandVisible, isMusicCtlEnabled, isMusicExpanded, isMusicExpanding,
+    isPlaying: () => isPlaying.value,
+    mouseNearEdge,
+    isPendingCollapse,
+    collapseMusic: () => collapseMusic(),
+});
 
 // 律动频谱
 const spectrumData = shallowRef([0.35, 0.35, 0.35, 0.35, 0.35]);
@@ -1183,19 +862,6 @@ const appLogoFallback = computed(() => {
 // 圆形封面实际展示地址：网络/SMTC 封面优先，拿不到时回退应用 logo
 const displayCoverUrl = computed(() => coverUrl.value || appLogoFallback.value);
 
-// 宽度调整相关状态
-const isResizing = ref(false);
-const resizeSide = ref<'left' | 'right' | null>(null);
-let resizeStartX = 0;
-let resizeStartWidth = 0;
-
-// 鼠标是否在边缘区域（用于光标样式）
-const mouseNearEdge = ref<'left' | 'right' | null>(null);
-
-// 计算是否可以调整宽度
-const canResize = computed(() => {
-    return !isPositionLocked.value && !isMusicExpanded.value && !isMusicExpanding.value && !isMsgActive.value && !displaySysToast.value;
-});
 // 记录消息模式开关状态
 const isMsgModeEnabled = ref(getSettingRaw(NSD_MSG_MODE) === 'true');
 // ===== 实时活动 composable 接入（番茄钟/倒计时/健康提醒/硬件监控/主岛轮换，逻辑从本组件拆出） =====
@@ -1281,34 +947,6 @@ watch([showSpectrumIndicator, isIslandVisible], () => {
         spectrumData.value = [0.35, 0.35, 0.35, 0.35, 0.35];
     }
 }, { immediate: true });
-
-// 统一的自动隐藏定时器管理函数
-// 自动隐藏仅在以下条件全部满足时触发：
-//   1. 自动隐藏开关已开启 (isAutoHideEnabled)
-//   2. 音乐控制器模式已打开 (isMusicCtlEnabled)
-//   3. 没有音乐在播放 (!isPlaying)
-// 其余任何情况（如临时 toast、通知弹出、鼠标离开但非音乐模式等）均不隐藏
-const scheduleAutoHide = (delay?: number) => {
-    // 前置守卫：不满足条件时直接返回，不设定定时器
-    if (!isAutoHideEnabled.value || !isMusicCtlEnabled.value || isPlaying.value) {
-        return;
-    }
-    if (autoHideTimer) {
-        clearTimeout(autoHideTimer);
-        autoHideTimer = null;
-    }
-    autoHideTimer = window.setTimeout(() => {
-        // 定时器到期时再次全量检查条件（防止定时期间状态变化导致误隐藏）
-        if (!isMouseOver.value
-            && isIslandVisible.value
-            && isAutoHideEnabled.value
-            && isMusicCtlEnabled.value
-            && !isPlaying.value) {
-            isAutoHiding = true;
-            isIslandVisible.value = false;
-        }
-    }, delay ?? autoHideDelay.value);
-};
 
 // 计算并吸附到左下角的方法
 const snapToBottomLeft = async () => {
@@ -1468,7 +1106,6 @@ let progressTimer: number | null = null;
 let progressClockTimer: number | null = null;
 let timelineMissCount = 0;
 let isTimelineRequestInFlight = false;
-const progressBarRef = ref<HTMLElement | null>(null);
 
 const progressEnd = computed(() => musicTimeline.value.end);
 // 拖动时显示临时位置；播放时在两次 SMTC 同步之间按本地时钟平滑推进。
@@ -1480,15 +1117,6 @@ const progressPosition = computed(() => {
 const progressPercent = computed(() => progressEnd.value > 0
     ? Math.min(100, Math.max(0, (progressPosition.value / progressEnd.value) * 100))
     : 0);
-
-// 毫秒 → m:ss
-const formatTime = (ms: number) => {
-    if (ms < 0 || isNaN(ms)) ms = 0;
-    const totalSec = Math.floor(ms / 1000);
-    const m = Math.floor(totalSec / 60);
-    const s = totalSec % 60;
-    return `${m}:${s.toString().padStart(2, '0')}`;
-};
 
 const resetTimeline = (status: TimelineStatus = 'idle') => {
     isDraggingProgress.value = false;
@@ -1557,10 +1185,11 @@ const stopProgressTimer = () => {
     }
 };
 
-// 拖动定位：将指针横坐标换算为播放位置
+// 拖动定位：将指针横坐标换算为播放位置（进度条 DOM 在 IslandMusic 内，经 expose 读取）
 const updateDragPosition = (e: PointerEvent) => {
-    if (!progressBarRef.value || progressEnd.value === 0) return;
-    const rect = progressBarRef.value.getBoundingClientRect();
+    const bar = islandMusicRef.value?.progressBarRef ?? null;
+    if (!bar || progressEnd.value === 0) return;
+    const rect = bar.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     dragPosition.value = Math.round(ratio * progressEnd.value);
 };
@@ -1689,96 +1318,10 @@ const coverglassStyle = computed<CSSProperties>(() => {
     };
 });
 
-// 音乐滚动相关变量
-const maskBoxRef = ref<HTMLElement | null>(null);
-const textInnerRef = ref<HTMLElement | null>(null);
-const scrollDist = ref(0);
-const scrollDuration = ref('0s');
-
-// 展开态双行滚动：标题位（歌词）与副标题位（歌手 - 歌名）
-const expandedLyricBoxRef = ref<HTMLElement | null>(null);
-const expandedLyricRef = ref<HTMLElement | null>(null);
-const expandedLyricScrollDist = ref(0);
-const expandedLyricScrollDuration = ref('0s');
-const expandedArtistBoxRef = ref<HTMLElement | null>(null);
-const expandedArtistInnerRef = ref<HTMLElement | null>(null);
-const expandedArtistScrollDist = ref(0);
-const expandedArtistScrollDuration = ref('0s');
-
-// 共用测量：文本超出容器时给出滚动距离与时长（按 30px/s 阅读速度，首尾停留融入总时长）
-const measureOverflowScroll = (textEl: HTMLElement, boxEl: HTMLElement) => {
-    // 使用 getBoundingClientRect() 获取无视父级限制的真实渲染宽度
-    const textWidth = textEl.getBoundingClientRect().width;
-    const containerWidth = boxEl.clientWidth;
-
-    if (textWidth <= containerWidth) {
-        return { dist: 0, duration: '0s' };
-    }
-
-    // Math.ceil() 强制取整，绝对不允许出现小数像素
-    const dist = Math.ceil(textWidth - containerWidth + 20);
-
-    // 按照 30px/s 的速度阅读，计算纯移动时间；按 60% 占比融入首尾停留，确保匀速
-    const totalDuration = (dist / 30) / 0.6;
-
-    return { dist, duration: `${Math.max(totalDuration, 4.5)}s` };
-};
-
-// 折叠态单行歌词滚动计算
-const calculateScroll = () => {
-    // 展开状态下不执行滚动
-    if (isMusicExpanded.value) {
-        scrollDist.value = 0;
-        return;
-    }
-    if (!textInnerRef.value || !maskBoxRef.value) return;
-
-    const result = measureOverflowScroll(textInnerRef.value, maskBoxRef.value);
-    scrollDist.value = result.dist;
-    scrollDuration.value = result.duration;
-};
-
-// 展开态双行滚动计算：歌词位 + "歌手 - 歌名"位
-const calculateExpandedScrolls = () => {
-    if (expandedLyricRef.value && expandedLyricBoxRef.value) {
-        const lyric = measureOverflowScroll(expandedLyricRef.value, expandedLyricBoxRef.value);
-        expandedLyricScrollDist.value = lyric.dist;
-        expandedLyricScrollDuration.value = lyric.duration;
-    }
-    if (expandedArtistInnerRef.value && expandedArtistBoxRef.value) {
-        const artist = measureOverflowScroll(expandedArtistInnerRef.value, expandedArtistBoxRef.value);
-        expandedArtistScrollDist.value = artist.dist;
-        expandedArtistScrollDuration.value = artist.duration;
-    }
-};
-
-// 展开态文本/状态变化时重算双行滚动：先立即算一次让文字马上开始滚动，
-// 等 500ms 弹簧展开动画彻底结束后再量一次，用稳定后的宽度修正滚动距离
-watch([expandedLyricText, expandedSubText, isMusicExpanded, isVideoLikeSource], async () => {
-    await nextTick();
-    if (isMusicExpanded.value) {
-        calculateExpandedScrolls();
-        setTimeout(() => {
-            if (isMusicExpanded.value) calculateExpandedScrolls();
-        }, 500);
-    } else {
-        expandedLyricScrollDist.value = 0;
-        expandedArtistScrollDist.value = 0;
-    }
-});
-
-// 核心修复 2：监听数组必须带上 displayMusic，并在 nextTick 后加上微小延迟，防止 v-else-if 导致宽度拿到 0
-watch([currentTrackInfo, currentLyricText, collapsedTrackText, displayMusic, isMusicExpanded], async () => {
-    await nextTick();
-    setTimeout(() => {
-        if (displayMusic.value) {
-            calculateScroll();
-        } else {
-            // 切到其他界面（比如网速）时，归零重置
-            scrollDist.value = 0;
-        }
-    }, 100);
-});
+// ===== 音乐岛子组件（IslandMusic）实例引用 =====
+// 文本溢出滚动测量（折叠/展开态）已随 IslandMusic 内聚；进度条 DOM 通过其 expose 暴露，
+// 拖动定位逻辑（updateDragPosition / onProgressPointer*）经 islandMusicRef 读取几何信息
+const islandMusicRef = ref<InstanceType<typeof IslandMusic> | null>(null);
 
 let musicFallbackTimer: number | undefined;
 
@@ -1881,197 +1424,17 @@ const onLeave = (el: Element, done: () => void) => {
             // 等待 DOM 动画播放完成后再隐藏窗口
             getCurrentWindow().hide().catch(console.error);
             // 只有用户主动关闭时才同步状态到控制台，自动隐藏/全屏隐藏不改变开关
-            if (!isAutoHiding && !isHidingForFullscreen) {
+            if (!isAutoHiding.value && !isHidingForFullscreen.value) {
                 emit('island-status-sync', { visible: false });
             }
-            isAutoHiding = false;
-            isHidingForFullscreen = false;
+            isAutoHiding.value = false;
+            isHidingForFullscreen.value = false;
         }
     };
     requestAnimationFrame(animate);
 };
 
-let mouseDownX = 0;
-let mouseDownY = 0;
-let isMouseDown = false;
-let isAutoHiding = false; // 标记当前隐藏是否由自动隐藏触发（区别于用户主动关闭）
-
-const handleMouseDown = (event: MouseEvent) => {
-    if ((event.target as HTMLElement).closest('.ctl-btn')) return;
-    if ((event.target as HTMLElement).closest('.resize-handle')) return;
-
-    // 检测是否在边缘区域，如果是则开始宽度调整
-    if (!isPositionLocked.value && !isMusicExpanded.value && !isMusicExpanding.value && !isMsgActive.value && !displaySysToast.value) {
-        if (isNearEdge(event, 'left')) {
-            handleResizeStart(event, 'left');
-            return;
-        }
-        if (isNearEdge(event, 'right')) {
-            handleResizeStart(event, 'right');
-            return;
-        }
-    }
-
-    // 无论有没有锁定，都必须老老实实记录坐标，给后面的"点击展开"提供判断依据。
-    mouseDownX = event.clientX;
-    mouseDownY = event.clientY;
-    isMouseDown = true;
-};
-
-// ===== 宽度调整相关函数 =====
-const handleResizeStart = (event: MouseEvent, side: 'left' | 'right') => {
-    // 位置锁定时禁止调整
-    if (isPositionLocked.value) return;
-
-    // 音乐展开、消息通知等状态下禁止调整
-    if (isMusicExpanded.value || isMusicExpanding.value || isMsgActive.value || displaySysToast.value) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    isResizing.value = true;
-    resizeSide.value = side;
-    resizeStartX = event.screenX;
-    resizeStartWidth = currentWidth.value;
-
-    document.addEventListener('mousemove', handleResizeMove);
-    document.addEventListener('mouseup', handleResizeEnd);
-};
-
-const handleResizeMove = async (event: MouseEvent) => {
-    if (!isResizing.value || !resizeSide.value) return;
-
-    const scaleFactor = window.devicePixelRatio;
-    const deltaXLogical = event.screenX - resizeStartX;
-
-    let newWidth: number;
-    if (resizeSide.value === 'right') {
-        newWidth = resizeStartWidth + deltaXLogical;
-    } else {
-        newWidth = resizeStartWidth - deltaXLogical;
-    }
-
-    // 边界约束
-    newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, newWidth));
-
-    // 更新灵动岛宽度
-    try {
-        const appWindow = getCurrentWindow();
-        await appWindow.setSize(new PhysicalSize(Math.ceil(newWidth * scaleFactor), Math.ceil(currentHeight.value * scaleFactor)));
-
-        // 如果是左侧调整，需要同时移动窗口位置以保持右侧固定
-        if (resizeSide.value === 'left') {
-            const pos = await appWindow.outerPosition();
-            const widthDelta = (newWidth - currentWidth.value) * scaleFactor;
-            await appWindow.setPosition(new PhysicalPosition(Math.round(pos.x + widthDelta), Math.round(pos.y)));
-        }
-
-        // 更新当前宽度
-        currentWidth.value = newWidth;
-    } catch (error) {
-        console.error('调整宽度失败:', error);
-    }
-};
-
-const handleResizeEnd = () => {
-    isResizing.value = false;
-    resizeSide.value = null;
-    document.removeEventListener('mousemove', handleResizeMove);
-    document.removeEventListener('mouseup', handleResizeEnd);
-};
-
-// 检测鼠标是否在灵动岛边缘（用于显示调整光标）
-const isNearEdge = (event: MouseEvent, side: 'left' | 'right'): boolean => {
-    if (isPositionLocked.value) return false;
-
-    const target = event.currentTarget as HTMLElement;
-    if (!target) return false;
-
-    const rect = target.getBoundingClientRect();
-    const EDGE_THRESHOLD = 8; // 边缘检测阈值（像素）
-
-    if (side === 'left') {
-        return event.clientX - rect.left <= EDGE_THRESHOLD;
-    } else {
-        return rect.right - event.clientX <= EDGE_THRESHOLD;
-    }
-};
-
-const handleMouseMove = async (event: MouseEvent) => {
-    // 宽度调整模式
-    if (isResizing.value) {
-        await handleResizeMove(event);
-        return;
-    }
-
-    // 检测鼠标是否在边缘区域（用于光标样式）
-    if (canResize.value) {
-        const target = event.currentTarget as HTMLElement;
-        if (target) {
-            const rect = target.getBoundingClientRect();
-            const EDGE_THRESHOLD = 8;
-            const leftDist = event.clientX - rect.left;
-            const rightDist = rect.right - event.clientX;
-
-            if (leftDist <= EDGE_THRESHOLD && leftDist >= 0) {
-                mouseNearEdge.value = 'left';
-            } else if (rightDist <= EDGE_THRESHOLD && rightDist >= 0) {
-                mouseNearEdge.value = 'right';
-            } else {
-                mouseNearEdge.value = null;
-            }
-        }
-    } else {
-        mouseNearEdge.value = null;
-    }
-
-    if (!isMouseDown) return;
-
-    // 1. 全局动画锁：任何变形动画期间，绝对禁止拖拽
-    if (isSizeAnimating.value) return;
-
-    // 2. 状态锁：音乐展开、消息通知、系统提示期间，统统禁止拖拽。
-    if (isMusicExpanded.value || isMusicExpanding.value || isMsgActive.value || displaySysToast.value) {
-        // 发现企图拖拽，立刻打断施法
-        isMouseDown = false;
-        return;
-    }
-
-    // 3. 位置已锁定时，禁止一切拖拽
-    if (isPositionLocked.value) return;
-
-    // 4. 任务栏模式 + 已解锁：仅允许横向拖拽（自定义实现，约束 Y 轴不变）
-    if (isPinnedToTaskbar.value) {
-        if (Math.abs(event.clientX - mouseDownX) > 5) {
-            isMouseDown = false;
-            await startCustomHorizontalDrag(event);
-        }
-        return;
-    }
-
-    // 5. 岛模式 + 已解锁：自由拖拽（原生 startDragging，X/Y 均可移动）
-    if (Math.abs(event.clientX - mouseDownX) > 5 || Math.abs(event.clientY - mouseDownY) > 5) {
-        isMouseDown = false;
-        try {
-            await getCurrentWindow().startDragging();
-        } catch (error) {
-            console.error('拖拽失败:', error);
-        }
-    }
-};
-
-const handleMouseUp = () => {
-    // 宽度调整结束时保存宽度
-    if (isResizing.value) {
-        handleResizeEnd();
-        saveIslandWidth();
-        return;
-    }
-    isMouseDown = false;
-    handleCustomDragEnd();
-};
-
-// ===== 位置持久化（锁定时保存，启动时恢复）=====
+// 位置持久化（锁定时保存，启动时恢复）
 const saveIslandPosition = async () => {
     try {
         const appWindow = getCurrentWindow();
@@ -2096,133 +1459,13 @@ const restoreIslandPosition = async (): Promise<boolean> => {
     return false;
 };
 
-const handleRightClick = async (event: MouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation(); // 阻止冒泡
-
-    // 如果音乐灵动岛正在展开或已完全展开，强制禁止呼出右键菜单
-    if (isMusicExpanded.value || isMusicExpanding.value || isMsgActive.value || displaySysToast.value) {
-        return;
-    }
-
-    // 打开设置
-    const openSettingsItem = await MenuItem.new({
-        text: '打开设置',
-        id: 'open_settings',
-        action: async () => {
-            await emit('open-settings-panel');
-            showToast('已打开设置');
-        }
-    });
-
-    // 切换流光边框
-    const toggleGlowBorderItem = await MenuItem.new({
-        text: isGlowBorderEnabled.value ? '关闭流光边框' : '开启流光边框',
-        id: 'toggle_glow_border',
-        enabled: true,
-        action: () => {
-            isGlowBorderEnabled.value = !isGlowBorderEnabled.value;
-            setSettingRaw(NSD_GLOW_BORDER, String(isGlowBorderEnabled.value));
-            showToast(isGlowBorderEnabled.value ? '已开启流光边框' : '已关闭流光边框');
-        }
-    });
-
-    // 重置位置
-    const resetPositionItem = await MenuItem.new({
-        text: isPinnedToTaskbar.value ? '重置位置 (已锁定)' : '重置位置',
-        id: 'reset_position',
-        enabled: !isPinnedToTaskbar.value,
-        action: async () => {
-            try {
-                await adjustWindowPosition();
-                // 如果已锁定，重置后重新保存新位置
-                if (isPositionLocked.value) {
-                    await saveIslandPosition();
-                }
-                showToast('已重置位置');
-            } catch (error) {
-                console.error(error);
-            }
-        }
-    });
-
-    // 重置宽度
-    const resetWidthItem = await MenuItem.new({
-        text: '重置宽度',
-        id: 'reset_width',
-        enabled: !isPositionLocked.value,
-        action: async () => {
-            try {
-                // 删除保存的自定义宽度
-                removeSetting(NSD_ISLAND_WIDTH);
-                // 恢复到默认宽度
-                const { w, h } = getBaseSize();
-                currentWidth.value = w;
-                animateIslandSize(w, h);
-                showToast('已重置宽度');
-            } catch (error) {
-                console.error(error);
-            }
-        }
-    });
-
-    // 锁定位置菜单项
-    const toggleLockItem = await MenuItem.new({
-        text: isPositionLocked.value ? '解锁 (当前已锁定)' : '锁定',
-        id: 'toggle_lock',
-        enabled: !isPinnedToTaskbar.value,
-        action: async () => {
-            isPositionLocked.value = !isPositionLocked.value;
-            setSettingRaw(NSD_POSITION_LOCKED, String(isPositionLocked.value));
-            // 锁定时保存当前位置和宽度，以便下次启动恢复
-            if (isPositionLocked.value) {
-                await saveIslandPosition();
-                saveIslandWidth();
-            }
-            // 同步状态给设置面板
-            await emit('position-lock-sync', { locked: isPositionLocked.value });
-            // 根据状态触发 lock / unlock 专属通知
-            showToast(
-                isPositionLocked.value ? '锁定位置成功' : '位置已解锁',
-                isPositionLocked.value ? 'lock' : 'unlock'
-            );
-        }
-    });
-
-    // 关闭灵动岛
-    const closeItem = await MenuItem.new({
-        text: '关闭',
-        id: 'close',
-        action: () => {
-            isIslandVisible.value = false;
-        }
-    });
-
-    // 使用客户端坐标转逻辑坐标（避免无边框裁剪带来的漂移）
-    const position = new LogicalPosition(
-        event.clientX,
-        event.clientY
-    );
-
-    // 3. 创建菜单并按顺序追加进去
-    const menu = await Menu.new();
-    await menu.append(openSettingsItem);
-    await menu.append(toggleGlowBorderItem);
-    await menu.append(resetPositionItem);
-    await menu.append(resetWidthItem);
-    await menu.append(toggleLockItem);
-    await menu.append(closeItem);
-
-    // 4. 弹出菜单
-    try {
-        isMenuOpen.value = true; // 👈 弹出前，告诉系统菜单打开了
-        await menu.popup(position);
-    } catch (error) {
-        console.error('菜单弹出失败:', error);
-    } finally {
-        isMenuOpen.value = false; // 👈 无论用户是点击了菜单，还是点空白处取消了，都会瞬间恢复置顶状态
-    }
-};
+// ===== 右键菜单 composable 接入（打开设置/流光边框/重置位置/重置宽度/锁定/关闭，逻辑从本组件拆出） =====
+const { isMenuOpen, handleRightClick } = useIslandContextMenu({
+    isIslandVisible, isMusicExpanded, isMusicExpanding, isMsgActive, displaySysToast,
+    isGlowBorderEnabled, isPinnedToTaskbar, isPositionLocked, currentWidth,
+    showToast, adjustWindowPosition, saveIslandPosition, saveIslandWidth,
+    getBaseSize, animateIslandSize,
+});
 
 const onInnerEnter = (el: Element, done: () => void) => {
     const htmlEl = el as HTMLElement;
@@ -2270,7 +1513,6 @@ const onInnerLeave = (el: Element, done: () => void) => {
 
 // 动画锁与等待队列标志
 let isAnimationLocked = false;
-let isPendingCollapse = false;
 
 // 音乐控制器自动收缩方法
 const collapseMusic = () => {
@@ -2278,13 +1520,13 @@ const collapseMusic = () => {
 
     // 【核心逻辑】：如果正在猛烈展开中，绝对不打断！把收缩请求挂起，等它展开完自动执行。
     if (isAnimationLocked) {
-        isPendingCollapse = true;
+        isPendingCollapse.value = true;
         return;
     }
 
     isMusicExpanded.value = false;
     isMusicExpanding.value = false;
-    isPendingCollapse = false; // 清除队列
+    isPendingCollapse.value = false; // 清除队列
 
     if (musicExpandAnimTimer) {
         clearTimeout(musicExpandAnimTimer);
@@ -2310,7 +1552,7 @@ const resetMusicExpandedState = () => {
     }
     isMusicExpanded.value = false;
     isMusicExpanding.value = false;
-    isPendingCollapse = false;
+    isPendingCollapse.value = false;
     // 若正处于 expandMusic 的展开周期，其解锁回调可能随上面的定时器一起被清除，
     // 这里必须手动解锁，否则后续 collapseMusic 只会挂起、永远不再执行
     isAnimationLocked = false;
@@ -2325,13 +1567,13 @@ const handleForceTopmost = () => {
 
 // 音乐控制器点击展开方法
 const expandMusic = (e: MouseEvent) => {
-    if (Math.abs(e.clientX - mouseDownX) > 5 || Math.abs(e.clientY - mouseDownY) > 5) return;
+    if (Math.abs(e.clientX - mouseDownX.value) > 5 || Math.abs(e.clientY - mouseDownY.value) > 5) return;
     if ((e.target as HTMLElement).closest('.ctl-btn')) return;
 
     if (isMusicExpanded.value || isMusicExpanding.value) return;
 
     isMusicExpanding.value = true;
-    isPendingCollapse = false;  // 重置待办任务
+    isPendingCollapse.value = false;  // 重置待办任务
     isAnimationLocked = true;   // 上锁！宣布进入神圣不可侵犯的展开周期
 
     // 1. 弹性按压动画 (先微微变小)
@@ -2349,56 +1591,14 @@ const expandMusic = (e: MouseEvent) => {
 
             // 检查：如果在展开的这 520ms 里，用户鼠标已经移走了，那就立刻补发收缩命令。
             if (isPendingCollapse) {
-                isPendingCollapse = false;
+                isPendingCollapse.value = false;
                 collapseMusic();
             }
         }, 400);
     }, 120);
 };
 
-// 鼠标离开灵动岛时：自动折叠或自动隐藏
-const handleMouseLeave = () => {
-    // 清除鼠标边缘检测状态
-    mouseNearEdge.value = null;
-    isMouseOver.value = false;
-
-    // 1. 自动折叠逻辑：当灵动岛展开时，鼠标离开后延迟折叠回小岛状态
-    if (isAutoCollapseEnabled.value && (isMusicExpanded.value || isMusicExpanding.value)) {
-        // 启动自动折叠定时器
-        if (autoCollapseTimer) {
-            clearTimeout(autoCollapseTimer);
-            autoCollapseTimer = null;
-        }
-        autoCollapseTimer = window.setTimeout(() => {
-            if (!isMouseOver.value && (isMusicExpanded.value || isMusicExpanding.value)) {
-                collapseMusic();
-            }
-        }, autoCollapseDelay.value);
-    }
-
-    // 2. 自动隐藏逻辑：统一交给 scheduleAutoHide 内部守卫判断
-    //    仅在「自动隐藏开关开启 + 音乐控制器模式打开 + 无音乐播放」时才隐藏
-    scheduleAutoHide();
-};
-
-// 鼠标重新移入灵动岛时：立刻打断收缩企图
-const handleMouseEnter = () => {
-    // 如果之前移出留下了收缩案底，但动画还没播完鼠标又回来了，直接取消这个案底
-    isPendingCollapse = false;
-    isMouseOver.value = true;
-
-    // 取消自动隐藏定时器
-    if (autoHideTimer) {
-        clearTimeout(autoHideTimer);
-        autoHideTimer = null;
-    }
-
-    // 取消自动折叠定时器
-    if (autoCollapseTimer) {
-        clearTimeout(autoCollapseTimer);
-        autoCollapseTimer = null;
-    }
-};
+// 鼠标离开/进入的自动折叠与自动隐藏处理已随 useIslandAutoHide 拆出
 
 watch(displayMusic, (newVal: boolean) => {
     if (!newVal) {
@@ -2618,27 +1818,7 @@ onMounted(async () => {
         isAutoHideFullscreen.value = event.payload.enabled;
     });
 
-    // 监听 Rust 发来的全屏状态变化
-    await listen<boolean>('fullscreen-changed', async (event) => {
-        const isFullscreen = event.payload;
-        if (!isAutoHideFullscreen.value) return;
-        if (isFullscreen) {
-            if (isIslandVisible.value) {
-                wasVisibleBeforeFullscreen = true;
-                isHidingForFullscreen = true;
-                isIslandVisible.value = false;
-            }
-        } else {
-            if (wasVisibleBeforeFullscreen) {
-                await getCurrentWindow().show();
-                setTimeout(() => {
-                    isIslandVisible.value = true;
-                    emit('island-status-sync', { visible: true });
-                }, 40);
-                wasVisibleBeforeFullscreen = false;
-            }
-        }
-    });
+    // fullscreen-changed 事件监听已随 useIslandAutoHide 拆出（自带挂载与清理）
 
     // 打印队列：订阅后先读取快照，避免后端启动 emit 早于前端窗口订阅。
     unlistenFns.push(await listen<PrintQueueState>('print-queue-tick', (event) => {
@@ -3005,10 +2185,7 @@ onMounted(async () => {
         invoke('set_notification_listening', { enabled: true }).catch(() => {});
     }
 
-    // 初始化时触发一次计算
-    setTimeout(() => {
-        calculateScroll();
-    }, 700);
+    // 初始化时的折叠态滚动测量已随 IslandMusic 子组件的 onMounted 处理
 
     // 恢复番茄钟/倒计时运行状态：查询后端当前状态（逻辑在 useRealtimeActivity 内）
     await restorePomodoroState();
@@ -3181,10 +2358,8 @@ onUnmounted(() => {
     background: rgba(0, 0, 0, 0.45);
 }
 
-/* 确保岛内的核心内容层压在背景图上方 */
-.inner-wrapper,
-.audio-spectrum,
-.status-dot {
+/* 确保岛内的核心内容层压在背景图上方（audio-spectrum / status-dot 已随子组件迁出） */
+.inner-wrapper {
     position: relative;
     z-index: 2;
 }
@@ -3198,1080 +2373,9 @@ onUnmounted(() => {
     cursor: grabbing;
 }
 
-/* 修改网速盒子布局，强制靠左，并加入左侧内边距 */
-.speed-box {
-    position: absolute;
-    left: 0;
-    top: 0;
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    width: 100%;
-    height: 100%;
-}
+/* 状态点样式已随 IslandStatusDot.vue 迁出 */
 
-.speed-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    /* 稍微拉开箭头和数字的距离 */
-    transform: translateY(-1px);
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
-}
-
-.label {
-    font-size: 10px;
-    /* 稍微调大箭头 */
-    color: currentColor;
-    opacity: 0.5;
-    font-weight: 800;
-    padding: 2px 5px;
-    border-radius: 4px;
-    transition: all 0.3s ease;
-    background: rgba(150, 150, 150, 0.15);
-    /* 默认给一个淡淡的底色，增加质感 */
-}
-
-/* 高流量时的 label 样式 */
-.label.high-traffic {
-    color: currentColor;
-    opacity: 1;
-    background: rgba(255, 255, 255, 0.25);
-}
-
-:deep(.island-container[style*="background-color: rgba(255, 255, 255"]) .label.high-traffic {
-    background: rgba(0, 0, 0, 0.15);
-}
-
-.value {
-    font-size: 12px;
-    transform: translateY(-0.5px);
-    font-weight: 600;
-    letter-spacing: 0.2px;
-    font-variant-numeric: tabular-nums;
-    min-width: 65px;
-    text-align: left;
-}
-
-/* 网速轮换的淡入淡出动画 */
-.speed-fade-enter-active,
-.speed-fade-leave-active {
-    transition: opacity 0.3s ease, transform 0.3s ease;
-}
-
-.speed-fade-enter-from {
-    opacity: 0;
-    transform: translateY(4px);
-    /* 微微从下方滑入 */
-}
-
-.speed-fade-leave-to {
-    opacity: 0;
-    transform: translateY(-4px);
-    /* 微微向上滑出 */
-}
-
-.status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    transition: background-color 0.4s ease;
-}
-
-/* 去掉发光阴影，改为纯粹的扁平化圆点，干净利落 */
-.good {
-    background-color: #34C759;
-}
-
-.warning {
-    background-color: #FFCC00;
-}
-
-.error {
-    background-color: #FF3B30;
-}
-
-/* 让两个盒子脱离彼此的影响，在同一个包裹层内完美的“重叠”放置 */
-.music-ctl-box,
-.speed-box {
-    position: absolute;
-    /* 改为绝对定位，实现无缝平移 */
-    left: 0;
-    top: 0;
-    display: flex;
-    align-items: center;
-    width: 100%;
-    height: 100%;
-    justify-content: center;
-    gap: 4px;
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
-}
-
-/* 硬件监控附属图标（拆分模式右侧圆钮，显示小型圆环） */
-.hw-right-circle {
-    cursor: pointer;
-}
-
-.hw-ring-mini-svg {
-    width: 24px;
-    height: 24px;
-}
-
-/* 硬件监控主环形显示 */
-.hardware-ring-box {
-    position: absolute;
-    left: 0;
-    top: 0;
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    width: 100%;
-    height: 100%;
-    padding-left: 6px;
-    gap: 10px;
-}
-
-/* 展开态：圆环左移到最左侧（与音乐专辑封面一致），只保留圆环图标 */
-.hardware-ring-box.is-hw-expanded {
-    padding-left: 5px;
-    width: auto;
-}
-
-.hw-ring-svg {
-    width: 30px;
-    height: 30px;
-    flex-shrink: 0;
-}
-
-.hw-ring-label {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
-}
-
-.hw-metric-name {
-    font-size: 9px;
-    font-weight: 700;
-    opacity: 0.5;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-}
-
-.hw-metric-val {
-    font-size: 13px;
-    font-weight: 800;
-    font-variant-numeric: tabular-nums;
-}
-
-.hw-metric-val.high {
-    color: #ff4757;
-}
-
-.hw-dual-label {
-    gap: 8px;
-}
-
-.hw-dual-item {
-    font-size: 12px;
-    font-weight: 800;
-    font-variant-numeric: tabular-nums;
-}
-
-.hw-dual-item.high {
-    color: #ff4757;
-}
-
-/* 硬件监控展开态：CPU / 内存 详情 */
-.hw-expanded-detail {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    position: relative;
-    width: 100%;
-    height: 100%;
-    padding-left: 50px;
-    padding-right: 34px;
-}
-
-.hw-detail-row {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    line-height: 1.15;
-}
-
-.hw-detail-label {
-    font-size: 9px;
-    font-weight: 700;
-    opacity: 0.6;
-    letter-spacing: 0.5px;
-}
-
-.hw-detail-val {
-    font-size: 15px;
-    font-weight: 800;
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.5px;
-}
-
-.hw-detail-val.high {
-    color: #ff4757;
-}
-
-.hw-close-btn-x {
-    position: absolute;
-    right: 6px;
-    top: 50%;
-    transform: translateY(-50%);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    color: #888;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-.hw-close-btn-x:hover {
-    color: #ff4757;
-    background-color: rgba(255, 71, 87, 0.15);
-}
-
-.hw-close-btn-x svg {
-    width: 14px;
-    height: 14px;
-}
-
-/* 打印队列展开态 */
-.print-queue-detail {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    height: 100%;
-    min-width: 0;
-    padding: 5px 30px 5px 8px;
-    gap: 4px;
-    box-sizing: border-box;
-}
-
-.print-queue-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-width: 0;
-}
-
-.print-queue-title {
-    display: flex;
-    align-items: baseline;
-    min-width: 0;
-    gap: 6px;
-    color: #c4b5fd;
-    font-size: 11px;
-    font-weight: 700;
-}
-
-.print-queue-title small {
-    min-width: 0;
-    overflow: hidden;
-    color: rgba(255, 255, 255, 0.55);
-    font-size: 9px;
-    font-weight: 500;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.print-queue-close {
-    position: absolute;
-    top: 50%;
-    right: 6px;
-    display: flex;
-    width: 22px;
-    height: 22px;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    border: 0;
-    border-radius: 50%;
-    background: transparent;
-    color: #888;
-    cursor: pointer;
-    transform: translateY(-50%);
-}
-
-.print-queue-close:hover {
-    background: rgba(139, 92, 246, 0.2);
-    color: #c4b5fd;
-}
-
-.print-queue-close svg {
-    width: 14px;
-    height: 14px;
-}
-
-.print-job-list {
-    display: flex;
-    max-height: 76px;
-    flex-direction: column;
-    gap: 4px;
-    overflow-y: auto;
-    padding-right: 2px;
-}
-
-.print-job-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 1px 8px;
-    min-width: 0;
-}
-
-.print-job-main,
-.print-job-meta {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: 5px;
-}
-
-.print-job-document {
-    overflow: hidden;
-    font-size: 10px;
-    font-weight: 600;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.print-job-status,
-.print-job-meta {
-    color: rgba(255, 255, 255, 0.58);
-    font-size: 9px;
-}
-
-.print-job-status {
-    color: #c4b5fd;
-    white-space: nowrap;
-}
-
-.print-job-meta {
-    justify-content: flex-end;
-    white-space: nowrap;
-}
-
-.print-job-progress {
-    grid-column: 1 / -1;
-    height: 3px;
-    overflow: hidden;
-    border-radius: 2px;
-    background: rgba(255, 255, 255, 0.12);
-}
-
-.print-job-progress span {
-    display: block;
-    height: 100%;
-    border-radius: inherit;
-    background: #8b5cf6;
-    transition: width 0.25s ease;
-}
-
-.print-job-progress.unknown span {
-    width: 35% !important;
-    background: rgba(139, 92, 246, 0.6);
-}
-
-.music-ctl-box {
-    justify-content: flex-start;
-}
-
-/* 增加统一的内部绝对定位平替包裹层 */
-.inner-wrapper {
-    position: relative;
-    flex-grow: 1;
-    height: 100%;
-    display: flex;
-    align-items: center;
-}
-
-.album-cover {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    box-sizing: unset !important;
-    border: 2px solid rgba(255, 255, 255, 0.5) !important;
-    background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
-    flex-shrink: 0;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 0 10px rgba(255, 255, 255, 0.250);
-    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    z-index: 2;
-    transform: translateX(-8px);
-}
-
-/* 亮色模式下的外环颜色自动变暗 */
-:deep(.island-container[style*="background-color: rgba(255, 255, 255"]) .album-cover {
-    border-color: rgba(0, 0, 0, 0.15);
-}
-
-.album-cover.is-playing {
-    transform: scale(1.08) translateX(-8px);
-}
-
-/* 封面内部绑定背景图的 div */
-.cover-inner {
-    width: 100%;
-    height: 100%;
-    background-position: center;
-    background-repeat: no-repeat;
-    background-size: cover;
-    transition: background-image 0.3s ease;
-    animation: rotate 8s linear infinite;
-    animation-play-state: paused;
-    /* 默认让动画处于暂停状态 */
-}
-
-/* 正在播放时的旋转动画 */
-.is-playing .cover-inner {
-    animation-play-state: running;
-    /* 当有播放状态时，让动画跑起来 */
-}
-
-@keyframes rotate {
-    from {
-        transform: rotate(0deg);
-    }
-
-    to {
-        transform: rotate(360deg);
-    }
-}
-
-.music-controls {
-    position: fixed;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    z-index: 10;
-}
-
-.ctl-btn {
-    background: transparent;
-    border: none;
-    color: inherit;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 6px;
-    border-radius: 50%;
-    transition: background-color 0.2s ease, opacity 0.2s ease, transform 0.1s ease;
-    outline: none;
-    -webkit-app-region: no-drag;
-}
-
-/* 只有在 hover 的时候才出现背景色 */
-.ctl-btn:hover {
-    background-color: rgba(255, 255, 255, 0.15);
-}
-
-:deep(.island-container[style*="background-color: rgba(255, 255, 255"]) .ctl-btn:hover {
-    background-color: rgba(0, 0, 0, 0.1);
-}
-
-.ctl-btn:active {
-    opacity: 0.6;
-    transform: scale(0.92);
-}
-
-.ctl-btn svg {
-    width: 16px;
-    height: 16px;
-    pointer-events: none;
-}
-
-/* 播放键稍微比切歌键大一点点，突出视觉中心 */
-.play-btn svg {
-    width: 20px;
-    height: 20px;
-}
-
-/* 控件显隐淡入淡出动画过渡 */
-.fade-enter-active,
-.fade-leave-active {
-    transition: opacity 0.25s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-    opacity: 0;
-}
-
-/* 歌曲信息遮罩容器：挨着封面靠左，占据右侧剩余空间 */
-.music-info-mask-box {
-    position: absolute;
-    left: 30px;
-    right: 18px;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    overflow: hidden;
-    padding-left: 0;
-    -webkit-app-region: no-drag;
-    transform: translateY(-1px) translateX(-0.5px);
-    mask-image: linear-gradient(to right, #000000 75%, transparent 100%);
-    -webkit-mask-image: linear-gradient(to right, #000000 75%, transparent 100%);
-}
-
-/* 歌曲文本基础样式 */
-.music-info-text {
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
-    font-size: 12.5px;
-    font-weight: 500;
-    white-space: nowrap;
-    /* 强制单行不换行 */
-    overflow: hidden;
-    color: inherit;
-    opacity: 0.9;
-}
-
-/* 灵动岛消息通知样式 */
-.msg-box {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    padding: 0 45px 0 0px;
-    box-sizing: border-box;
-    z-index: 10;
-    gap: 12px;
-    -webkit-app-region: no-drag;
-    transition: opacity 0.15s ease;
-}
-
-/* F11 通知可点击：hover 时给一点视觉反馈 */
-.msg-box:hover {
-    opacity: 0.8;
-}
-
-.msg-box:active {
-    opacity: 0.65;
-}
-
-/* 预制消息图标/头像样式 */
-.msg-avatar {
-    width: 35px;
-    height: 35px;
-    border-radius: 50%;
-    background: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #ffffff;
-    flex-shrink: 0;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-}
-
-.msg-avatar-img {
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    object-fit: cover;
-}
-
-/* 文本靠左对齐包裹层 */
-.msg-text-wrapper {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: flex-start;
-    overflow: hidden;
-    flex-grow: 1;
-}
-
-/* 消息弹窗容器 */
-.msg-title {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 14px;
-    font-weight: 700;
-    line-height: 1.4;
-    width: 100%;
-    overflow: hidden;
-}
-
-/* 发送者昵称（允许超长省略号） */
-.sender-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* 尾部的程序名 */
-.app-name {
-    font-size: 10.5px;
-    font-weight: 600;
-    flex-shrink: 0;
-    padding: 2px 6px;
-    border-radius: 6px;
-    background-color: rgba(150, 150, 150, 0.25);
-    color: inherit;
-    opacity: 0.9;
-    letter-spacing: 0.2px;
-    transform: translateY(-0.5px);
-}
-
-/* 调大后的内容样式 */
-.msg-body {
-    font-size: 12.5px;
-    line-height: 1.4;
-    opacity: 0.75;
-    text-align: left;
-    width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.value.high-usage {
-    color: #f06861 !important;
-}
-
-
-/* 音乐律动频谱样式 */
-.audio-spectrum {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-    height: 12px;
-    padding-right: 2px;
-}
-
-/* 暂停状态下的竖线（统一高度） */
-.audio-spectrum .bar {
-    width: 2px;
-    height: 18px;
-    background-color: #b6e0ee;
-    border-radius: 3px;
-    transform-origin: center;
-    /* 改用极速的 ease-out 过渡，让前端完美衔接后端的帧率 */
-    transition: transform 0.08s ease-out, background-color 0.08s linear;
-    will-change: transform;
-}
-
-.music-ctl-box {
-    transition: opacity 0.2s ease !important;
-}
-
-.music-ctl-box.expanded {
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: flex-start;
-    padding: 0 !important;
-}
-
-/* 顶部容器：取消 all 过渡，让它跟着 Rust 窗口的拉伸严丝合缝地重排 */
-.music-top-row {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    height: 100%;
-    position: relative;
-    transition: none !important;
-    /* 核心防抖魔法，取消 CSS 的挣扎 */
-}
-
-.music-ctl-box.expanded .music-top-row {
-    height: 40px;
-    margin-top: 14px !important;
-    margin-left: 5px !important;
-    border: none;
-}
-
-/* 封面：覆盖掉上面的 transition: all，只保留变形和圆角的过渡 */
-.album-cover {
-    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.2), border-radius 0.3s ease !important;
-}
-
-.music-ctl-box.expanded .album-cover {
-    width: 40px !important;
-    height: 40px !important;
-    border-radius: 6px !important;
-    animation: none !important;
-    border: none;
-    transform: translateX(0px) rotate(0deg) !important;
-}
-
-.music-ctl-box.expanded .album-cover .cover-inner {
-    animation: none !important;
-    transform: rotate(0deg) !important;
-    border: none;
-}
-
-.music-ctl-box.expanded .album-cover.is-playing {
-    border: none;
-    transform: scale(1.05) translateX(0px) rotate(0deg) !important;
-}
-
-/* 歌曲文本遮罩：取消过渡，随窗口大小瞬间变化 */
-.music-ctl-box.expanded .music-info-mask-box {
-    left: 60px !important;
-    right: 55px !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: flex-start !important;
-    transition: none !important;
-}
-
-/* 你的两套文字过渡逻辑非常完美，全部保留原样（因为 opacity 不影响排版） */
-.music-info-text {
-    position: absolute;
-    left: 0 !important;
-    top: 50%;
-    width: 100%;
-    transform: translateY(-50%);
-    transition: opacity 0.3s ease, transform 0.3s ease;
-    text-align: left !important;
-    display: flex !important;
-    flex-direction: column !important;
-    align-items: flex-start !important;
-}
-
-.double-line {
-    opacity: 0;
-    pointer-events: none;
-    transform: translateY(-30%);
-}
-
-.single-line {
-    opacity: 1;
-    align-items: center;
-    text-align: center;
-}
-
-.single-line.fade-out {
-    opacity: 0;
-    pointer-events: none;
-    transform: translateY(20%);
-}
-
-.double-line.fade-in {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translateY(-50%) !important;
-}
-
-.song-title {
-    position: relative;
-    /* 固定高度 = 15px × 1.2 行高：内部歌词层是绝对定位，需要确定的盒子高度 */
-    height: 18px;
-    font-size: 15px;
-    font-weight: 700;
-    margin-bottom: 2px;
-    white-space: nowrap;
-    overflow: hidden;
-    line-height: 1.2;
-    width: 100%;
-    text-align: left !important;
-}
-
-.song-artist {
-    font-size: 12.5px;
-    opacity: 0.65;
-    white-space: nowrap;
-    overflow: hidden;
-    line-height: 1.2;
-    width: 100%;
-    text-align: left !important;
-}
-
-/* 媒体控件与频谱 */
-.music-ctl-box.expanded .music-controls {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%) translateY(5px);
-    width: 100%;
-    display: flex;
-    justify-content: center;
-    gap: 20px;
-}
-
-.music-ctl-box.expanded .ctl-btn svg {
-    width: 22px;
-    height: 22px;
-}
-
-.music-ctl-box.expanded .play-btn svg {
-    width: 28px;
-    height: 28px;
-}
-
-.audio-spectrum.expanded {
-    position: absolute;
-    right: 18px !important;
-    top: 27px !important;
-    transform: scale(1.3);
-    /* 把 all 换成具体的属性，防止抖动 */
-    transition: opacity 0.3s ease, transform 0.3s ease !important;
-}
-
-/* F6 音乐进度条 */
-.music-progress {
-    position: absolute;
-    left: 16px;
-    right: 16px;
-    bottom: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    z-index: 2;
-}
-
-.progress-time-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 10.5px;
-    opacity: 0.85;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    letter-spacing: 0.3px;
-}
-
-.progress-bar {
-    position: relative;
-    height: 4px;
-    background: rgba(128, 128, 128, 0.25);
-    border-radius: 2px;
-    cursor: pointer;
-    touch-action: none;
-    user-select: none;
-    transition: height 0.15s ease;
-}
-
-.progress-bar:hover {
-    height: 6px;
-}
-
-.progress-bar.disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
-}
-
-.progress-bar.disabled:hover {
-    height: 4px;
-}
-
-.progress-bar.disabled .progress-thumb {
-    display: none;
-}
-
-.progress-filled {
-    position: absolute;
-    left: 0;
-    top: 0;
-    height: 100%;
-    background: currentColor;
-    border-radius: 2px;
-    transition: width 0.1s linear;
-}
-
-.progress-filled.dragging {
-    transition: none;
-}
-
-.progress-thumb {
-    position: absolute;
-    top: 50%;
-    width: 10px;
-    height: 10px;
-    background: currentColor;
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-    transition: width 0.15s ease, height 0.15s ease;
-}
-
-.progress-bar:hover .progress-thumb {
-    width: 12px;
-    height: 12px;
-}
-
-.progress-remaining {
-    font-size: 9.5px;
-    opacity: 0.55;
-    text-align: center;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.progress-placeholder {
-    min-height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 10.5px;
-    opacity: 0.55;
-    letter-spacing: 0.2px;
-}
-
-/* 强制靠左对齐，干掉原本的 align-items: center。否则长文本会向两边溢出，导致开头被裁 */
-.music-info-text.single-line {
-    overflow: visible !important;
-    align-items: flex-start !important;
-    text-align: left !important;
-}
-
-/* 歌词渲染单句定位：绝对定位叠层，换句时新旧两层原位重叠，才能做交叉叠化 */
-.lyric-render-text {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    white-space: nowrap;
-    overflow: hidden;
-    text-align: left !important;
-    display: inline-block;
-    will-change: opacity, filter;
-}
-
-/* 歌词换句过渡：新句从模糊透明渐入，旧句同步在原地模糊淡出（总时长约 220ms） */
-.lyric-fade-enter-active,
-.lyric-fade-leave-active {
-    transition: opacity 0.2s ease, filter 0.22s ease;
-}
-
-.lyric-fade-enter-from {
-    opacity: 0;
-    filter: blur(8px);
-}
-
-.lyric-fade-enter-to {
-    opacity: 1;
-    filter: blur(0px);
-}
-
-.lyric-fade-leave-from {
-    opacity: 1;
-    filter: blur(0px);
-}
-
-.lyric-fade-leave-to {
-    opacity: 0;
-    filter: blur(8px);
-}
-
-/* 滚动的内部容器 */
-.scroll-inner {
-    display: inline-block;
-    white-space: nowrap;
-    width: max-content;
-    flex-shrink: 0;
-    backface-visibility: hidden;
-    transform: translateZ(0);
-    -webkit-font-smoothing: antialiased;
-    transform-style: preserve-3d;
-}
-
-/* 挂载动画 */
-.scroll-inner.is-scrolling {
-    animation: scroll-ping-pong var(--scroll-duration) linear infinite alternate;
-}
-
-/* 滚动动画帧：利用 0-20% 和 80-100% 的区间实现两端停留 */
-@keyframes scroll-ping-pong {
-
-    0%,
-    20% {
-        transform: translateX(0);
-    }
-
-    80%,
-    100% {
-        /* JS 里已经拼好了 px 单位，这里直接 -1 乘过去即可 */
-        transform: translateX(calc(-1 * var(--scroll-dist)));
-    }
-}
-
-/* 系统操作通知样式 */
-.system-toast-box {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    /* 右侧留白：避免文字伸入频谱/状态点区域（频谱在 left-capsule 右侧 flex 位） */
-    padding-left: 0;
-    padding-right: 4px;
-    gap: 2px;
-    z-index: 10;
-    -webkit-app-region: no-drag;
-    box-sizing: border-box;
-    overflow: hidden;
-}
-
-.toast-icon {
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    transform: translateX(-8px);
-}
-
-/* 灵动岛通知 */
-.toast-icon.app-icon {
-    color: currentColor;
-}
-
-/* 系统通知使用跟随字体的原生对比色 (黑白) */
-.toast-icon.sys-icon {
-    color: currentColor;
-    opacity: 0.85;
-}
-
-.toast-icon svg {
-    width: 22px;
-    height: 22px;
-    display: block;
-}
-
-.toast-icon.battery-charge-icon {
-    color: #34C759;
-}
-
-.toast-icon.battery-low-icon {
-    color: #FF3B30;
-}
-
-.toast-text {
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
-    font-size: 12.5px;
-    font-weight: 600;
-    white-space: nowrap;
-    opacity: 0.95;
-    transform: translateX(-2px) translateY(-1px);
-    min-width: 0;
-    flex: 1 1 auto;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    /* 兜底：异常超长文本省略；正常电源/电池文案靠动态岛宽完整显示 */
-    max-width: 100%;
-    box-sizing: border-box;
-}
+/* 音乐岛样式已随 IslandMusic.vue 迁出（滚动测量逻辑同时内聚至该组件） */
 
 /* 宽度调整手柄样式 */
 .resize-handle {
@@ -4359,78 +2463,7 @@ onUnmounted(() => {
     width: calc(100% - 44px);
 }
 
-/* 右侧独立实时小球 */
-.right-circle {
-    position: absolute;
-    right: 0;
-    width: 38px;
-    height: 38px;
-    border-radius: 50% !important;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-}
-
-/* 多实时活动并行：单一常驻小图标 */
-.rt-chip {
-    /* 继承 .right-circle 的定位与尺寸；color 由内联 style 设置为活动 accent */
-    background: rgba(0, 0, 0, 0.18);
-}
-
-.rt-chip-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    position: relative;
-    z-index: 2;
-}
-
-.rt-chip-icon :deep(svg) {
-    width: 18px;
-    height: 18px;
-    /* stroke 使用 currentColor，自动继承 .rt-chip 的 color */
-}
-
-.rt-chip-hw-ring {
-    width: 24px;
-    height: 24px;
-    display: block;
-}
-
-/* 小图标内容包裹层：占满圆形区域并居中，accent 颜色随预览活动一起过渡 */
-.rt-chip-inner {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    height: 100%;
-}
-
-/* 预览活动切换过渡（新活动加入/轮换/优先级重排）：缩小淡出 → 弹性放大淡入 */
-.rt-swap-enter-active {
-    transition: opacity 0.24s ease, transform 0.24s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-}
-
-.rt-swap-leave-active {
-    transition: opacity 0.16s ease, transform 0.16s ease;
-}
-
-.rt-swap-enter-from,
-.rt-swap-leave-to {
-    opacity: 0;
-    transform: scale(0.4);
-}
-
-/* 音乐展开态下小图标右移避让（避免与频谱/进度条重叠） */
-.island-wrap.is-music-expanded .rt-chip,
-.island-wrap.is-music-expanding .rt-chip {
-    right: -2px;
-    transform: scale(0.85);
-    transform-origin: center;
-}
+/* 多实时活动并行：单一常驻小图标（已拆分至 IslandRtChip.vue，样式随迁） */
 
 .pop-enter-active,
 .pop-leave-active {
@@ -4441,203 +2474,5 @@ onUnmounted(() => {
 .pop-leave-to {
     opacity: 0;
     transform: scale(0.4) translateX(-30px);
-}
-
-/* 番茄钟文本排版 */
-.pomodoro-text-box {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    height: 100%;
-    transform: translateX(-5px) !important;
-}
-
-.pomodoro-info {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-}
-
-.pomodoro-time {
-    font-size: 18px;
-    font-weight: bold;
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.5px;
-    transform: translateY(-0.5px);
-    transition: color 0.3s ease;
-}
-
-.pomodoro-time.phase-focus {
-    color: #ff4757;
-}
-
-.pomodoro-time.phase-break {
-    color: #2196f3;
-}
-
-.pomodoro-svg {
-    width: 24px;
-    height: 24px;
-    transition: color 0.3s ease;
-}
-
-.pomodoro-svg.phase-focus {
-    color: #ff4757;
-}
-
-.pomodoro-svg.phase-break {
-    color: #2196f3;
-}
-
-/* ===== 倒计时样式 ===== */
-.countdown-text-box {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.countdown-svg {
-    width: 24px;
-    height: 24px;
-    color: #ff9800;
-    transition: color 0.3s ease;
-}
-
-.countdown-info {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.countdown-time {
-    font-size: 18px;
-    font-weight: 800;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    color: #ff9800;
-    letter-spacing: 1px;
-}
-
-.countdown-finished-text {
-    font-size: 13px;
-    font-weight: 700;
-    color: #ff9800;
-    animation: cd-blink 1s ease-in-out infinite;
-}
-
-@keyframes cd-blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-}
-
-/* 倒计时右侧圆钮（仅橙色图标，无背景填充，与番茄钟风格一致） */
-.cd-right-circle {
-    /* 无背景填充，图标颜色由 .countdown-svg 的 #ff9800 提供 */
-}
-
-/* 倒计时展开态控制按钮组 */
-.cd-expanded-controls {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    transform: translateX(8px) !important;
-}
-
-.cd-pause-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    background: rgba(255, 152, 0, 0.15);
-    color: #ff9800;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    border: 1px solid rgba(255, 152, 0, 0.3);
-}
-
-.cd-pause-btn:hover {
-    background: rgba(255, 152, 0, 0.25);
-}
-
-.cd-close-btn {
-    color: #ff9800 !important;
-}
-
-.cd-close-btn:hover {
-    background-color: rgba(255, 152, 0, 0.15) !important;
-    color: #ff9800 !important;
-}
-
-/* 番茄钟剩余轮数徽章 */
-.pomodoro-cycle-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 20px;
-    height: 18px;
-    padding: 0 5px;
-    margin-left: 6px;
-    border-radius: 10px;
-    font-size: 11px;
-    font-weight: 800;
-    background: rgba(128, 128, 128, 0.2);
-    color: var(--item-title-color, #888);
-    font-variant-numeric: tabular-nums;
-    transform: translateY(-0.5px);
-}
-
-/* 实时活动全岛关闭按钮 */
-.island-close-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 30px;
-    height: 30px;
-    color: #888;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    border-radius: 50%;
-    z-index: 10;
-    transform: translateX(8px) !important;
-}
-
-.island-close-btn:hover {
-    color: #ff4757;
-    background-color: rgba(255, 71, 87, 0.15);
-    transform: scale(1.15);
-}
-
-.island-close-btn svg {
-    width: 20px;
-    height: 20px;
-}
-
-/* ===== 健康提醒 ===== */
-.health-alert-box {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    height: 100%;
-}
-
-.health-alert-icon {
-    font-size: 18px;
-    line-height: 1;
-    animation: health-alert-pulse 1s ease-in-out infinite;
-}
-
-.health-alert-text {
-    font-size: 15px;
-    font-weight: 700;
-    color: #fbbf24;
-    white-space: nowrap;
-}
-
-@keyframes health-alert-pulse {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.15); }
 }
 </style>
