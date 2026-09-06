@@ -16,7 +16,7 @@
 
             <!-- 左侧宽度调整手柄（仅占位：pointer-events:none，拖宽由容器 mousedown 的边缘检测接管） -->
             <div class="resize-handle left"
-                v-if="!isPositionLocked && !isMusicExpanded && !isMusicExpanding && !isMsgActive && !displaySysToast">
+                v-if="!isPositionLocked && !isMusicExpanded && !isMusicExpanding && !isMsgActive && !displaySysToast && !displayClipboard">
             </div>
 
             <div class="island-core-content" :style="coreContentStyle"
@@ -29,6 +29,10 @@
 
                         <IslandSysToast v-else-if="displaySysToast" key="systoast" :sys-toast-type="sysToastType"
                             :sys-toast-text="sysToastText" @select="onSysToastClick" />
+
+                        <!-- 剪贴板链接卡片（复制 http/https 链接时弹出，5s 自动消失） -->
+                        <IslandClipboardLink v-else-if="displayClipboard" key="clipboard" :link="clipboardLink"
+                            @open="handleOpenClipboardLink" />
 
                         <IslandHealthAlert v-else-if="isHealthAlerting" key="health-alert"
                             :health-alert-label="healthAlertLabel" />
@@ -88,7 +92,7 @@
 
             <!-- 右侧宽度调整手柄（仅占位：pointer-events:none，拖宽由容器 mousedown 的边缘检测接管） -->
             <div class="resize-handle right"
-                v-if="!isPositionLocked && !isMusicExpanded && !isMusicExpanding && !isMsgActive && !displaySysToast">
+                v-if="!isPositionLocked && !isMusicExpanded && !isMusicExpanding && !isMsgActive && !displaySysToast && !displayClipboard">
             </div>
         </div>
     </transition>
@@ -99,6 +103,7 @@ import { ref, shallowRef, triggerRef, onMounted, onUnmounted, computed, watch, t
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow, currentMonitor, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window';
 import { listen, emit, type Event } from '@tauri-apps/api/event';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { formatSpeed } from '../utils/format';
 import {
     NSD_AUTO_HIDE_DELAY, NSD_AUTO_HIDE_ENABLED,
@@ -131,6 +136,7 @@ import {
     NSD_LYRIC_DELAY,
     NSD_CLIPBOARD_ENABLED,
     NSD_CLIPBOARD_ISLAND_TOAST,
+    NSD_CLIPBOARD_LINK,
 } from '../constants/storageKeys';
 import { getSettingRaw, setSettingRaw } from '../utils/settings';
 import { useMusicSync } from '../composables/useMusicSync';
@@ -144,6 +150,7 @@ import IslandCountdown from '../components/island/IslandCountdown.vue';
 import IslandHealthAlert from '../components/island/IslandHealthAlert.vue';
 import IslandMsg from '../components/island/IslandMsg.vue';
 import IslandSysToast from '../components/island/IslandSysToast.vue';
+import IslandClipboardLink from '../components/island/IslandClipboardLink.vue';
 import IslandHardwareRing from '../components/island/IslandHardwareRing.vue';
 import IslandRtChip from '../components/island/IslandRtChip.vue';
 import IslandMusic from '../components/island/IslandMusic.vue';
@@ -426,6 +433,64 @@ const {
     showRtChip: () => showRtChip.value,
 });
 
+// ==================== 剪贴板链接卡片（移植自上游 2.4.5） ====================
+// 后端仅当复制内容含 http/https 链接时才推送 clipboard-link 事件（提取在后端完成）；
+// 本组件只负责展示卡片 + 打开链接。开关读取 nsd_clipboard_link（默认开启），
+// 关闭时后端监听线程已停（MainPanel 触发），此处读取仅作双保险。
+const displayClipboard = ref(false);
+const clipboardLink = ref('');
+let clipboardHideTimer: number | null = null;
+
+// 卡片目标尺寸：对齐消息通知卡的宽度口径（用户设置的消息展开宽度，但不小于 320）
+const clipboardCardWidth = () => Math.max(msgExpandedWidth.value, 320);
+
+// 收起卡片并恢复岛尺寸（仅在无其他占用者时才缩回）
+const hideClipboardCard = (restoreSize: boolean) => {
+    displayClipboard.value = false;
+    if (!restoreSize) return;
+    if (!isMsgActive.value && !displaySysToast.value && !isMusicExpanded.value && !isMusicExpanding.value) {
+        const { h } = getBaseSize();
+        const savedWidth = restoreIslandWidth();
+        const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
+        animateIslandSize(targetWidth, h);
+    }
+};
+
+// 点击"打开链接"：系统默认浏览器打开后立即收起卡片
+const handleOpenClipboardLink = async () => {
+    if (!clipboardLink.value) return;
+    try {
+        await openUrl(clipboardLink.value);
+    } catch (err) {
+        console.error('打开链接失败:', err);
+    }
+    if (clipboardHideTimer) { clearTimeout(clipboardHideTimer); clipboardHideTimer = null; }
+    hideClipboardCard(true);
+};
+
+// 显示卡片：消息通知正在占用时不展开尺寸（等它消失后由 watch 补上），卡片本身由
+// v-else-if 链保证在消息结束后自动露出。与上游一致：复制是高频操作，不主动唤醒隐藏的岛
+const showClipboardCard = (link: string) => {
+    clipboardLink.value = link;
+    displayClipboard.value = true;
+    if (!isMsgActive.value) {
+        animateIslandSize(clipboardCardWidth(), 65);
+    }
+    // 5s 自动消失（连续复制同一链接时重置计时，续期显示）
+    if (clipboardHideTimer) clearTimeout(clipboardHideTimer);
+    clipboardHideTimer = window.setTimeout(() => {
+        clipboardHideTimer = null;
+        hideClipboardCard(true);
+    }, 5000);
+};
+
+// 消息通知/系统 toast 让位后，若剪贴板卡片仍在展示期，把尺寸补回到卡片大小
+watch([isMsgActive, displaySysToast], ([msg, toast]) => {
+    if (displayClipboard.value && !msg && !toast) {
+        animateIslandSize(clipboardCardWidth(), 65);
+    }
+});
+
 // ===== 指针交互 composable 接入（宽度调整手柄 + 边缘光标 + 拖拽判定路由，逻辑从本组件拆出） =====
 // mouseDownX / mouseDownY 供 expandMusic 做点击位移判定；定时器/文档级监听清理随 composable；
 // 拖宽由 handleMouseDown 的边缘检测（isNearEdge → handleResizeStart）统一接管，模板不再直连
@@ -474,7 +539,8 @@ const applyAlwaysOnTop = async (enabled: boolean) => {
 };
 
 const refreshIslandSizeIfIdle = () => {
-    if (!isMsgActive.value && !displaySysToast.value && !isMusicExpanded.value && !isMusicExpanding.value) {
+    if (!isMsgActive.value && !displaySysToast.value && !displayClipboard.value
+        && !isMusicExpanded.value && !isMusicExpanding.value) {
         const { h } = getBaseSize();
         const savedWidth = restoreIslandWidth();
         const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
@@ -1097,7 +1163,7 @@ let fetchLyricsImpl: (song: string, artist: string) => Promise<void> = async () 
 
 const {
     isPlaying, coverUrl, blurredCoverUrl, coverCache, blurredCoverCache,
-    currentAppIdStr, currentIsBrowser, isBrowserMusic,
+    currentAppIdStr, currentIsBrowser, isBrowserMusic, resolveBrowserMode,
     currentSongName, currentArtistName, currentTrackInfo,
     bumpCoverFetchVersion, applyMusicInfo, applyNoTrack, syncMusicStatus,
 } = useMusicSync({
@@ -1295,11 +1361,12 @@ watch(currentTrackInfo, () => {
 // PotPlayer 无歌手元数据时，后端会把歌手占位为 "potplayer"：此时不做歌词匹配，标题常驻显示
 const isPotplayerSource = computed(() => currentArtistName.value === 'potplayer');
 
-// 视频类播放源：B站/PotPlayer 恒为视频类；浏览器拿到封面或歌词才算音乐，否则视为视频
+// 视频类播放源：B站/PotPlayer 恒为视频类；浏览器按统一判定中枢
+// （视频站后缀 > 浏览器Pro标签页判定 > 拉到歌词/封面兜底）得出音乐/视频结论
 const isVideoLikeSource = computed(() => {
     if (isPotplayerSource.value) return true;
     if (currentAppIdStr.value.includes('bilibili')) return true;
-    if (currentIsBrowser.value) return !isBrowserMusic.value;
+    if (currentIsBrowser.value) return resolveBrowserMode() === 'video';
     return false;
 });
 
@@ -2270,6 +2337,14 @@ const bootstrapIsland = async (): Promise<void> => {
         invoke('clipboard_set_enabled', { enabled: true }).catch(() => {});
     }
 
+    // 剪贴板链接卡片：后端仅当复制内容为 http/https 链接时才推送（提取在后端完成）。
+    // 监听线程的启停由后端按配置管理（setup 读 nsd_clipboard_link / 控制台开关下发命令），
+    // 此处读取开关仅作双保险（配置跨窗口实时同步，关闭后残留事件不弹卡）
+    await safeListen<{ link: string }>('clipboard-link', (e) => {
+        if (getSettingRaw(NSD_CLIPBOARD_LINK) === 'false') return;
+        showClipboardCard(e.payload.link);
+    });
+
     // 初始化时的折叠态滚动测量已随 IslandMusic 子组件的 onMounted 处理
 
     // 恢复番茄钟/倒计时运行状态：查询后端当前状态（逻辑在 useRealtimeActivity 内）
@@ -2304,6 +2379,11 @@ onUnmounted(() => {
     }
     stopProgressTimer();
     stopLyricClock();
+    // 剪贴板链接卡片的隐藏计时器（卸载后不得再改状态）
+    if (clipboardHideTimer) {
+        clearTimeout(clipboardHideTimer);
+        clipboardHideTimer = null;
+    }
     // 使进行中的 toast 等待立即失效，避免卸载后继续改状态（逻辑在 useNotifications 内）
     cleanupNotifications();
     // 组件卸载时关闭频谱捕获，避免后端空跑

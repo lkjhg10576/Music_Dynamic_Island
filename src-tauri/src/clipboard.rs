@@ -272,7 +272,7 @@ fn clean_dir_orphans(dir: &Path, known: &HashSet<&str>, ext: &str) {
 
 // ===== 监听线程（轮询 + 自写豁免 + 采集 + 归一） =====
 
-fn current_seq() -> u32 {
+pub(crate) fn current_seq() -> u32 {
     unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() }
 }
 
@@ -294,6 +294,13 @@ fn take_skip_seq(seq: u32) -> bool {
     } else {
         false
     }
+}
+
+/// 非消费查询：seq 是否在自写豁免集合中（供剪贴板链接监听 wndproc 复用，
+/// 不移除条目——消费权留给剪贴板历史监听线程的 take_skip_seq）
+pub(crate) fn has_skip_seq(seq: u32) -> bool {
+    let q = SKIP_SEQS.lock().unwrap_or_else(|e| e.into_inner());
+    q.contains(&seq)
 }
 
 fn start_listener_thread(app: AppHandle, exit: crate::thread_mgr::ExitFlag) {

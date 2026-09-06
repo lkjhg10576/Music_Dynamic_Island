@@ -103,3 +103,5 @@ export const NSD_SYSMSG_NETWORK_LATENCY_INTERVAL = 'nsd_sysmsg_network_latency_i
 // 剪贴板历史
 export const NSD_CLIPBOARD_ENABLED = 'nsd_clipboard_enabled';
 export const NSD_CLIPBOARD_ISLAND_TOAST = 'nsd_clipboard_island_toast';
+// 剪贴板链接监听（复制 http/https 链接时灵动岛弹出链接卡片，默认开启）
+export const NSD_CLIPBOARD_LINK = 'nsd_clipboard_link';

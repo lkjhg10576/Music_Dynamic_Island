@@ -50,7 +50,16 @@
                     </svg>
                     SMTC
                 </div>
+                <div class="capsule-btn browserpro-btn" :class="{ 'is-active': targetPlayer === 'browserPro' }"
+                    @click="setTargetPlayer('browserPro')">
+                    <img src="../assets/chrome-logo.png" class="platform-icon" alt="icon">
+                    浏览器Pro
+                </div>
             </div>
+            <p v-if="targetPlayer === 'browserPro'" class="player-grid-hint">
+                浏览器Pro：在通用媒体模式基础上获取浏览器活动标签页标题做音乐/视频识别（仅适配 Edge /
+                Chrome，使用前请确认所有浏览器一共只打开一个窗口）
+            </p>
         </div>
         <div class="set-item">
             <div class="set-item-meta">
@@ -811,6 +820,26 @@ input:disabled+.slider {
 .smtc-btn {
     background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(16, 185, 129, 0.1));
     border: 1px dashed rgba(59, 130, 246, 0.3);
+}
+
+/* 浏览器Pro按钮特殊样式（蓝紫渐变，与 SMTC 的虚线框风格区分） */
+.browserpro-btn {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(59, 130, 246, 0.1));
+}
+
+.browserpro-btn:hover {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(59, 130, 246, 0.15));
+}
+
+/* 浏览器Pro使用说明（选中后显示在平台网格下方） */
+.player-grid-hint {
+    margin: 4px 4px 0;
+    font-size: 11px;
+    line-height: 1.5;
+    opacity: 0.65;
+    text-align: left;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .smtc-btn.is-active {

@@ -41,3 +41,6 @@ docs/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# AI 代理说明（仅本地文档，永不入库）
+AGENTS.md

@@ -17,6 +17,7 @@ mod print_utils;
 mod thread_mgr;
 mod win32_utils;
 mod clipboard;
+mod clipboard_link;
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicBool, Ordering};
@@ -49,6 +50,87 @@ pub(crate) fn network_latency_interval_secs() -> u64 {
 fn set_network_latency_interval(secs: u64) {
     let clamped = secs.clamp(1, 60);
     NETWORK_LATENCY_INTERVAL_SECS.store(clamped, Ordering::Relaxed);
+}
+
+/// 获取浏览器实时活动标签页标题（活动标签 = 顶层可见窗口标题）。
+/// 通过 EnumWindows 枚举 msedge/chrome 进程的可见顶层窗口实现（移植自上游 2.4.5），
+/// 供浏览器Pro模式的音乐/视频判定与标题正则解析使用。
+/// 注意：必须 async + spawn_blocking 放到阻塞线程池执行——Tauri v2 里不带 async 的
+/// 同步命令会直接跑在主线程，阻塞 UI（频谱/动画掉帧）。
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn get_active_browser_tabs() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+        };
+
+        // EnumWindows 回调：lParam 携带结果 Vec 指针，收集所有可见 msedge/chrome 窗口的标题
+        unsafe extern "system" fn enum_browser_windows(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let titles = lparam as *mut Vec<String>;
+            // 只处理可见窗口（对齐"活动标签标题"语义）
+            if IsWindowVisible(hwnd) == 0 {
+                return 1;
+            }
+            let mut pid: u32 = 0;
+            GetWindowThreadProcessId(hwnd, &mut pid);
+            if pid == 0 {
+                return 1;
+            }
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if process.is_null() {
+                // 权限不足（如浏览器以管理员运行）时跳过
+                return 1;
+            }
+            let mut path_buf = [0u16; 1024];
+            let mut path_len = path_buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(process, 0, path_buf.as_mut_ptr(), &mut path_len);
+            CloseHandle(process);
+            if ok == 0 {
+                return 1;
+            }
+            let path = String::from_utf16_lossy(&path_buf[..path_len as usize]).to_lowercase();
+            if !(path.ends_with("msedge.exe") || path.ends_with("chrome.exe")) {
+                return 1;
+            }
+            // 读取窗口标题（UTF-16，天然支持中文）
+            let mut title_buf = [0u16; 512];
+            let n = GetWindowTextW(hwnd, title_buf.as_mut_ptr(), title_buf.len() as i32);
+            if n > 0 {
+                let title = String::from_utf16_lossy(&title_buf[..n as usize]);
+                let title = title.trim().to_string();
+                if !title.is_empty() {
+                    (*titles).push(title);
+                }
+            }
+            1
+        }
+
+        let mut titles: Vec<String> = Vec::new();
+        unsafe {
+            EnumWindows(
+                Some(enum_browser_windows),
+                &mut titles as *mut Vec<String> as isize,
+            );
+        }
+        // 去重：同一标题可能来自多个窗口/进程，保持首次出现顺序
+        let mut seen = std::collections::HashSet::new();
+        titles.retain(|t| seen.insert(t.clone()));
+        Ok(titles)
+    })
+    .await
+    .map_err(|e| format!("获取浏览器标签页任务失败: {}", e))?
+}
+
+// 非 Windows 平台空实现，避免编译报错
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn get_active_browser_tabs() -> Result<Vec<String>, String> {
+    Ok(Vec::new())
 }
 
 /// 测量到 223.5.5.5:53 的 TCP 连接延迟（毫秒），超时 1500ms 记 Err。
@@ -746,6 +828,8 @@ pub fn run() {
             clipboard::clipboard_toggle_pin,
             clipboard::clipboard_delete_item,
             clipboard::clipboard_clear,
+            clipboard_link::clipboard_link_set_enabled,
+            get_active_browser_tabs,
         ])
         .setup(|app| {
             // 设置单一数据源：载入 config.json + 落盘线程
@@ -771,6 +855,8 @@ pub fn run() {
             start_hardware_monitor(app.handle().clone());
             // SMTC 会话绑定管理器：事件驱动音乐信息推送（替代前端 3s 轮询）
             session_binder::init(app.handle().clone());
+            // 剪贴板链接监听：按配置（nsd_clipboard_link，默认开启）启停事件驱动监听
+            clipboard_link::init_from_config(app.handle());
 
             // 全屏应用检测线程：每 2s 轮询，发射 fullscreen-changed 事件供前端做自动隐藏
             // Win32 判定逻辑收口到 win32_utils::is_foreground_fullscreen

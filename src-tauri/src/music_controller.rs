@@ -183,8 +183,10 @@ pub(crate) fn get_target_media_session() -> Option<GlobalSystemMediaTransportCon
         }
     };
 
-    // SMTC模式：返回第一个活动的媒体会话
-    if target == "smtc" {
+    // SMTC模式：返回第一个活动的媒体会话。
+    // browserPro（浏览器Pro，移植自上游 2.4.5）与 SMTC 同为"通用媒体"语义：
+    // 识别所有媒体来源、不限定 Edge/Chrome（前端负责浏览器场景的精细判定）
+    if target == "smtc" || target == "browserPro" {
         // 收集为 Vec 以避免消耗迭代器后需要重新获取
         let sessions: Vec<_> = sessions.into_iter().collect();
 

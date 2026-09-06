@@ -1,6 +1,6 @@
 [package]
 name = "netspeed-dynamic"
-version = "0.6.1"
+version = "0.6.2"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -41,6 +41,8 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Memory",
     # 剪贴板历史：WideCharToMultiByte（CF_TEXT ANSI 转换）
     "Win32_Globalization",
+    # 剪贴板链接监听：GetModuleHandleW（注册监听窗口类）
+    "Win32_System_LibraryLoader",
 ] }
 # 锁屏检测 / MessageBeep：OpenInputDesktop/CloseDesktop/MessageBeep 在 windows-sys 0.59
 # 的 win32metadata 中已被移除（docs.rs 0.59.0 查证不存在），按项目规范这些 API 一律走 winapi 0.3。

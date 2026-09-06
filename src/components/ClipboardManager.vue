@@ -28,6 +28,18 @@
                 </label>
             </div>
 
+            <!-- ===== 二级设置：剪贴板链接监听（独立于历史记录，默认开启） ===== -->
+            <div class="cm-setting-item">
+                <div class="cm-setting-meta">
+                    <span class="cm-setting-title">链接监听</span>
+                    <span class="cm-setting-desc">复制 http/https 链接时在灵动岛弹出链接卡片，可一键打开（默认开启）</span>
+                </div>
+                <label class="switch" @click.stop>
+                    <input type="checkbox" :checked="linkMonitor" @change="toggleLinkMonitor">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
             <!-- ===== 工具栏：搜索 / 清空全部 / 存储限制 ===== -->
             <div class="cm-toolbar-row">
                 <div class="cm-search">
@@ -104,8 +116,9 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import {
     useClipboard, formatRelativeTime, formatBytes, type ClipItem,
 } from '../composables/useClipboard';
-import { NSD_CLIPBOARD_ENABLED, NSD_CLIPBOARD_ISLAND_TOAST } from '../constants/storageKeys';
+import { NSD_CLIPBOARD_ENABLED, NSD_CLIPBOARD_ISLAND_TOAST, NSD_CLIPBOARD_LINK } from '../constants/storageKeys';
 import { getSettingRaw, setSettingRaw } from '../utils/settings';
+import { invoke } from '@tauri-apps/api/core';
 
 // ===== 配额常量（与后端 Rust 常量一致，仅用于展示） =====
 const MAX_ITEMS = 500;
@@ -138,6 +151,23 @@ async function toggleIslandToast(e: Event) {
     const next = (e.target as HTMLInputElement).checked;
     islandToast.value = next;
     setSettingRaw(NSD_CLIPBOARD_ISLAND_TOAST, String(next));
+}
+
+// ===== 链接监听（移植自上游 2.4.5）：独立于历史记录，默认开启 =====
+// 后端 setup 按 config 启停监听线程，此处实时下发命令保证立即生效
+const linkMonitor = ref(getSettingRaw(NSD_CLIPBOARD_LINK) !== 'false');
+
+async function toggleLinkMonitor(e: Event) {
+    const next = (e.target as HTMLInputElement).checked;
+    linkMonitor.value = next;
+    setSettingRaw(NSD_CLIPBOARD_LINK, String(next));
+    try {
+        await invoke('clipboard_link_set_enabled', { enabled: next });
+    } catch (err) {
+        console.error('切换链接监听失败:', err);
+        linkMonitor.value = !next;
+        setSettingRaw(NSD_CLIPBOARD_LINK, String(!next));
+    }
 }
 
 // ===== 工具栏：搜索（前端本地过滤） =====
