@@ -35,6 +35,8 @@ src-tauri/target/
 
 # 本地工具目录（仅本地使用，不纳入版本控制、不推送）
 .mimosa/
+
+# 项目文档与记忆（docs/ 下所有内容，含 plan/、memory/，永远不入库）
 docs/
 
 # 操作系统

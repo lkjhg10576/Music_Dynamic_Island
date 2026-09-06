@@ -440,6 +440,9 @@ const {
 const displayClipboard = ref(false);
 const clipboardLink = ref('');
 let clipboardHideTimer: number | null = null;
+// 链接卡片展示时刻的时间戳：用于抑制链接复制后紧随的 clipboard-changed toast，
+// 避免"先弹链接卡 → 再弹已复制提示"的两段动画（复制链接只应显示链接卡）
+let clipboardLinkShownAt = 0;
 
 // 卡片目标尺寸：对齐消息通知卡的宽度口径（用户设置的消息展开宽度，但不小于 320）
 const clipboardCardWidth = () => Math.max(msgExpandedWidth.value, 320);
@@ -473,6 +476,7 @@ const handleOpenClipboardLink = async () => {
 const showClipboardCard = (link: string) => {
     clipboardLink.value = link;
     displayClipboard.value = true;
+    clipboardLinkShownAt = Date.now();
     if (!isMsgActive.value) {
         animateIslandSize(clipboardCardWidth(), 65);
     }
@@ -2327,6 +2331,8 @@ const bootstrapIsland = async (): Promise<void> => {
     // 且 noWake 保证绝不把隐藏的岛弹出来（高频操作）
     await safeListen<{ kind: string; char_len: number }>('clipboard-changed', (e) => {
         if (getSettingRaw(NSD_CLIPBOARD_ISLAND_TOAST) !== 'true') return;
+        // 链接复制已由链接卡展示，抑制紧随的"已复制文本 X 字"toast，避免两段动画
+        if (Date.now() - clipboardLinkShownAt < 1000) return;
         const { kind, char_len } = e.payload;
         showToast(kind === 'image' ? '已复制图片' : `已复制文本 ${char_len} 字`, 'clipboard', { noWake: true });
     });
