@@ -1646,7 +1646,9 @@ const expandMusic = (e: MouseEvent) => {
             isAnimationLocked = false;
 
             // 检查：如果在展开的这 520ms 里，用户鼠标已经移走了，那就立刻补发收缩命令。
-            if (isPendingCollapse) {
+            // 注意必须读 .value：isPendingCollapse 是 ref 对象，直接判真恒成立，
+            // 会导致每次展开在解锁时无条件收回（9.9.9-2 回归修复）
+            if (isPendingCollapse.value) {
                 isPendingCollapse.value = false;
                 collapseMusic();
             }
@@ -2494,10 +2496,17 @@ onUnmounted(() => {
     background: rgba(0, 0, 0, 0.45);
 }
 
-/* 确保岛内的核心内容层压在背景图上方（audio-spectrum / status-dot 已随子组件迁出） */
+/* 确保岛内的核心内容层压在背景图上方（audio-spectrum / status-dot 已随子组件迁出）。
+   flex-grow:1 / height:100% 必须保留：.inner-wrapper 是 left-capsule 的 flex 子项，
+   其唯一子树（IslandMusic 等）根节点全部是 absolute 出流，缺了拉伸声明会塌缩为 0×0，
+   导致岛体不可点击、文字图标全部不可见（9.9.9-2 回归修复） */
 .inner-wrapper {
     position: relative;
     z-index: 2;
+    flex-grow: 1;
+    height: 100%;
+    display: flex;
+    align-items: center;
 }
 
 [data-tauri-drag-region] {

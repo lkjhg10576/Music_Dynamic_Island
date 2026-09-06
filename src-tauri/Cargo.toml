@@ -1,7 +1,8 @@
 [package]
 name = "netspeed-dynamic"
-# 9.9.9-1：带外临时诊断版本（临时日志系统 + release DevTools），禁止作为正式版本发布
-version = "9.9.9-1"
+# 9.9.9-2：带外临时修复版本（修复 9.9.9-1 的 inner-wrapper 布局塌缩与展开即收回两处回归；
+# 临时日志系统 + release DevTools 保留），禁止作为正式版本发布
+version = "9.9.9-2"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
