@@ -14,10 +14,9 @@
                 <div class="coverglass-mask-layer"></div>
             </div>
 
-            <!-- 左侧宽度调整手柄 -->
+            <!-- 左侧宽度调整手柄（仅占位：pointer-events:none，拖宽由容器 mousedown 的边缘检测接管） -->
             <div class="resize-handle left"
-                v-if="!isPositionLocked && !isMusicExpanded && !isMusicExpanding && !isMsgActive && !displaySysToast"
-                @mousedown.stop="handleResizeStart($event, 'left')">
+                v-if="!isPositionLocked && !isMusicExpanded && !isMusicExpanding && !isMsgActive && !displaySysToast">
             </div>
 
             <div class="island-core-content" :style="coreContentStyle"
@@ -87,10 +86,9 @@
                 </transition>
             </div>
 
-            <!-- 右侧宽度调整手柄 -->
+            <!-- 右侧宽度调整手柄（仅占位：pointer-events:none，拖宽由容器 mousedown 的边缘检测接管） -->
             <div class="resize-handle right"
-                v-if="!isPositionLocked && !isMusicExpanded && !isMusicExpanding && !isMsgActive && !displaySysToast"
-                @mousedown.stop="handleResizeStart($event, 'right')">
+                v-if="!isPositionLocked && !isMusicExpanded && !isMusicExpanding && !isMsgActive && !displaySysToast">
             </div>
         </div>
     </transition>
@@ -100,7 +98,7 @@
 import { ref, shallowRef, triggerRef, onMounted, onUnmounted, computed, watch, type CSSProperties } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow, currentMonitor, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window';
-import { listen, emit } from '@tauri-apps/api/event';
+import { listen, emit, type Event } from '@tauri-apps/api/event';
 import { formatSpeed } from '../utils/format';
 import {
     NSD_AUTO_HIDE_DELAY, NSD_AUTO_HIDE_ENABLED,
@@ -157,7 +155,7 @@ import {
     RT_ACTIVITY_DEFS, RT_IDS, PANEL_DEFS_BY_RANK, getRtDef,
     type IslandActivityCtx, type PanelView, type ChipContent,
 } from '../activities/registry';
-import { useIslandPointer } from '../composables/useIslandPointer';
+import { useIslandPointer, DRAG_THRESHOLD_PX } from '../composables/useIslandPointer';
 import { useIslandAutoHide } from '../composables/useIslandAutoHide';
 import { useIslandContextMenu } from '../composables/useIslandContextMenu';
 
@@ -429,10 +427,11 @@ const {
 });
 
 // ===== 指针交互 composable 接入（宽度调整手柄 + 边缘光标 + 拖拽判定路由，逻辑从本组件拆出） =====
-// mouseDownX / mouseDownY 供 expandMusic 做点击位移判定；定时器/文档级监听清理随 composable
+// mouseDownX / mouseDownY 供 expandMusic 做点击位移判定；定时器/文档级监听清理随 composable；
+// 拖宽由 handleMouseDown 的边缘检测（isNearEdge → handleResizeStart）统一接管，模板不再直连
 const {
     mouseNearEdge, mouseDownX, mouseDownY,
-    handleMouseDown, handleMouseMove, handleMouseUp, handleResizeStart,
+    handleMouseDown, handleMouseMove, handleMouseUp,
 } = useIslandPointer({
     isPositionLocked, isMusicExpanded, isMusicExpanding, isMsgActive, displaySysToast,
     isSizeAnimating, isPinnedToTaskbar, currentWidth, currentHeight,
@@ -1600,7 +1599,8 @@ const handleForceTopmost = () => {
 
 // 音乐控制器点击展开方法
 const expandMusic = (e: MouseEvent) => {
-    if (Math.abs(e.clientX - mouseDownX.value) > 5 || Math.abs(e.clientY - mouseDownY.value) > 5) return;
+    // 与 useIslandPointer 的拖拽升级阈值保持一致：≤9px 位移视为点击，否则 JS 拖拽已接管
+    if (Math.abs(e.clientX - mouseDownX.value) > DRAG_THRESHOLD_PX || Math.abs(e.clientY - mouseDownY.value) > DRAG_THRESHOLD_PX) return;
     if ((e.target as HTMLElement).closest('.ctl-btn')) return;
 
     if (isMusicExpanded.value || isMusicExpanding.value) return;
@@ -1647,7 +1647,21 @@ import potplayerLogo from '../assets/potplayer-logo.jpg';
 // 统一保存 Tauri listen 返回的 unlisten 函数，组件卸载时清理，防止事件订阅残留
 const unlistenFns: Array<() => void> = [];
 
-onMounted(async () => {
+// 统一的监听注册入口：单个事件注册失败仅跳过本条并上报，不中断 onMounted 后续订阅
+// （此前串行链上任一 await listen reject 会静默丢失全部后续监听，控制台无任何报错）；
+// 成功的 unlisten 自动登记到 unlistenFns，供 onUnmounted 统一清理
+async function safeListen<T>(event: string, handler: (e: Event<T>) => void): Promise<void> {
+    try {
+        unlistenFns.push(await listen<T>(event, handler));
+    } catch (e) {
+        console.error(`[island] 注册监听失败: ${event}`, e);
+    }
+}
+
+// 启动初始化链（安全加固版）：链内监听注册全部走 safeListen（单条失败不断链）；
+// 非 listen 步骤的异常由下方 onMounted 的 catch 兜底上报。
+// 此前整条链无任何错误处理，任一 await reject 会静默丢失后续全部订阅，无法定位。
+const bootstrapIsland = async (): Promise<void> => {
     // 启动时应用个性化缩放与置顶
     applyAppScale(appScale.value);
     await applyAlwaysOnTop(isAlwaysOnTop.value);
@@ -1670,7 +1684,7 @@ onMounted(async () => {
     }, { capture: true }); // 使用捕获阶段，确保先于 Tauri 底层拦截
 
     // 音乐控制器状态监听器
-    await listen<{ enabled: boolean }>('control-music-ctl', (event) => {
+    await safeListen<{ enabled: boolean }>('control-music-ctl', (event) => {
         const isEnabled = event.payload.enabled;
         isMusicCtlEnabled.value = isEnabled;
 
@@ -1691,14 +1705,14 @@ onMounted(async () => {
     });
 
     // 监听系统动态感知（sysmsg）结构化事件：后端统一推送，前端按需弹通知
-    await listen<{ kind: string; level: string; text: string }>('sysmsg-event', (event) => {
+    await safeListen<{ kind: string; level: string; text: string }>('sysmsg-event', (event) => {
         if (isSysmsgEnabled.value) {
             showSysmsgToast(event.payload);
         }
     });
 
     // 后端 NetworkMonitor 推送状态灯（good / warning / error）
-    await listen<{ status: string }>('network-status', (event) => {
+    await safeListen<{ status: string }>('network-status', (event) => {
         const s = event.payload?.status;
         if (s === 'good' || s === 'warning' || s === 'error') {
             networkStatus.value = s;
@@ -1706,29 +1720,29 @@ onMounted(async () => {
     });
 
     // 跨窗口同步动态感知总开关（网络 toast 门控已下沉后端）
-    await listen<{ enabled: boolean }>('control-sysmsg-config', (event) => {
+    await safeListen<{ enabled: boolean }>('control-sysmsg-config', (event) => {
         isSysmsgEnabled.value = event.payload.enabled;
     });
 
     // 监听来自控制台的透明度同步指令
-    await listen<{ opacity: number }>('control-island-opacity', (event) => {
+    await safeListen<{ opacity: number }>('control-island-opacity', (event) => {
         islandOpacity.value = event.payload.opacity;
     });
 
     // 监听来自控制台的主题同步指令
-    await listen<{ theme: string }>('control-island-theme', (event) => {
+    await safeListen<{ theme: string }>('control-island-theme', (event) => {
         islandTheme.value = event.payload.theme;
     });
 
     // 监听来自控制台的歌词延迟同步指令（正值=歌词延后）
-    await listen<{ delay: number }>('control-lyric-delay', (event) => {
+    await safeListen<{ delay: number }>('control-lyric-delay', (event) => {
         if (typeof event.payload.delay === 'number' && Number.isFinite(event.payload.delay)) {
             nsdLyricDelay.value = event.payload.delay;
         }
     });
 
     // 监听个性化中心的打包设置同步
-    await listen<{
+    await safeListen<{
         springStyle?: 'stiff' | 'bouncy';
         borderRadius?: number;
         isAlwaysOnTop?: boolean;
@@ -1769,7 +1783,7 @@ onMounted(async () => {
     });
 
     // 监听来自控制台的频谱颜色同步指令（模式 + 自定义色）
-    await listen<{ mode: string; color: string }>('control-spectrum-color', async (event) => {
+    await safeListen<{ mode: string; color: string }>('control-spectrum-color', async (event) => {
         spectrumColorMode.value = event.payload.mode;
         spectrumCustomColor.value = event.payload.color;
         // 切到 album 模式且封面已加载时，立即重新取色
@@ -1779,7 +1793,7 @@ onMounted(async () => {
     });
 
     // 监听来自控制台的清理封面缓存指令
-    await listen('clear-cover-cache', async () => {
+    await safeListen('clear-cover-cache', async () => {
         try {
             await clearCoverCacheAndRefresh();
         } catch (e) {
@@ -1788,7 +1802,7 @@ onMounted(async () => {
     });
 
     // 监听置于任务栏开关
-    await listen<{ enabled: boolean }>('control-pin-taskbar', async (event) => {
+    await safeListen<{ enabled: boolean }>('control-pin-taskbar', async (event) => {
         isPinnedToTaskbar.value = event.payload.enabled;
         if (isPinnedToTaskbar.value) {
             await snapToBottomLeft(); // 开启时：飞到左下角
@@ -1802,7 +1816,7 @@ onMounted(async () => {
     });
 
     // 监听来自设置面板的位置锁定信号
-    await listen<{ locked: boolean }>('control-position-lock', async (event) => {
+    await safeListen<{ locked: boolean }>('control-position-lock', async (event) => {
         isPositionLocked.value = event.payload.locked;
         // 锁定时保存当前位置，以便下次启动恢复
         if (isPositionLocked.value) {
@@ -1811,7 +1825,7 @@ onMounted(async () => {
     });
 
     // 监听消息模式开关
-    await listen<{ enabled: boolean }>('control-msg-mode', async (event) => {
+    await safeListen<{ enabled: boolean }>('control-msg-mode', async (event) => {
         isMsgModeEnabled.value = event.payload.enabled;
         if (isMsgModeEnabled.value && !isMsgActive.value) {
             // 开启消息模式且当前无消息时，延迟隐藏
@@ -1828,7 +1842,7 @@ onMounted(async () => {
     });
 
     // 监听轮换模式开关
-    await listen<{ enabled: boolean }>('control-rotation-mode', (event) => {
+    await safeListen<{ enabled: boolean }>('control-rotation-mode', (event) => {
         isRotationEnabled.value = event.payload.enabled;
         if (isRotationEnabled.value) {
             startRotation();
@@ -1839,7 +1853,7 @@ onMounted(async () => {
     });
 
     // 监听自动隐藏设置
-    await listen<{ enabled: boolean, delay: number }>('control-auto-hide', (event) => {
+    await safeListen<{ enabled: boolean, delay: number }>('control-auto-hide', (event) => {
         isAutoHideEnabled.value = event.payload.enabled;
         autoHideDelay.value = event.payload.delay;
         setSettingRaw(NSD_AUTO_HIDE_ENABLED, String(isAutoHideEnabled.value));
@@ -1847,14 +1861,14 @@ onMounted(async () => {
     });
 
     // 监听全屏自动隐藏设置
-    await listen<{ enabled: boolean }>('control-autohide-fs', (event) => {
+    await safeListen<{ enabled: boolean }>('control-autohide-fs', (event) => {
         isAutoHideFullscreen.value = event.payload.enabled;
     });
 
     // fullscreen-changed 事件监听已随 useIslandAutoHide 拆出（自带挂载与清理）
 
     // 打印队列：订阅后先读取快照，避免后端启动 emit 早于前端窗口订阅。
-    unlistenFns.push(await listen<PrintQueueState>('print-queue-tick', (event) => {
+    await safeListen<PrintQueueState>('print-queue-tick', (event) => {
         const state = event.payload;
         printJobs.value = Array.isArray(state?.jobs) ? state.jobs : [];
         defaultPrinter.value = state?.defaultPrinter || '';
@@ -1864,7 +1878,7 @@ onMounted(async () => {
                 revertRealtime();
             }
         }
-    }));
+    });
     try {
         const state = await invoke<PrintQueueState>('get_printer_state');
         printJobs.value = Array.isArray(state?.jobs) ? state.jobs : [];
@@ -1874,7 +1888,7 @@ onMounted(async () => {
     }
 
     // 监听后端番茄钟 tick 事件
-    await listen<any>('pomodoro-tick', async (event) => {
+    await safeListen<any>('pomodoro-tick', async (event) => {
         const p = event.payload;
         if (p.active === false) {
             // 番茄钟结束 → 隐藏
@@ -1907,18 +1921,18 @@ onMounted(async () => {
     });
 
     // 监听番茄钟阶段切换事件（用于显示 toast 提示）
-    await listen<any>('pomodoro-phase-change', async (event) => {
+    await safeListen<any>('pomodoro-phase-change', async (event) => {
         const p = event.payload;
         showToast(p.message ?? (p.phase === 'break' ? '专注结束，休息一下吧！' : '休息结束，继续专注！'), 'app');
     });
 
     // 监听番茄钟完成事件
-    await listen<any>('pomodoro-complete', async () => {
+    await safeListen<any>('pomodoro-complete', async () => {
         showToast('所有番茄钟已完成！🎉', 'app');
     });
 
     // 监听倒计时 tick 事件
-    await listen<any>('countdown-tick', async (event) => {
+    await safeListen<any>('countdown-tick', async (event) => {
         const p = event.payload;
         if (p.active === false && p.phase === 'idle') {
             const wasExpanded = expandedRtId.value === 'countdown';
@@ -1949,13 +1963,13 @@ onMounted(async () => {
     });
 
     // 监听倒计时完成事件
-    await listen<any>('countdown-complete', async () => {
+    await safeListen<any>('countdown-complete', async () => {
         isCountdownFinished.value = true;
         showToast('⏰ 倒计时结束', 'app');
     });
 
     // 监听日程同步 tick 事件（F：系统日历 + 手动提醒的未来 24h 列表，列表变化或每 30 秒推送）
-    await listen<{ upcoming: CalendarEventInfo[] }>('calendar-tick', (event) => {
+    await safeListen<{ upcoming: CalendarEventInfo[] }>('calendar-tick', (event) => {
         calUpcoming.value = Array.isArray(event.payload?.upcoming) ? event.payload.upcoming : [];
     });
     // 启动恢复：拉取一次日程快照（窗口重建后无需等待下一个 30s tick）
@@ -1965,7 +1979,7 @@ onMounted(async () => {
     } catch (_e) {}
 
     // 监听健康提醒 tick 事件
-    await listen<any>('health-reminder-tick', async (event) => {
+    await safeListen<any>('health-reminder-tick', async (event) => {
         const p = event.payload;
         const wasAlerting = isHealthAlerting.value;
         // 处理久坐提醒
@@ -1998,7 +2012,7 @@ onMounted(async () => {
     // 监听实时活动控制台指令（非番茄钟活动）
 
     // 监听自动折叠设置
-    await listen<{ enabled: boolean, delay: number }>('control-auto-collapse', (event) => {
+    await safeListen<{ enabled: boolean, delay: number }>('control-auto-collapse', (event) => {
         isAutoCollapseEnabled.value = event.payload.enabled;
         autoCollapseDelay.value = event.payload.delay;
         setSettingRaw(NSD_AUTO_COLLAPSE_ENABLED, String(isAutoCollapseEnabled.value));
@@ -2061,7 +2075,7 @@ onMounted(async () => {
     }
 
     // 监听来自 LiveActive 的硬件监控开关（跨窗口事件，统一由 NSD_HW_ENABLED 驱动）
-    await listen<any>('control-hardware-mon', (event) => {
+    await safeListen<any>('control-hardware-mon', (event) => {
         const p = event.payload || {};
         // 优先使用事件直接携带的完整配置，缺失时回退到 localStorage，保证健壮性
         if (typeof p.enabled === 'boolean') {
@@ -2094,7 +2108,7 @@ onMounted(async () => {
     });
 
     // 监听来自 LiveActive 的实时活动配置（多活动并行轮换：enabled + priority）
-    unlistenFns.push(await listen<Record<string, { enabled: boolean; priority: number }>>('control-activity-config', (event) => {
+    await safeListen<Record<string, { enabled: boolean; priority: number }>>('control-activity-config', (event) => {
         const p = event.payload || {};
         // 合并到 activityConfig（事件优先，缺失的 id 保留原值）
         const merged: Record<string, { enabled: boolean; priority: number }> = { ...activityConfig.value };
@@ -2105,10 +2119,10 @@ onMounted(async () => {
             }
         }
         activityConfig.value = merged;
-    }));
+    });
 
     // 监听后端推送的 monitor-stats 事件（硬件 + 网速统一）
-    unlistenFns.push(await listen<any>('monitor-stats', (event) => {
+    await safeListen<any>('monitor-stats', (event) => {
         const p = event.payload;
         if (typeof p.cpu_pct === 'number') hwCpuPct.value = p.cpu_pct;
         if (typeof p.mem_pct === 'number') hwMemPct.value = p.mem_pct;
@@ -2130,7 +2144,7 @@ onMounted(async () => {
             isHighDownload.value = highDown;
             isHighUpload.value = highUp;
         }
-    }));
+    });
 
     // 启动网速显示轮换定时器（每 5 秒切换上传/下载）
     speedCycleTimer = window.setInterval(() => {
@@ -2149,15 +2163,15 @@ onMounted(async () => {
     // 网速与硬件统一由后端 monitor-stats 推送驱动，前端不再轮询（避免与推送互相覆盖导致 0B/s 跳变）
 
     // 音乐状态事件驱动：后端会话绑定管理器推送 music-info-changed / music-playback-changed
-    unlistenFns.push(await listen<{ song: string; artist: string; playing: boolean; appId: string } | null>('music-info-changed', (event) => {
+    await safeListen<{ song: string; artist: string; playing: boolean; appId: string } | null>('music-info-changed', (event) => {
         const p = event.payload;
         if (p) {
             applyMusicInfo(p.song, p.artist, p.playing, p.appId);
         } else {
             applyNoTrack();
         }
-    }));
-    unlistenFns.push(await listen<{ playing: boolean }>('music-playback-changed', (event) => {
+    });
+    await safeListen<{ playing: boolean }>('music-playback-changed', (event) => {
         const playing = event.payload.playing;
         isPlaying.value = playing;
         // 显示/隐藏调度（对齐 applyMusicInfo 中的调度语义）
@@ -2174,7 +2188,7 @@ onMounted(async () => {
             timelineSyncedAt.value = Date.now();
             timelineClock.value = timelineSyncedAt.value;
         }
-    }));
+    });
 
     // 启动快照一次 + 45s 低频兜底轮询（浏览器/视频类来源 SMTC 事件经常延迟或不发）
     await syncMusicStatus();
@@ -2185,7 +2199,7 @@ onMounted(async () => {
     }, 45000);
 
     // 监听控制台发来的显隐调度指令
-    unlistenFns.push(await listen<{ show: boolean }>('control-island-visibility', async (event) => {
+    await safeListen<{ show: boolean }>('control-island-visibility', async (event) => {
         if (event.payload.show) {
             // 1. 先让透明的 OS 窗口容器显示，此时内部 DOM 因 v-show="false"，视觉上仍是隐形的
             await getCurrentWindow().show();
@@ -2198,33 +2212,33 @@ onMounted(async () => {
             // 控制台关闭指令 -> 触发常规离开动画
             isIslandVisible.value = false;
         }
-    }));
+    });
 
     // 实时监听来自 Rust 底层发来的清透像素流，无缝同步给 Vue 的响应式 DOM 宽高
-    unlistenFns.push(await listen<number[]>("island-resize", (event) => {
+    await safeListen<number[]>("island-resize", (event) => {
         const [w, h] = event.payload;
         currentWidth.value = w;
         currentHeight.value = h;
-    }));
+    });
 
     // B8: 监听后端推来的频谱数据（替代 50ms setInterval 轮询，显著减少 IPC 调用次数）
-    unlistenFns.push(await listen<number[]>("spectrum-data", (event) => {
+    await safeListen<number[]>("spectrum-data", (event) => {
         const p = event.payload;
         const arr = spectrumData.value;
         if (p && p.length === 5) {
             arr[0] = p[0]; arr[1] = p[1]; arr[2] = p[2]; arr[3] = p[3]; arr[4] = p[4];
             triggerRef(spectrumData);
         }
-    }));
+    });
 
     // 消息通知增量事件（替代 5s 轮询）：后端监听线程主动推送，前端入队逐条展示
-    unlistenFns.push(await listen<{ items: ToastItem[] }>('notification-event', (e) => {
+    await safeListen<{ items: ToastItem[] }>('notification-event', (e) => {
         for (const it of e.payload.items) msgQueue.value.push(it);
         processMsgQueue();
-    }));
+    });
 
     // 权限状态：denied/unavailable 时弹灵动岛 toast 提示（可点击跳设置）
-    unlistenFns.push(await listen<AccessStatus>('notification-status', (e) => {
+    await safeListen<AccessStatus>('notification-status', (e) => {
         if (e.payload === 'denied' || e.payload === 'unavailable') {
             showToast(
                 e.payload === 'unavailable'
@@ -2233,7 +2247,7 @@ onMounted(async () => {
                 'notify-permission'
             );
         }
-    }));
+    });
 
     // 启动即触发后端监听（若用户开启了消息通知），由后端状态机负责增量推送 + 轮询兜底
     if (getSettingRaw(NSD_MSG_NOTIFY) === 'true') {
@@ -2242,11 +2256,11 @@ onMounted(async () => {
 
     // 剪贴板历史新条目：可选岛提示（默认关闭）。连续复制由 showToast 合并续期，
     // 且 noWake 保证绝不把隐藏的岛弹出来（高频操作）
-    unlistenFns.push(await listen<{ kind: string; char_len: number }>('clipboard-changed', (e) => {
+    await safeListen<{ kind: string; char_len: number }>('clipboard-changed', (e) => {
         if (getSettingRaw(NSD_CLIPBOARD_ISLAND_TOAST) !== 'true') return;
         const { kind, char_len } = e.payload;
         showToast(kind === 'image' ? '已复制图片' : `已复制文本 ${char_len} 字`, 'clipboard', { noWake: true });
-    }));
+    });
 
     // 启动即触发剪贴板监听（若用户开启），由后端命令幂等保证只有一个监听线程。
     // 监听线程的启停不能只挂在控制台页面——省内存模式下主窗口会被销毁
@@ -2259,6 +2273,15 @@ onMounted(async () => {
     // 恢复番茄钟/倒计时运行状态：查询后端当前状态（逻辑在 useRealtimeActivity 内）
     await restorePomodoroState();
     await restoreCountdownState();
+
+    // 注册完成计数：配合 devtools 可立刻看出初始化链是否中断 / 断在哪
+    console.info(`[island] onMounted 完成：已注册 ${unlistenFns.length} 个事件监听`);
+};
+
+onMounted(() => {
+    bootstrapIsland().catch((e) => {
+        console.error(`[island] onMounted 初始化中断（已注册 ${unlistenFns.length} 个监听器）`, e);
+    });
 });
 
 onUnmounted(() => {
@@ -2302,10 +2325,6 @@ onUnmounted(() => {
     outline: none !important;
 }
 
-:root {
-    -webkit-app-region: drag;
-}
-
 :global(html),
 :global(body) {
     background-color: transparent !important;
@@ -2334,7 +2353,6 @@ onUnmounted(() => {
     box-sizing: border-box;
     transform: translateZ(0);
     will-change: width, height, border-radius;
-    contain: strict;
 }
 
 /* 隐藏在底层的巨大旋转渐变层 */
@@ -2456,6 +2474,9 @@ onUnmounted(() => {
     cursor: ew-resize;
     transition: opacity 0.2s ease, background-color 0.2s ease;
     opacity: 0;
+    /* 不参与命中：6px 竖条此前静默吞掉左右边缘的点击；
+       调宽由 handleMouseDown 的 isNearEdge（8px）统一接管，光标由 resize-cursor-* 类提供 */
+    pointer-events: none;
 }
 
 .resize-handle:hover {
