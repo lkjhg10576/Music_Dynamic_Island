@@ -100,7 +100,7 @@ unsafe extern "system" fn clipboard_link_wndproc(
         if ENABLED.load(std::sync::atomic::Ordering::SeqCst)
             && !crate::clipboard::has_skip_seq(crate::clipboard::current_seq())
         {
-            if let Some(link) = read_clipboard_text().and_then(extract_first_link) {
+            if let Some(link) = read_clipboard_text().as_deref().and_then(extract_first_link) {
                 // 载荷与上游对齐：前端只拿链接本身，无需再读剪贴板
                 if let Some(app) = CLIPBOARD_LINK_APP.get() {
                     crate::win32_utils::log_err(
