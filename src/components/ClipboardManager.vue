@@ -49,11 +49,15 @@
                 <div class="cm-quota-wrap">
                     <button class="cm-btn" @click.stop="quotaOpen = !quotaOpen">存储限制 ▾</button>
                     <div v-if="quotaOpen" class="cm-quota-pop">
-                        <div class="cm-quota-line">图片 {{ imageCount }}/{{ MAX_IMAGES }}　{{ formatBytes(imageBytes) }} / {{ formatBytes(MAX_IMAGE_BYTES) }}</div>
                         <div class="cm-quota-line">总条目 {{ items.length }}/{{ MAX_ITEMS }}</div>
+                        <div class="cm-quota-line">置顶 {{ pinnedCount }}/{{ MAX_PINNED_ITEMS }}</div>
+                        <div class="cm-quota-line">图片 {{ imageCount }}/{{ MAX_IMAGES }}　{{ formatBytes(imageBytes) }} / {{ formatBytes(MAX_IMAGE_BYTES) }}</div>
                     </div>
                 </div>
             </div>
+
+            <!-- ===== 置顶区满提示：置顶被后端拒绝时短暂展示 ===== -->
+            <div v-if="pinNotice" class="cm-pin-notice">{{ pinNotice }}</div>
 
             <!-- ===== 条目卡片列表 ===== -->
             <div class="cm-list">
@@ -104,7 +108,8 @@ import { NSD_CLIPBOARD_ENABLED, NSD_CLIPBOARD_ISLAND_TOAST } from '../constants/
 import { getSettingRaw, setSettingRaw } from '../utils/settings';
 
 // ===== 配额常量（与后端 Rust 常量一致，仅用于展示） =====
-const MAX_ITEMS = 100;
+const MAX_ITEMS = 500;
+const MAX_PINNED_ITEMS = 100;
 const MAX_IMAGES = 20;
 const MAX_IMAGE_BYTES = 100 * 1024 * 1024;
 
@@ -156,6 +161,7 @@ const imageCount = computed(() => items.value.filter((it) => it.kind === 'image'
 const imageBytes = computed(() =>
     items.value.filter((it) => it.kind === 'image').reduce((acc, it) => acc + it.img_bytes, 0)
 );
+const pinnedCount = computed(() => items.value.filter((it) => it.pinned).length);
 
 // ===== 清空全部：首次点击进入确认态（红色背景）；点外部还原 / 10 秒超时自动还原 =====
 const clearArmed = ref(false);
@@ -208,14 +214,28 @@ async function onCopy(item: ClipItem) {
     }
 }
 
+// ===== 置顶区满提示：后端拒绝置顶时短暂展示，3 秒自动消失 =====
+const pinNotice = ref('');
+let pinNoticeTimer: number | null = null;
+
+function showPinNotice(msg: string) {
+    pinNotice.value = msg;
+    if (pinNoticeTimer !== null) clearTimeout(pinNoticeTimer);
+    pinNoticeTimer = window.setTimeout(() => {
+        pinNotice.value = '';
+        pinNoticeTimer = null;
+    }, 3000);
+}
+
 async function onPinToggle(item: ClipItem) {
-    // 仅变更图标，顺序不变（下次进入页面才重排）
+    // 仅变更图标，顺序不变（下次进入页面才重排）；置顶区满时后端拒绝，条目保持未置顶
     try {
         await togglePin(item.id);
         item.pinned = !item.pinned;
         item.pin_ts_ms = item.pinned ? Date.now() : 0;
     } catch (err) {
         console.error('置顶失败:', err);
+        showPinNotice(typeof err === 'string' ? err : '置顶失败');
     }
 }
 
@@ -242,6 +262,7 @@ onMounted(async () => {
 onUnmounted(() => {
     unbindEvents();
     if (copiedTimer !== null) clearTimeout(copiedTimer);
+    if (pinNoticeTimer !== null) clearTimeout(pinNoticeTimer);
     disarmClear();
 });
 </script>
@@ -294,6 +315,16 @@ onUnmounted(() => {
     padding: 9px 14px;
     font-size: 12.5px;
     color: var(--text-body);
+}
+
+/* 置顶区满提示条：琥珀色警示（与置顶星同色） */
+.cm-pin-notice {
+    background: var(--btn-sec-bg);
+    border: 1px solid #f59e0b;
+    border-radius: 10px;
+    padding: 9px 14px;
+    font-size: 12.5px;
+    color: #f59e0b;
 }
 
 /* 二级设置行（灵动岛提示） */

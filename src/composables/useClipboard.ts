@@ -1,7 +1,7 @@
 /**
  * 剪贴板历史 composable（plan-20260906 功能二）：
  * - 拉取全量历史（后端已按展示顺序排序：置顶区按置顶时间倒序，其余按复制时间倒序）
- * - 订阅 clipboard-changed：新条目到达时重拉（条目 ≤100，开销可忽略）
+ * - 订阅 clipboard-changed：新条目到达时重拉（条目 ≤500，开销可忽略）
  * - 命令封装：启停 / 复制 / 置顶 / 删除 / 清空
  * - 相对时间与体积格式化（供页面与搜索过滤共用）
  */
@@ -56,7 +56,7 @@ export function useClipboard() {
         await invoke('clipboard_copy_item', { id });
     }
 
-    /** 置顶 / 取消置顶：仅变更图标，列表顺序不变（下次进入页面才重排） */
+    /** 置顶 / 取消置顶：仅变更图标，列表顺序不变（下次进入页面才重排）；置顶区满（100 条）时后端拒绝置顶 */
     async function togglePin(id: string) {
         await invoke('clipboard_toggle_pin', { id });
     }

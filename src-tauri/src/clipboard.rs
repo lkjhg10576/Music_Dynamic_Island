@@ -9,8 +9,10 @@
 //!   历史数据**绝不**写 config.json（该文件每次变更全量广播，历史数据会拖垮双窗口）
 //! - 自写豁免：`clipboard_copy_item` 写入产生的新 seq 记入跳过集合，监听线程命中即跳过，
 //!   不产生新历史 / 不触发岛提示 / 不重排列表
-//! - 配额（plan §4.6，代码常量）：总条目 100 / 图片 20 / 图片容量 100MB / 单图 20MB /
-//!   未置顶保留 3 天；三约束相互独立按池淘汰，循环至达标
+//! - 配额（代码常量）：总条目 500 / 图片 20 / 图片容量 100MB / 单图 20MB / 未置顶保留 3 天；
+//!   约束相互独立按池淘汰，循环至达标。图片 20 条/100MB 为全局口径，置顶区随之天然满足
+//!   「≤20 张 / 100MB」子限制，无需单独校验
+//! - 置顶区上限 100 条：置顶动作超限直接拒绝（前端提示）；溢出兜底自愈为取消最旧置顶，不删条目
 //! - 缩略图：WIC 解码 → 最长边 256（只缩小不放大，Fant 插值）→ JPEG 直写文件；
 //!   点击复制时写回的是原样 PNG 字节流，缩略图只影响面板预览
 
@@ -24,8 +26,10 @@ use tauri::{AppHandle, Emitter};
 
 use crate::storage::{app_data_dir, atomic_write, read_json};
 
-// ===== 配额常量（plan §4.6，不暴露为设置项） =====
-const MAX_ITEMS: usize = 100;
+// ===== 配额常量（代码常量，不暴露为设置项） =====
+const MAX_ITEMS: usize = 500;
+/// 置顶区条目上限：置顶动作超限拒绝（clipboard_toggle_pin），溢出兜底自愈见 enforce_quotas
+const MAX_PINNED_ITEMS: usize = 100;
 const MAX_IMAGES: usize = 20;
 const MAX_IMAGE_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_SINGLE_IMAGE: u64 = 20 * 1024 * 1024;
@@ -147,9 +151,24 @@ enum Pool {
     Images,
 }
 
-/// 配额淘汰：时间 → 总条目 → 图片数 → 图片容量，循环至全部达标。返回列表是否有变化。
+/// 配额淘汰：置顶溢出（自愈）→ 时间 → 总条目 → 图片数 → 图片容量，循环至全部达标。返回列表是否有变化。
 fn enforce_quotas(app: &AppHandle, list: &mut Vec<ClipItem>) -> bool {
     let mut changed = false;
+
+    // 置顶区溢出自愈：正常路径 clipboard_toggle_pin 已拒绝超限置顶，此处仅为兜底
+    // （并发竞态 / 手改数据）。超限时按置顶时间取消最旧的置顶（转普通条目，交由时间
+    // 淘汰自然处理）而非删除，与「不自动删用户显式置顶」的语义一致
+    while list.iter().filter(|i| i.pinned).count() > MAX_PINNED_ITEMS {
+        if let Some(item) = list
+            .iter_mut()
+            .filter(|i| i.pinned)
+            .min_by_key(|i| (i.pin_ts_ms, i.ts_ms))
+        {
+            item.pinned = false;
+            item.pin_ts_ms = 0;
+        }
+        changed = true;
+    }
 
     // 时间淘汰：仅未置顶，一次性移除全部超期（置顶豁免）
     let cutoff = now_ms().saturating_sub(RETENTION_MS);
@@ -830,11 +849,19 @@ fn write_image_locked(app: &AppHandle, item: &ClipItem) -> Result<(), String> {
     }
 }
 
-/// 置顶 / 取消置顶：仅改 pinned 与 pin_ts_ms，不动列表顺序（下次进入页面才重排）
+/// 置顶 / 取消置顶：仅改 pinned 与 pin_ts_ms，不动列表顺序（下次进入页面才重排）。
+/// 置顶区满（100 条）时拒绝置顶并返回错误（前端提示）；取消置顶永不受限
 #[tauri::command]
 pub fn clipboard_toggle_pin(app: AppHandle, id: String) -> Result<(), String> {
     let mut list = load_history(&app);
+    let pinned_count = list.iter().filter(|i| i.pinned).count();
     let item = list.iter_mut().find(|i| i.id == id).ok_or("条目不存在")?;
+    if !item.pinned && pinned_count >= MAX_PINNED_ITEMS {
+        return Err(format!(
+            "置顶区已满（最多 {} 条），请先取消部分置顶",
+            MAX_PINNED_ITEMS
+        ));
+    }
     item.pinned = !item.pinned;
     item.pin_ts_ms = if item.pinned { now_ms() } else { 0 };
     persist_history(&app, &list)
