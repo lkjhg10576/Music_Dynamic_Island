@@ -6,12 +6,19 @@
  *   - isNearEdge / mouseNearEdge / canResize：边缘区域检测与可调整判定
  *   - handleMouseDown / handleMouseMove / handleMouseUp：按下-移动-抬起主流程，
  *     按锁定/展开/通知态路由到 resize 或窗口拖拽（岛模式 startDragging / 任务栏模式横向拖拽）
- * mouseDownX / mouseDownY 同时供主组件 expandMusic 做点击位移判定（超过 5px 视为拖拽非点击）。
+ * mouseDownX / mouseDownY 同时供主组件 expandMusic 做点击位移判定（超过 DRAG_THRESHOLD_PX 视为拖拽非点击）。
  * 自定义横向拖拽的底层实现（startCustomHorizontalDrag / handleCustomDragEnd）在 useIslandAnimation
  * 内，经依赖注入；位置锁定 / 弹簧动画锁等状态 ref 由主组件传入。
  */
 import { ref, computed, type Ref } from 'vue';
 import { getCurrentWindow, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window';
+
+/**
+ * 拖拽判定阈值（px）：位移超过该值才升级为窗口拖拽。
+ * 原值 5px 对人手点击的抖动过于敏感——误触发 startDragging 会让 WebView 进入
+ * 系统拖拽循环、吞掉随后的 mouseup/click，表现为"点不动"；点击判定（expandMusic）共用此值保持一致。
+ */
+export const DRAG_THRESHOLD_PX = 9;
 
 export function useIslandPointer(deps: {
     isPositionLocked: Ref<boolean>;
@@ -199,7 +206,7 @@ export function useIslandPointer(deps: {
 
         // 4. 任务栏模式 + 已解锁：仅允许横向拖拽（自定义实现，约束 Y 轴不变）
         if (isPinnedToTaskbar.value) {
-            if (Math.abs(event.clientX - mouseDownX.value) > 5) {
+            if (Math.abs(event.clientX - mouseDownX.value) > DRAG_THRESHOLD_PX) {
                 isMouseDown = false;
                 await startCustomHorizontalDrag(event);
             }
@@ -207,9 +214,10 @@ export function useIslandPointer(deps: {
         }
 
         // 5. 岛模式 + 已解锁：自由拖拽（原生 startDragging，X/Y 均可移动）
-        if (Math.abs(event.clientX - mouseDownX.value) > 5 || Math.abs(event.clientY - mouseDownY.value) > 5) {
+        if (Math.abs(event.clientX - mouseDownX.value) > DRAG_THRESHOLD_PX || Math.abs(event.clientY - mouseDownY.value) > DRAG_THRESHOLD_PX) {
             isMouseDown = false;
             try {
+                event.preventDefault();
                 await getCurrentWindow().startDragging();
             } catch (error) {
                 console.error('拖拽失败:', error);
