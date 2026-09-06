@@ -26,6 +26,9 @@ pub struct ToastItem {
     pub title: String,
     pub body: String,
     pub aumid: String,
+    // 来源应用 logo（data URI base64，解码自 DisplayInfo::GetLogo）；
+    // None 时前端回退本地白名单/默认图标
+    pub icon: Option<String>,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -43,11 +46,12 @@ pub enum AccessStatus {
 
 // ===== 增量拉取 =====
 
-/// 返回 id > 游标 的全部通知（升序）；逐条过滤微信；游标推进到已处理的最大 id。
+/// 返回 id > 游标 的全部通知（按 id 升序处理）；逐条过滤微信；游标推进到已处理的最大 id。
 /// first_run=true 时仅推进游标（基线捕获），不推送，避免关/开通知后回放存量积压。
 fn fetch_incremental(first_run: bool) -> Result<NotificationBatch, String> {
-    use windows::UI::Notifications::Management::UserNotificationListener;
     use windows::UI::Notifications::NotificationKinds;
+    use windows::UI::Notifications::UserNotification;
+    use windows::UI::Notifications::Management::UserNotificationListener;
 
     let listener = match UserNotificationListener::Current() {
         Ok(l) => l,
@@ -62,16 +66,25 @@ fn fetch_incremental(first_run: bool) -> Result<NotificationBatch, String> {
         Err(_) => return Ok(NotificationBatch { items: vec![] }),
     };
 
-    let mut batch: Vec<ToastItem> = Vec::new();
-    let mut max_id = 0u32;
+    // 游标初值取自上次推进位置（此前每批从 0 重算、全局游标只写不读，增量过滤完全失效）
+    let mut max_id = LAST_NOTIFICATION_ID.load(Ordering::SeqCst);
 
+    // GetNotificationsAsync 的返回顺序无保证：先按 id 升序整理再游标过滤，
+    // 否则乱序批次配合运行游标会漏掉中间 id 的新通知
+    let mut ordered: Vec<(u32, UserNotification)> = Vec::new();
     for notif in notifications {
-        let id = match notif.Id() {
-            Ok(id) => id,
-            Err(_) => continue,
-        };
+        if let Ok(id) = notif.Id() {
+            ordered.push((id, notif));
+        }
+    }
+    ordered.sort_by_key(|(id, _)| *id);
+
+    let mut batch: Vec<ToastItem> = Vec::new();
+
+    for (id, notif) in ordered {
+        // 游标过滤：仅处理上次已推进位置之后的新通知
         if id <= max_id {
-            continue; // 保序
+            continue;
         }
         max_id = id;
 
@@ -139,15 +152,45 @@ fn fetch_incremental(first_run: bool) -> Result<NotificationBatch, String> {
                 title,
                 body,
                 aumid,
+                icon: extract_logo_data_uri(&notif),
             });
         }
     }
 
-    // 推进游标到本次已处理的最大 id（无论是否被微信过滤）
+    // 推进游标到本次已处理的最大 id（无论条目是否被过滤）；fetch_max 防并发回退
     if max_id > 0 {
-        LAST_NOTIFICATION_ID.store(max_id, Ordering::SeqCst);
+        LAST_NOTIFICATION_ID.fetch_max(max_id, Ordering::SeqCst);
     }
     Ok(NotificationBatch { items: batch })
+}
+
+/// 读取来源应用 DisplayInfo 的 logo 并解码为 data URI（base64）。
+/// 仅在监听线程（已建 COM MTA 套间）内调用；任一步失败返回 None，不影响通知本体推送。
+fn extract_logo_data_uri(notif: &windows::UI::Notifications::UserNotification) -> Option<String> {
+    use base64::Engine as _;
+    use windows::Storage::Streams::DataReader;
+
+    let logo = notif
+        .AppInfo()
+        .and_then(|i| i.DisplayInfo())
+        .and_then(|d| d.GetLogo())
+        .ok()?;
+
+    let stream = logo.OpenReadAsync().ok()?.get().ok()?;
+    let content_type = stream.ContentType().map(|t| t.to_string()).unwrap_or_default();
+    let mime = if content_type.is_empty() { "image/png" } else { content_type.as_str() };
+
+    // 通知 logo 均为小图（典型几 KB），512KB 上限拦截异常数据
+    let reader = DataReader::CreateDataReader(&stream).ok()?;
+    let loaded = reader.LoadAsync(512 * 1024).ok()?.get().ok()? as usize;
+    let mut bytes = vec![0u8; loaded];
+    reader.ReadBytes(&mut bytes).ok()?;
+
+    Some(format!(
+        "data:{};base64,{}",
+        mime,
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 // ===== 命令 =====

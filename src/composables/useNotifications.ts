@@ -22,6 +22,8 @@ export interface ToastItem {
     title: string;
     body: string;
     aumid: string;
+    /** 来源应用 logo（后端解码为 data URI）；null 表示后端未取到，回退白名单/默认图标 */
+    icon?: string | null;
 }
 
 // 通知权限状态
@@ -286,7 +288,8 @@ export function useNotifications(deps: {
             msgTitle.value = (item.title && item.title !== item.app_name) ? item.title : '新通知';
             msgAppName.value = item.app_name;
             msgBody.value = item.body || (item.title === item.app_name ? '收到一条新通知' : item.title);
-            currentMsgIcon.value = getAppIcon(item.app_name);
+            // 优先用后端解码的应用 logo；取不到时回退本地化名白名单，最后落默认图标
+            currentMsgIcon.value = item.icon || getAppIcon(item.app_name);
 
             if (!isMsgActive.value) {
                 isMsgActive.value = true;
