@@ -10,8 +10,6 @@
  */
 import { ref, computed, watch, type Ref, type ComputedRef } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-// 临时诊断日志（9.9.9-1）：诊断结束后连同全部 dlog 调用一起移除
-import { dlog } from '../utils/debugLog';
 
 export interface MusicTimelineResponse { position_ms: number; end_ms: number; can_seek: boolean; }
 
@@ -260,21 +258,15 @@ export function useLyrics(deps: {
         try {
             const lrc = await invoke<string>('fetch_netease_lyrics', { songName: song, artistName: artist, durationMs });
             if (mySeq !== lyricReqSeq) return; // 已切歌，丢弃过期结果
-            // 临时诊断（9.9.9-1）：歌词请求结果（行数/字符量判断"歌词不显示"是数据缺失还是渲染问题）
-            dlog('info', 'lyrics', '歌词请求完成', { song, artist, hit: Boolean(lrc), rawLen: lrc ? lrc.length : 0 });
             if (lrc) {
                 parsedLyrics.value = parseLrc(lrc);
-                dlog('info', 'lyrics', '歌词解析完成', { lines: parsedLyrics.value.length });
                 // 浏览器拉到歌词 → 判定为播放音乐（而非视频），回调通知音乐域翻转判定
                 if (currentIsBrowser.value) onBrowserMusicDetected();
                 currentMatchedIndex = -1;
                 lyricQueue.value = [];
                 lastLyricChangeTime = 0;
             }
-        } catch (lyricErr) {
-            // 静默失败：回退显示歌名
-            dlog('warn', 'lyrics', '歌词请求失败', { song, artist, err: String(lyricErr) });
-        }
+        } catch (_) { /* 静默失败：回退显示歌名 */ }
     };
 
     // 重置歌词相关状态（切歌/停止播放/无标题时调用）

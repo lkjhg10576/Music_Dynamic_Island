@@ -9,8 +9,6 @@
 import { ref, type Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-// 临时诊断日志（9.9.9-1）：诊断结束后连同全部 dlog 调用一起移除
-import { dlog } from '../utils/debugLog';
 
 export function useMusicSync(deps: {
     displayMusic: Ref<boolean>;
@@ -160,15 +158,12 @@ export function useMusicSync(deps: {
             coverCache.set(newTrackInfo, realCoverUrl);
             // 烘焙沉浸模式模糊封面（只烘焙一次并按曲目缓存）
             await deps.bakeAndStoreBlur(newTrackInfo, realCoverUrl);
-            // 临时诊断（9.9.9-1）：封面就绪（URL 只记前缀与长度）
-            dlog('info', 'music', '封面就绪', { prefix: realCoverUrl.slice(0, 24), len: realCoverUrl.length });
         } catch (coverErr) {
             if (fetchVersion !== coverFetchVersion
                 || currentTrackInfo.value !== newTrackInfo) {
                 return;
             }
             console.error('所有封面源均获取失败', coverErr);
-            dlog('warn', 'music', '封面获取失败', { song, artist });
             // 使用本地图标或纯色背景，不要再用外部 URL 作为错误兜底
             coverUrl.value = '';
         }
@@ -181,8 +176,6 @@ export function useMusicSync(deps: {
     // 旧实现把 isPlaying 赋值和 show() 排在封面（1~3s）与歌词（1~3s）两次串行网络请求之后，
     // 而启动时灵动岛已被自动隐藏，导致用户要等 2~6s 才看到内容。
     const applyMusicInfo = async (song: string, artist: string, playing: boolean, appId: string) => {
-        // 临时诊断（9.9.9-1）：音乐数据到达记录——歌名/歌词"不显示"时先确认数据是否到达前端
-        dlog('info', 'music', 'applyMusicInfo', { song, artist, playing, appId });
         // 捕获本次调用起始版本；清理缓存会递增版本，避免过期封面回写
         const fetchVersion = coverFetchVersion;
 
@@ -235,8 +228,6 @@ export function useMusicSync(deps: {
 
     // 无可用音乐会话：清空展示
     const applyNoTrack = () => {
-        // 临时诊断（9.9.9-1）：会话清空事件
-        dlog('info', 'music', 'applyNoTrack 清空展示');
         currentTrackInfo.value = `未在播放歌曲 - ${deps.getPlayerName()}`;
         currentSongName.value = '未在播放歌曲';
         currentArtistName.value = deps.getPlayerName();

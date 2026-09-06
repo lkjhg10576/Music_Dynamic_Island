@@ -326,21 +326,6 @@ fn start_listener_thread(
 
         match fetch_incremental(first_run) {
             Ok(batch) if !batch.items.is_empty() => {
-                // 临时诊断（9.9.9-1）：逐条记录推送内容；图标只记前缀与长度，不落 base64
-                for item in &batch.items {
-                    let icon_info = match &item.icon {
-                        Some(i) => format!("前缀={:?} 长度={}字符", i.chars().take(24).collect::<String>(), i.chars().count()),
-                        None => "None(后端未取到，前端走白名单/默认图标)".to_string(),
-                    };
-                    crate::debug_log::write(
-                        "info",
-                        "notify",
-                        &format!(
-                            "notification-event app={} title={} body={} aumid={} icon:{}",
-                            item.app_name, item.title, item.body, item.aumid, icon_info
-                        ),
-                    );
-                }
                 crate::win32_utils::log_err(app.emit("notification-event", batch), "emit notification-event");
             }
             _ => {}

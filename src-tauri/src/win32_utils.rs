@@ -63,12 +63,9 @@ impl Default for ComGuard {
 
 /// Result 错误统一出口：Err 时打 warn（stderr），Ok（含任意载荷，如 LyricEntry）静默。
 /// 用于替换 `let _ = ...` 式的静默忽略；事件 emit / 文件操作等路径均适用。
-/// 9.9.9-1：同时落盘到 debug_log（release 下 stderr 无去处，文件是唯一可见通道）
 pub(crate) fn log_err<T, E: std::fmt::Display>(res: Result<T, E>, ctx: &str) {
     if let Err(e) = res {
-        let msg = format!("{}: {}", ctx, e);
-        eprintln!("[NSD][warn] {}", msg);
-        crate::debug_log::write("warn", "rust-err", &msg);
+        eprintln!("[NSD][warn] {}: {}", ctx, e);
     }
 }
 

@@ -17,8 +17,6 @@ mod print_utils;
 mod thread_mgr;
 mod win32_utils;
 mod clipboard;
-// 临时诊断日志（9.9.9-1）：诊断结束后连同全部埋点一起移除
-mod debug_log;
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicBool, Ordering};
@@ -165,15 +163,6 @@ fn start_animation_thread() {
                     };
 
                     win32_utils::set_window_pos_no_activate(cmd.hwnd_raw, final_x, final_y, phys_target_w, phys_target_h);
-                    // 临时诊断（9.9.9-1）：动画最终落点，核对窗口实际物理尺寸/位置
-                    debug_log::write(
-                        "info",
-                        "anim",
-                        &format!(
-                            "island-resize 完成 {}x{} @ ({},{})",
-                            phys_target_w, phys_target_h, final_x, final_y
-                        ),
-                    );
                     win32_utils::log_err(
                         cmd.window_clone.emit("island-resize", vec![cmd.target_width, cmd.target_height]),
                         "emit island-resize",
@@ -201,32 +190,18 @@ fn start_animation_thread() {
 fn force_window_topmost(app: tauri::AppHandle) {
     // 判断逻辑（菜单/外壳/全屏跳过）收口到 win32_utils，此处只做置顶动作
     if win32_utils::should_skip_topmost() {
-        debug_log::write("info", "topmost", "force_window_topmost 跳过（前台为菜单/全屏窗口）");
         return;
     }
     if let Some(win) = app.get_webview_window("widget") {
-        match win.hwnd() {
-            Ok(hwnd) => {
-                win32_utils::set_window_pos_topmost(hwnd.0 as isize);
-                debug_log::write("info", "topmost", "force_window_topmost 已执行置顶");
-            }
-            Err(e) => {
-                debug_log::write("warn", "topmost", &format!("force_window_topmost 获取 widget hwnd 失败: {}", e));
-            }
+        if let Ok(hwnd) = win.hwnd() {
+            win32_utils::set_window_pos_topmost(hwnd.0 as isize);
         }
-    } else {
-        debug_log::write("warn", "topmost", "force_window_topmost 未找到 widget 窗口");
     }
 }
 
 // 新增：底层原子化窗口调整指令，彻底消除位移闪烁
 #[tauri::command]
 fn set_window_bounds(app: tauri::AppHandle, x: i32, y: i32, width: i32, height: i32) {
-    debug_log::write(
-        "info",
-        "win-bounds",
-        &format!("set_window_bounds x={} y={} w={} h={}", x, y, width, height),
-    );
     if let Some(win) = app.get_webview_window("widget") {
         if let Ok(hwnd) = win.hwnd() {
             // SWP_NOACTIVATE | SWP_NOZORDER：不抢占用户焦点，不打乱窗口层级
@@ -245,15 +220,6 @@ async fn start_island_animation(
     is_pinned: bool,
 ) -> Result<(), String> {
     let id = ANIMATION_ID.fetch_add(1, Ordering::SeqCst) + 1;
-    // 临时诊断（9.9.9-1）：每次岛尺寸动画的触发参数（点击展开/通知/toast 都会走这里）
-    debug_log::write(
-        "info",
-        "anim",
-        &format!(
-            "start_island_animation {:.1}x{:.1} -> {:.1}x{:.1} pinned={}",
-            start_width, start_height, target_width, target_height, is_pinned
-        ),
-    );
     let scale_factor = window.scale_factor().unwrap_or(1.0);
 
     #[cfg(target_os = "windows")]
@@ -719,7 +685,6 @@ pub fn run() {
             notification::launch_app_by_aumid,
             force_window_topmost,
             set_window_bounds,
-            debug_log::append_frontend_log,
             start_island_animation,
             audio_spectrum::set_spectrum_active,
             audio_spectrum::start_audio_spectrum,
@@ -783,8 +748,6 @@ pub fn run() {
             clipboard::clipboard_clear,
         ])
         .setup(|app| {
-            // 临时诊断日志（9.9.9-1）：必须在最前，后续所有 log_err / 埋点都依赖它
-            debug_log::init(app.handle());
             // 设置单一数据源：载入 config.json + 落盘线程
             config_store::init(app.handle());
             // 流量统计：尽早从磁盘载入历史数据，避免前端首屏查询时读到空快照
@@ -914,13 +877,13 @@ pub fn run() {
                             let border_color: u32 = 0xFFFFFFFE;
                             let hr = DwmSetWindowAttribute(hwnd_raw, DWMWA_BORDER_COLOR as u32, &border_color as *const _ as *const _, 4);
                             if hr != 0 {
-                                debug_log::write("warn", "widget-window", &format!("DwmSetWindowAttribute(BORDER_COLOR) failed, hr=0x{:08X}", hr));
+                                eprintln!("[NSD][warn] DwmSetWindowAttribute(BORDER_COLOR) failed, hr=0x{:08X}", hr);
                             }
 
                             let corner_preference = DWMWCP_DONOTROUND;
                             let hr = DwmSetWindowAttribute(hwnd_raw, DWMWA_WINDOW_CORNER_PREFERENCE as u32, &corner_preference as *const _ as *const _, 4);
                             if hr != 0 {
-                                debug_log::write("warn", "widget-window", &format!("DwmSetWindowAttribute(CORNER_PREFERENCE) failed, hr=0x{:08X}", hr));
+                                eprintln!("[NSD][warn] DwmSetWindowAttribute(CORNER_PREFERENCE) failed, hr=0x{:08X}", hr);
                             }
                         }
                     }
