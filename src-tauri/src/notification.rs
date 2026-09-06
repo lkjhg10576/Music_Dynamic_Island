@@ -173,7 +173,7 @@ fn extract_logo_data_uri(notif: &windows::UI::Notifications::UserNotification) -
     let logo = notif
         .AppInfo()
         .and_then(|i| i.DisplayInfo())
-        .and_then(|d| d.GetLogo())
+        .and_then(|d| d.GetLogo(windows::Foundation::Size { Width: 96.0, Height: 96.0 }))
         .ok()?;
 
     let stream = logo.OpenReadAsync().ok()?.get().ok()?;
