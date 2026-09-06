@@ -40,8 +40,9 @@ export async function initSettings(): Promise<void> {
         // 后端不可用时保留 localStorage 原数据，不阻塞启动
     }
     try {
-        const all = await invoke<Record<string, string>>('config_get_all');
-        for (const [k, v] of Object.entries(all)) cache.set(k, v);
+        // 后端返回 HashMap<String, serde_json::Value>，布尔/数字字面量会让 === 'true' 判断静默失效，统一字符串化
+        const all = await invoke<Record<string, unknown>>('config_get_all');
+        for (const [k, v] of Object.entries(all)) cache.set(k, v == null ? '' : String(v));
     } catch {
         // 缓存保持为空，getSettingRaw 返回 null，由各调用方 fallback 兜底
     }
