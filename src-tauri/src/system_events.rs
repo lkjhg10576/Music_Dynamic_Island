@@ -87,6 +87,8 @@ fn emit_sys_event(app: &AppHandle, kind: &str, level: &str, text: &str) {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0),
     };
+    // 临时诊断（9.9.9-1）：实际发出的 sysmsg 事件（过滤/免打扰拦截的不记）
+    crate::debug_log::write("info", "sysmsg", &format!("kind={} level={} text={}", kind, level, text));
     crate::win32_utils::log_err(app.emit("sysmsg-event", payload), "emit sysmsg-event");
 }
 

@@ -14,6 +14,8 @@ import { ref, watch, type Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import defaultLogo from '../assets/logo.png';
+// 临时诊断日志（9.9.9-1）：诊断结束后连同全部 dlog 调用一起移除
+import { dlog } from '../utils/debugLog';
 
 // 消息通知条目（后端 notification-event 事件推送）
 export interface ToastItem {
@@ -284,6 +286,17 @@ export function useNotifications(deps: {
 
         if (item) {
             const token = ++toastWaitToken;
+            // 临时诊断（9.9.9-1）：通知数据到达记录——图标只记来源/前缀/长度，判断
+            // "通知图标不显示"是数据缺失还是渲染问题；文本字段判断字符显示问题
+            dlog('info', 'notify', '展示消息通知', {
+                title: item.title,
+                appName: item.app_name,
+                body: item.body,
+                aumid: item.aumid,
+                iconFromBackend: Boolean(item.icon),
+                iconPrefix: item.icon ? item.icon.slice(0, 24) : null,
+                iconLen: item.icon ? item.icon.length : 0,
+            });
             msgAumid.value = item.aumid;
             msgTitle.value = (item.title && item.title !== item.app_name) ? item.title : '新通知';
             msgAppName.value = item.app_name;
@@ -350,6 +363,7 @@ export function useNotifications(deps: {
 
     // 点击系统 toast：notify-permission 类型跳转到 Windows 通知设置
     const onSysToastClick = () => {
+        dlog('info', 'notify', '点击系统 toast', { type: sysToastType.value, text: sysToastText.value });
         if (sysToastType.value === 'notify-permission') {
             invoke('open_notification_settings').catch(() => {});
         }
@@ -357,6 +371,8 @@ export function useNotifications(deps: {
 
     // 暴露给外部调用的触发函数
     const showToast = (text: string, type: SysToastType = 'app', opts?: { noWake?: boolean }) => {
+        // 临时诊断（9.9.9-1）：toast 文本与类型（含音量/剪贴板合并续期路径）
+        dlog('info', 'notify', 'toast 入队/更新', { text, type });
         // 音量：合并到当前显示或队列中的唯一 volume 项，并续期显示截止时间
         // 表现：单次弹出后数字随实际调节实时更新，不反复进场/离场
         if (type === 'volume') {
@@ -408,6 +424,8 @@ export function useNotifications(deps: {
 
     // 把后端结构化 sysmsg-event 映射成灵动岛通知类型
     const showSysmsgToast = (p: { kind: string; level: string; text: string }) => {
+        // 临时诊断（9.9.9-1）：sysmsg 到类型映射
+        dlog('info', 'notify', 'sysmsg 映射 toast', p);
         let type: SysToastType = 'sys';
         if (p.kind === 'volume') type = 'volume';
         else if (p.kind === 'unlock') type = 'unlock';
@@ -464,6 +482,7 @@ export function useNotifications(deps: {
     // 点击灵动岛上的通知：立即返回通知弹出前状态，并打开来源应用
     const handleNotificationClick = async () => {
         const aumid = msgAumid.value;
+        dlog('info', 'notify', '点击消息通知', { aumid });
         // 先关闭通知显示，恢复灵动岛状态
         dismissMsgNotification();
         // 再启动来源应用

@@ -100,6 +100,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow, currentMonitor, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window';
 import { listen, emit, type Event } from '@tauri-apps/api/event';
 import { formatSpeed } from '../utils/format';
+// 临时诊断日志（9.9.9-1）：诊断结束后连同全部 dlog 调用一起移除
+import { dlog, describeEventTarget } from '../utils/debugLog';
 import {
     NSD_AUTO_HIDE_DELAY, NSD_AUTO_HIDE_ENABLED,
     NSD_AUTO_COLLAPSE_DELAY, NSD_AUTO_COLLAPSE_ENABLED,
@@ -242,6 +244,12 @@ const showRtChip = computed(() => {
 // 同时推进 currentRtIndex 到下一个候选（用于下次小图标显示）
 // 展开动作（展开态标记 + 尺寸动画）由活动注册表按 id 派发，本函数不再逐活动分支
 function clickRtChip(targetId?: string) {
+    // 临时诊断（9.9.9-1）：chip 点击是"可点击"基准路径，记录以对照岛体点击差异
+    dlog('info', 'clickRtChip', '进入', {
+        targetId: targetId ?? '(轮换)',
+        ids: rtActivities.value.map(a => a.id),
+        currentRtIndex: currentRtIndex.value,
+    });
     const list = rtActivities.value;
     if (!list.length) return;
     // 先折叠所有已展开的实时活动，避免多活动并行时状态残留导致关闭按钮/切换异常
@@ -1600,10 +1608,25 @@ const handleForceTopmost = () => {
 // 音乐控制器点击展开方法
 const expandMusic = (e: MouseEvent) => {
     // 与 useIslandPointer 的拖拽升级阈值保持一致：≤9px 位移视为点击，否则 JS 拖拽已接管
-    if (Math.abs(e.clientX - mouseDownX.value) > DRAG_THRESHOLD_PX || Math.abs(e.clientY - mouseDownY.value) > DRAG_THRESHOLD_PX) return;
-    if ((e.target as HTMLElement).closest('.ctl-btn')) return;
+    if (Math.abs(e.clientX - mouseDownX.value) > DRAG_THRESHOLD_PX || Math.abs(e.clientY - mouseDownY.value) > DRAG_THRESHOLD_PX) {
+        dlog('warn', 'expandMusic', '位移超阈值判为拖拽，忽略点击', {
+            x: e.clientX, y: e.clientY, downX: mouseDownX.value, downY: mouseDownY.value,
+        });
+        return;
+    }
+    if ((e.target as HTMLElement).closest('.ctl-btn')) {
+        dlog('info', 'expandMusic', '命中 ctl-btn，走按钮自身逻辑');
+        return;
+    }
 
-    if (isMusicExpanded.value || isMusicExpanding.value) return;
+    if (isMusicExpanded.value || isMusicExpanding.value) {
+        dlog('info', 'expandMusic', '已处于展开/展开中，忽略', {
+            expanded: isMusicExpanded.value, expanding: isMusicExpanding.value,
+        });
+        return;
+    }
+
+    dlog('info', 'expandMusic', '触发展开', { x: e.clientX, y: e.clientY, target: describeEventTarget(e) });
 
     isMusicExpanding.value = true;
     isPendingCollapse.value = false;  // 重置待办任务
@@ -1662,8 +1685,31 @@ async function safeListen<T>(event: string, handler: (e: Event<T>) => void): Pro
 // 非 listen 步骤的异常由下方 onMounted 的 catch 兜底上报。
 // 此前整条链无任何错误处理，任一 await reject 会静默丢失后续全部订阅，无法定位。
 const bootstrapIsland = async (): Promise<void> => {
+    // 临时诊断（9.9.9-1）：环境快照——DPI / 缩放 / 视口，配合「字符不显示 / 点击不响应」定位
+    dlog('info', 'island', 'bootstrap 开始', {
+        dpr: window.devicePixelRatio,
+        zoom: document.documentElement.style.zoom || '(未设置)',
+        viewport: `${window.innerWidth}x${window.innerHeight}`,
+        screen: `${screen.width}x${screen.height}`,
+    });
     // 启动时应用个性化缩放与置顶
     applyAppScale(appScale.value);
+    // 临时诊断（9.9.9-1）：容器实际生效样式快照——islandStyle 的 color 决定全部文字
+    // 与 currentColor 图标的可见性，zoom/DPR 异常则指向命中偏移类问题
+    const containerEl = document.querySelector('.island-container');
+    if (containerEl instanceof Element) {
+        const cs = getComputedStyle(containerEl);
+        dlog('info', 'island', '容器样式快照', {
+            color: cs.color,
+            backgroundColor: cs.backgroundColor,
+            fontSize: cs.fontSize,
+            fontFamily: cs.fontFamily,
+            inlineStyle: containerEl.getAttribute('style') || '(无)',
+            rect: containerEl.getBoundingClientRect().toJSON(),
+        });
+    } else {
+        dlog('warn', 'island', '未找到 .island-container 元素');
+    }
     await applyAlwaysOnTop(isAlwaysOnTop.value);
 
     // widget 可能在主面板未创建或省内存销毁后独立运行，需自行恢复目标播放器
@@ -1706,6 +1752,8 @@ const bootstrapIsland = async (): Promise<void> => {
 
     // 监听系统动态感知（sysmsg）结构化事件：后端统一推送，前端按需弹通知
     await safeListen<{ kind: string; level: string; text: string }>('sysmsg-event', (event) => {
+        // 临时诊断（9.9.9-1）：确认事件到达前端与开关状态
+        dlog('info', 'sysmsg-event', '收到推送', event.payload, `开关=${isSysmsgEnabled.value}`);
         if (isSysmsgEnabled.value) {
             showSysmsgToast(event.payload);
         }
@@ -2276,6 +2324,7 @@ const bootstrapIsland = async (): Promise<void> => {
 
     // 注册完成计数：配合 devtools 可立刻看出初始化链是否中断 / 断在哪
     console.info(`[island] onMounted 完成：已注册 ${unlistenFns.length} 个事件监听`);
+    dlog('info', 'island', `bootstrap 完成：已注册 ${unlistenFns.length} 个事件监听`);
 };
 
 onMounted(() => {

@@ -12,6 +12,8 @@
  */
 import { ref, computed, type Ref } from 'vue';
 import { getCurrentWindow, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window';
+// 临时诊断日志（9.9.9-1）：诊断结束后连同全部 dlog 调用一起移除
+import { dlog, describeEventTarget } from '../utils/debugLog';
 
 /**
  * 拖拽判定阈值（px）：位移超过该值才升级为窗口拖拽。
@@ -54,6 +56,8 @@ export function useIslandPointer(deps: {
     const mouseDownX = ref(0);
     const mouseDownY = ref(0);
     let isMouseDown = false;
+    // 临时诊断（9.9.9-1）：拖拽拦截类日志每次按下只记一次，避免 mousemove 刷屏
+    let dragBlockLogged = false;
 
     // 计算是否可以调整宽度
     const canResize = computed(() => {
@@ -61,16 +65,30 @@ export function useIslandPointer(deps: {
     });
 
     const handleMouseDown = (event: MouseEvent) => {
-        if ((event.target as HTMLElement).closest('.ctl-btn')) return;
-        if ((event.target as HTMLElement).closest('.resize-handle')) return;
+        // 临时诊断（9.9.9-1）：mousedown 是点击链路第一站——记录命中元素类名链与坐标
+        dlog('info', 'pointer', 'mousedown', {
+            x: event.clientX, y: event.clientY,
+            target: describeEventTarget(event),
+        });
+        dragBlockLogged = false;
+        if ((event.target as HTMLElement).closest('.ctl-btn')) {
+            dlog('info', 'pointer', 'mousedown 命中 ctl-btn，跳过容器记录');
+            return;
+        }
+        if ((event.target as HTMLElement).closest('.resize-handle')) {
+            dlog('info', 'pointer', 'mousedown 命中 resize-handle，跳过容器记录');
+            return;
+        }
 
         // 检测是否在边缘区域，如果是则开始宽度调整
         if (!isPositionLocked.value && !isMusicExpanded.value && !isMusicExpanding.value && !isMsgActive.value && !displaySysToast.value) {
             if (isNearEdge(event, 'left')) {
+                dlog('info', 'pointer', '进入左边缘调宽');
                 handleResizeStart(event, 'left');
                 return;
             }
             if (isNearEdge(event, 'right')) {
+                dlog('info', 'pointer', '进入右边缘调宽');
                 handleResizeStart(event, 'right');
                 return;
             }
@@ -192,10 +210,23 @@ export function useIslandPointer(deps: {
         if (!isMouseDown) return;
 
         // 1. 全局动画锁：任何变形动画期间，绝对禁止拖拽
-        if (isSizeAnimating.value) return;
+        if (isSizeAnimating.value) {
+            if (!dragBlockLogged) {
+                dragBlockLogged = true;
+                dlog('warn', 'pointer', '拖拽被动画锁拦截', { isSizeAnimating: true });
+            }
+            return;
+        }
 
         // 2. 状态锁：音乐展开、消息通知、系统提示期间，统统禁止拖拽。
         if (isMusicExpanded.value || isMusicExpanding.value || isMsgActive.value || displaySysToast.value) {
+            if (!dragBlockLogged) {
+                dragBlockLogged = true;
+                dlog('warn', 'pointer', '拖拽被状态锁拦截', {
+                    expanded: isMusicExpanded.value, expanding: isMusicExpanding.value,
+                    msg: isMsgActive.value, toast: displaySysToast.value,
+                });
+            }
             // 发现企图拖拽，立刻打断施法
             isMouseDown = false;
             return;
@@ -208,6 +239,7 @@ export function useIslandPointer(deps: {
         if (isPinnedToTaskbar.value) {
             if (Math.abs(event.clientX - mouseDownX.value) > DRAG_THRESHOLD_PX) {
                 isMouseDown = false;
+                dlog('info', 'pointer', '升级为任务栏模式横向拖拽');
                 await startCustomHorizontalDrag(event);
             }
             return;
@@ -216,6 +248,7 @@ export function useIslandPointer(deps: {
         // 5. 岛模式 + 已解锁：自由拖拽（原生 startDragging，X/Y 均可移动）
         if (Math.abs(event.clientX - mouseDownX.value) > DRAG_THRESHOLD_PX || Math.abs(event.clientY - mouseDownY.value) > DRAG_THRESHOLD_PX) {
             isMouseDown = false;
+            dlog('info', 'pointer', '升级为自由拖拽 startDragging');
             try {
                 event.preventDefault();
                 await getCurrentWindow().startDragging();
@@ -225,7 +258,12 @@ export function useIslandPointer(deps: {
         }
     };
 
-    const handleMouseUp = () => {
+    const handleMouseUp = (event?: MouseEvent) => {
+        // 临时诊断（9.9.9-1）：mouseup 是点击链路第二站；wasDown=false 说明按下事件没进容器
+        dlog('info', 'pointer', 'mouseup', {
+            wasDown: isMouseDown,
+            target: event ? describeEventTarget(event) : '(无事件参数)',
+        });
         // 宽度调整结束时保存宽度
         if (isResizing.value) {
             handleResizeEnd();
