@@ -28,6 +28,12 @@ static APP_HANDLE: Mutex<Option<Arc<tauri::AppHandle>>> = Mutex::new(None);
 // B9: 频谱 emit 节流锁 — 限制每 50ms 最多推送一次（从 ~86Hz 降至 ~20Hz），大幅减少 WebSocket 消息积压
 static LAST_EMIT_MS: AtomicU64 = AtomicU64::new(0);
 
+// 流失效看门狗：最近一次数据回调到达的毫秒时间戳（0 表示尚无数据）。
+// 正常暂停时采集流仍在运行（回调持续送达，频谱自然回落基准线），
+// 但播放器瞬间退出/系统音频流被强行终止时回调会直接停摆，
+// 看门狗据此把频谱条平滑衰减回基准线并推送，避免前端卡死在最后一帧。
+static LAST_DATA_AT_MS: AtomicU64 = AtomicU64::new(0);
+
 /// 注册 AppHandle（在 Tauri setup 阶段调用），用于 emit 事件到前端
 pub fn set_app_handle(handle: Arc<tauri::AppHandle>) {
     *APP_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
@@ -41,6 +47,44 @@ fn emit_spectrum(data: &[f32; 5]) {
     };
     if let Some(handle) = handle {
         log_err(handle.emit("spectrum-data", data), "emit spectrum-data");
+    }
+}
+
+/// 刷新「最近一次数据回调到达」时间戳（数据回调在频谱激活时调用）
+fn touch_data_timestamp() {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    LAST_DATA_AT_MS.store(now_ms, Ordering::Relaxed);
+}
+
+/// 流失效看门狗（采集线程每 50ms 醒一次时调用）：
+/// 正常暂停时数据回调仍在送达，无需干预；
+/// 但采集流停摆超过 150ms（播放器瞬间退出等异常打断）时，
+/// 把频谱逐帧衰减回静默基准线 0.35 并推送给前端，直到各条归位——
+/// 保证前端不会停留在音频中断前最后一刻的波形上。
+fn watchdog_tick() {
+    if !SPECTRUM_ACTIVE.load(Ordering::Relaxed) { return; }
+    let last = LAST_DATA_AT_MS.load(Ordering::Relaxed);
+    if last == 0 { return; } // 尚无数据回调，初始态即基准线，无需衰减
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    if now_ms.wrapping_sub(last) < 150 { return; } // 数据回调仍在活跃，流正常
+
+    // 流已静默：每帧向基准线收缩 15%（约 1.5s 内归位），归位后停止推送
+    let mut spec = SPECTRUM.lock().unwrap_or_else(|e| e.into_inner());
+    let mut any = false;
+    for i in 0..5 {
+        if (spec[i] - 0.35).abs() > 0.002 {
+            spec[i] = 0.35 + (spec[i] - 0.35) * 0.85;
+            any = true;
+        }
+    }
+    if any {
+        emit_spectrum(&spec);
     }
 }
 
@@ -126,6 +170,7 @@ fn monitor_thread(exit: thread_mgr::ExitFlag) {
             move |data: &[f32], _: &_| {
                 // 频谱未激活时直接早退，避免无谓的 process_data 函数调用和 thread_local buffer 操作
                 if !SPECTRUM_ACTIVE.load(Ordering::Relaxed) { return; }
+                touch_data_timestamp();
                 process_data(data, channels)
             },
             err_fn,
@@ -136,6 +181,7 @@ fn monitor_thread(exit: thread_mgr::ExitFlag) {
             move |data: &[i16], _: &_| {
                 // 频谱未激活时直接早退，避免无谓的 Vec 分配和类型转换
                 if !SPECTRUM_ACTIVE.load(Ordering::Relaxed) { return; }
+                touch_data_timestamp();
                 // 复用 thread_local buffer，避免每次回调都分配
                 I16_F32_BUF.with(|buf| {
                     let mut f32_data = buf.borrow_mut();
@@ -155,12 +201,17 @@ fn monitor_thread(exit: thread_mgr::ExitFlag) {
             eprintln!("[NSD][warn] 音频频谱采集启动失败: {}", e);
             return;
         }
-        // 零唤醒挂起：阻塞等待退出信号（每 1h 醒来复查一次防错过），
-        // stop_monitor 触发 signal 后立即醒来，stream 随作用域结束 Drop
+        // 挂起等待退出信号；正常情况每 1h 醒来复查一次防错过，
+        // stop_monitor 触发 signal 后立即醒来，stream 随作用域结束 Drop。
+        // 流失效看门狗（每 50ms 醒一次）：正常暂停时数据回调仍在送达（频谱自然回落基准线），
+        // 但播放器瞬间退出 / 系统音频流被强行终止时回调会直接停摆——
+        // 超过阈值未收到新数据即判定流已静默，把频谱条按帧衰减回基准线并推送，
+        // 修复「音频突然被打断时频谱卡在最后一刻状态」的问题。
         loop {
-            if exit.wait_for(std::time::Duration::from_secs(3600)) {
+            if exit.sleep_interruptible(std::time::Duration::from_millis(50)) {
                 break;
             }
+            watchdog_tick();
         }
     }
 }
