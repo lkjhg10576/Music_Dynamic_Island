@@ -203,9 +203,13 @@ const rtActive = computed<Record<string, boolean>>(() => {
 const activityConfig = ref<Record<string, { enabled: boolean; priority: number }>>({});
 
 // 候选集（enabled && active，按 priority 升序 + 注册表声明顺序平局打破）
+// forceWhenActive 活动强插第 1 位，非活动时不出现在轮换队列
 const rtActivities = computed(() => {
-    return RT_IDS
-        .filter(id => activityConfig.value[id]?.enabled && rtActive.value[id])
+    const normalCandidates = RT_IDS
+        .filter(id => {
+            const def = getRtDef(id);
+            return !def.forceWhenActive && activityConfig.value[id]?.enabled && rtActive.value[id];
+        })
         .map(id => {
             const def = getRtDef(id);
             return { id, priority: activityConfig.value[id].priority, icon: def.icon, accent: def.accent };
@@ -214,6 +218,20 @@ const rtActivities = computed(() => {
             const pa = a.priority, pb = b.priority;
             return pa !== pb ? pa - pb : RT_IDS.indexOf(a.id) - RT_IDS.indexOf(b.id);
         });
+    const forcedCandidates = RT_IDS
+        .filter(id => {
+            const def = getRtDef(id);
+            return def.forceWhenActive && activityConfig.value[id]?.enabled && rtActive.value[id];
+        })
+        .map(id => {
+            const def = getRtDef(id);
+            return { id, priority: activityConfig.value[id].priority, icon: def.icon, accent: def.accent };
+        })
+        .sort((a, b) => {
+            const pa = a.priority, pb = b.priority;
+            return pa !== pb ? pa - pb : RT_IDS.indexOf(a.id) - RT_IDS.indexOf(b.id);
+        });
+    return [...forcedCandidates, ...normalCandidates];
 });
 
 // 当前小图标指向的候选下标；展开后预览的下一个活动下标
@@ -639,6 +657,33 @@ const collapseCalendar = () => {
     scheduleAutoHide();
 };
 
+// 任务栏进度展开/折叠
+const expandTaskbarProgress = () => {
+    if (isTaskbarProgressExpanded.value) return;
+    suppressContentWatch = true;
+    isTaskbarProgressExpanded.value = true;
+    expandedRtId.value = 'taskbar-progress';
+    const { h } = getBaseSize();
+    animateIslandSize(getExpandTargetWidth(), h);
+    setTimeout(() => { suppressContentWatch = false; }, 600);
+};
+
+const collapseTaskbarProgress = () => {
+    if (!isTaskbarProgressExpanded.value) return;
+    suppressContentWatch = true;
+    isTaskbarProgressExpanded.value = false;
+    if (expandedRtId.value === 'taskbar-progress') {
+        expandedRtId.value = null;
+        currentRtIndex.value = 0;
+    }
+    const { h } = getBaseSize();
+    const savedWidth = restoreIslandWidth();
+    const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
+    animateIslandSize(targetWidth, h);
+    setTimeout(() => { suppressContentWatch = false; }, 600);
+    scheduleAutoHide();
+};
+
 // 统一折叠所有已展开的实时活动，避免多活动并行时状态残留导致关闭按钮/切换异常
 // （折叠动作同样由注册表派发：collapseHardware/collapsePrintQueue 自带未展开短路，等价旧的条件调用；
 //   health 由 isHealthAlerting 事件驱动，注册表不注册折叠）
@@ -861,6 +906,8 @@ const {
     hwActiveMetric, hwRingPct, hwRingColor, showHardwareRing, startHwRotation, stopHwRotation,
     isRotationEnabled, currentRotIndex, startRotation, stopRotation,
     restorePomodoroState, restoreCountdownState,
+    isTaskbarProgressActive, isTaskbarProgressExpanded,
+    taskbarProgressAppName, taskbarProgressPercent,
 } = useRealtimeActivity({
     isMsgActive, displaySysToast, isMusicExpanded, isMusicExpanding, isMusicCtlEnabled,
 });
@@ -871,6 +918,8 @@ const {
 islandCtx = {
     isPomodoroVisible, isPomodoroExpanded, isCountdownVisible, isCountdownExpanded,
     hwEnabled, isHardwareExpanded, isHealthAlerting,
+    isTaskbarProgressActive, isTaskbarProgressExpanded,
+    taskbarProgressAppName, taskbarProgressPercent,
     cdPaused, hwMode, hwDefaultMetric, hwCpuPct, hwMemPct, hwRingPct, hwRingColor,
     hwRingOuter, hwRingInner, hwBatteryPct, hwDiskPct,
     printJobs, defaultPrinter, isPrintQueueExpanded,
@@ -888,6 +937,8 @@ islandCtx = {
         collapsePrintQueue: restore => { collapsePrintQueue(restore ?? true); },
         expandCalendar: () => { expandCalendar(); },
         collapseCalendar: () => { collapseCalendar(); },
+        expandTaskbarProgress: () => { expandTaskbarProgress(); },
+        collapseTaskbarProgress: () => { collapseTaskbarProgress(); },
         toggleCountdownPauseResume: () => { handleCdTogglePauseResume(); },
         closeCountdownPanel: () => { handleCdClose(); },
         closePomodoroPanel: () => { handlePomoClose(); },
@@ -1960,6 +2011,20 @@ onMounted(async () => {
     try {
         const state: any = await invoke('calendar_get_state');
         calUpcoming.value = Array.isArray(state?.upcoming) ? state.upcoming : [];
+    } catch (_e) {}
+
+    // 监听任务栏进度 tick 事件
+    unlistenFns.push(await listen<{ active: boolean; appName: string; percent: number; ts: number }>('taskbar-progress-tick', (e) => {
+        isTaskbarProgressActive.value = e.payload.active;
+        taskbarProgressAppName.value = e.payload.appName;
+        taskbarProgressPercent.value = e.payload.percent;
+    }));
+    // 启动恢复：拉取一次任务栏进度快照
+    try {
+        const state: any = await invoke('get_taskbar_progress_state');
+        isTaskbarProgressActive.value = state?.active ?? false;
+        taskbarProgressAppName.value = state?.appName ?? '';
+        taskbarProgressPercent.value = state?.percent ?? 0;
     } catch (_e) {}
 
     // 监听健康提醒 tick 事件

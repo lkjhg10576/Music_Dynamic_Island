@@ -29,11 +29,12 @@ import IslandCloseButton from '../components/island/IslandCloseButton.vue';
 import IslandHwDetail from '../components/island/IslandHwDetail.vue';
 import IslandHwChipRing from '../components/island/IslandHwChipRing.vue';
 import IslandPrintQueue from '../components/island/IslandPrintQueue.vue';
+import IslandTaskbarProgress from '../components/island/IslandTaskbarProgress.vue';
 import type { CalendarEventInfo, PrintJob } from '../components/island/types';
 import { hwMetricPctOf, hwModeSlots, type HwMetric } from '../utils/hwMetrics';
 
 /** 参与岛上多活动并行轮换的实时活动 id */
-export type RtId = 'pomodoro' | 'countdown' | 'hardware' | 'health' | 'printer' | 'calendar';
+export type RtId = 'pomodoro' | 'countdown' | 'hardware' | 'health' | 'printer' | 'calendar' | 'taskbar-progress';
 
 /** 控制台活动卡片 id：实时活动 + 仅控制台的 sysmsg（无岛上形态） */
 export type ActivityId = RtId | 'sysmsg';
@@ -50,6 +51,10 @@ export interface ActivityGuardCtx {
     hwEnabled: Ref<boolean>;
     isHardwareExpanded: Ref<boolean>;
     isHealthAlerting: Ref<boolean>;
+    isTaskbarProgressActive: Ref<boolean>;
+    isTaskbarProgressExpanded: Ref<boolean>;
+    taskbarProgressAppName: Ref<string>;
+    taskbarProgressPercent: Ref<number>;
 }
 
 /** 岛上动作集合：主组件以闭包晚绑定注入（调用点均在交互期，晚于 setup 声明顺序） */
@@ -140,6 +145,8 @@ export interface RtActivityDef {
     expand?: (ctx: IslandActivityCtx) => void;
     /** 候选切换前统一折叠动作；health 由事件驱动不参与 */
     collapse?: (ctx: IslandActivityCtx) => void;
+    /** 强优先级: 活动时强占轮换第 1 位, 非活动时不出现在轮换队列(默认 false) */
+    forceWhenActive?: boolean;
 }
 
 /**
@@ -335,6 +342,33 @@ export const RT_ACTIVITY_DEFS: RtActivityDef[] = [
         panelRank: 6,
         expand: ctx => ctx.actions.expandCalendar(),
         collapse: ctx => ctx.actions.collapseCalendar(),
+    },
+    {
+        id: 'taskbar-progress',
+        title: '任务栏进度',
+        desc: '聚合浏览器下载、文件复制、压缩/解压等任务栏进度',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>',
+        accent: '#22c55e',
+        defaultPriority: 99,
+        realtime: true,
+        /** 特殊优先级: 活动时强占 chip 第 1 位, 非活动时不出现在轮换队列 */
+        forceWhenActive: true,
+        isActive: ctx => ctx.isTaskbarProgressActive.value,
+        panel: ctx => {
+            if (!ctx.isTaskbarProgressExpanded.value) return null;
+            return {
+                key: 'taskbar-progress-detail',
+                component: IslandTaskbarProgress,
+                props: {
+                    appName: ctx.taskbarProgressAppName.value,
+                    percent: ctx.taskbarProgressPercent.value,
+                },
+                events: { close: () => ctx.actions.collapseTaskbarProgress() },
+            };
+        },
+        panelRank: 7,
+        expand: ctx => ctx.actions.expandTaskbarProgress(),
+        collapse: ctx => ctx.actions.collapseTaskbarProgress(),
     },
 ];
 

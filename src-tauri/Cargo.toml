@@ -64,6 +64,7 @@ windows = { version = "0.58.0", features = [
     "Storage_Streams",
     "Win32_System_Power",
     "Win32_Networking_NetworkListManager",
+    "UI_Automation",
 ] }
 cpal = "0.15"
 rustfft = "6.2"

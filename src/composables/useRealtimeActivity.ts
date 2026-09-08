@@ -81,12 +81,20 @@ export function useRealtimeActivity(deps: {
     const hwDiskPct = ref(0);
     const isHardwareExpanded = ref(false);
 
+    // 任务栏进度（由 taskbar-progress-tick 事件驱动）
+    const isTaskbarProgressActive = ref(false);
+    const isTaskbarProgressExpanded = ref(false);
+    const taskbarProgressAppName = ref('');
+    const taskbarProgressPercent = ref(0);
+
     // ===== 展示守卫（注册表统一遍历） =====
     // 守卫谓词的取数源：全部为只读消费，展开态的写入经由主组件注入的 actions
     const guardCtx: ActivityGuardCtx = {
         isPomodoroVisible, isPomodoroExpanded,
         isCountdownVisible, isCountdownExpanded,
         hwEnabled, isHardwareExpanded, isHealthAlerting,
+        isTaskbarProgressActive, isTaskbarProgressExpanded,
+        taskbarProgressAppName, taskbarProgressPercent,
     };
 
     // 单个文本态的展示守卫：消息/toast/音乐展开让位；可见 且（无音乐控制 或 已展开）。
@@ -282,6 +290,11 @@ export function useRealtimeActivity(deps: {
         showHardwareRing,
         startHwRotation,
         stopHwRotation,
+        // 任务栏进度
+        isTaskbarProgressActive,
+        isTaskbarProgressExpanded,
+        taskbarProgressAppName,
+        taskbarProgressPercent,
         // 主岛轮换
         isRotationEnabled,
         currentRotIndex,

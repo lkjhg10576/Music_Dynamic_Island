@@ -77,6 +77,10 @@ export const NSD_HW_ROTATION = 'nsd_hw_rotation'; // 轮换模式开关（兼容
 export const NSD_HW_DUAL_RING = 'nsd_hw_dual_ring'; // 双圆环模式开关（兼容旧名）
 export const NSD_PRINTER_MONITOR_ENABLED = 'nsd_printer_monitor_enabled';
 
+// 任务栏进度
+export const NSD_TASKBAR_PROGRESS_ENABLED = 'nsd_taskbar_progress_enabled';
+export const NSD_TASKBAR_PROGRESS_INTERVAL = 'nsd_taskbar_progress_interval';
+
 // 健康提醒
 export const NSD_SITTING_REMINDER_ENABLED = 'nsd_sitting_reminder_enabled';
 export const NSD_SITTING_REMINDER_SECS = 'nsd_sitting_reminder_secs';

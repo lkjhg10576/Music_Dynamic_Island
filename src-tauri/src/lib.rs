@@ -16,6 +16,7 @@ mod lyrics_cache;
 mod print_utils;
 mod thread_mgr;
 mod win32_utils;
+mod taskbar_progress;
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicBool, Ordering};
@@ -746,6 +747,9 @@ pub fn run() {
             config_migrate_legacy,
             print_queue::set_printer_monitor_enabled,
             print_queue::get_printer_state,
+            taskbar_progress::set_taskbar_progress_enabled,
+            taskbar_progress::set_taskbar_progress_interval,
+            taskbar_progress::get_taskbar_progress_state,
         ])
         .setup(|app| {
             // 设置单一数据源：载入 config.json + 落盘线程
@@ -768,6 +772,7 @@ pub fn run() {
             calendar::start_calendar_thread(app.handle().clone());
             health_reminder::start_health_reminder_thread(app.handle().clone());
             print_queue::start_print_queue_monitor(app.handle().clone());
+            taskbar_progress::start_taskbar_progress_monitor(app.handle().clone());
             start_hardware_monitor(app.handle().clone());
             // SMTC 会话绑定管理器：事件驱动音乐信息推送（替代前端 3s 轮询）
             session_binder::init(app.handle().clone());
