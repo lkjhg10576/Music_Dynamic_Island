@@ -70,6 +70,8 @@ export interface IslandActivityActions {
     collapsePrintQueue: (restore?: boolean) => void;
     expandCalendar: () => void;
     collapseCalendar: () => void;
+    expandTaskbarProgress: () => void;
+    collapseTaskbarProgress: () => void;
     toggleCountdownPauseResume: () => void;
     closeCountdownPanel: () => void;
     closePomodoroPanel: () => void;
