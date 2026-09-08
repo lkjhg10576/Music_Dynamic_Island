@@ -101,3 +101,19 @@ export const NSD_SYSMSG_NETWORK_DISCONNECT_ENABLED = 'nsd_sysmsg_network_disconn
 export const NSD_SYSMSG_NETWORK_RECOVERY_ENABLED = 'nsd_sysmsg_network_recovery_enabled';
 /** 网络延迟探测间隔（秒），范围 1~60，默认 30 */
 export const NSD_SYSMSG_NETWORK_LATENCY_INTERVAL = 'nsd_sysmsg_network_latency_interval';
+
+// 恶劣天气提醒
+export const NSD_WEATHER_CITY = 'nsd_weather_city';
+// value: '{"cityId":"101010100","name":"北京","lat":39.904989,"lon":116.405285}'
+
+export const NSD_WEATHER_DAILY_BRIEF = 'nsd_weather_daily_brief';
+// value: 'morning,noon' 或 'evening' 或 ''，逗号分隔
+
+export const NSD_WEATHER_ALERT_THRESHOLD = 'nsd_weather_alert_threshold';
+// value: 'B'（默认，蓝）/ 'Y'（黄）/ 'O'（橙）/ 'R'（红）
+
+export const NSD_WEATHER_POLL_INTERVAL = 'nsd_weather_poll_interval';
+// value: 秒数（字符串），范围 1800~10800（0.5h~3h），默认 3600（1h）
+
+export const NSD_WEATHER_LIGHT_ALERT_ENABLED = 'nsd_weather_light_alert_enabled';
+// value: 'true' / 'false'，默认 'false'

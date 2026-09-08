@@ -28,7 +28,7 @@
                         <IslandMsg v-if="isMsgActive" key="msg" :msg-title="msgTitle" :msg-app-name="msgAppName"
                             :msg-body="msgBody" :current-msg-icon="currentMsgIcon" @select="handleNotificationClick" />
 
-                        <IslandSysToast v-else-if="displaySysToast" key="systoast" :sys-toast-type="sysToastType"
+                        <IslandWeatherAlert v-else-if="displaySysToast" key="systoast" :sys-toast-type="sysToastType"
                             :sys-toast-text="sysToastText" @select="onSysToastClick" />
 
                         <IslandHealthAlert v-else-if="isHealthAlerting" key="health-alert"

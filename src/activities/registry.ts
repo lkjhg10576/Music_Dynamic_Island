@@ -30,11 +30,12 @@ import IslandHwDetail from '../components/island/IslandHwDetail.vue';
 import IslandHwChipRing from '../components/island/IslandHwChipRing.vue';
 import IslandPrintQueue from '../components/island/IslandPrintQueue.vue';
 import IslandTaskbarProgress from '../components/island/IslandTaskbarProgress.vue';
+import IslandWeatherLightAlert from '../components/island/IslandWeatherLightAlert.vue';
 import type { CalendarEventInfo, PrintJob } from '../components/island/types';
 import { hwMetricPctOf, hwModeSlots, type HwMetric } from '../utils/hwMetrics';
 
 /** 参与岛上多活动并行轮换的实时活动 id */
-export type RtId = 'pomodoro' | 'countdown' | 'hardware' | 'health' | 'printer' | 'calendar' | 'taskbar-progress';
+export type RtId = 'pomodoro' | 'countdown' | 'hardware' | 'health' | 'printer' | 'calendar' | 'taskbar-progress' | 'weather';
 
 /** 控制台活动卡片 id：实时活动 + 仅控制台的 sysmsg（无岛上形态） */
 export type ActivityId = RtId | 'sysmsg';
@@ -55,6 +56,14 @@ export interface ActivityGuardCtx {
     isTaskbarProgressExpanded: Ref<boolean>;
     taskbarProgressAppName: Ref<string>;
     taskbarProgressPercent: Ref<number>;
+    isWeatherLightAlerting: Ref<boolean>;
+    weatherLightAlert: Ref<{
+        alertId: string;
+        level: string;
+        levelText: string;
+        type: string;
+        title: string;
+    } | null>;
 }
 
 /** 岛上动作集合：主组件以闭包晚绑定注入（调用点均在交互期，晚于 setup 声明顺序） */
@@ -76,6 +85,9 @@ export interface IslandActivityActions {
     closeCountdownPanel: () => void;
     closePomodoroPanel: () => void;
     dismissHealthAlert: () => void;
+    dismissWeatherLightAlert: () => void;
+    expandWeatherLightAlert: () => void;
+    collapseWeatherLightAlert: () => void;
 }
 
 /** 岛上下文：守卫上下文 + 芯片/面板渲染所需的状态与动作 */
@@ -371,6 +383,30 @@ export const RT_ACTIVITY_DEFS: RtActivityDef[] = [
         panelRank: 7,
         expand: ctx => ctx.actions.expandTaskbarProgress(),
         collapse: ctx => ctx.actions.collapseTaskbarProgress(),
+    },
+    {
+        id: 'weather',
+        title: '恶劣天气提醒',
+        desc: '小米天气·小时级·早午晚报',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>',
+        accent: '#0ea5e9',
+        defaultPriority: 7,
+        realtime: false,
+        // 轻提示态临时进入轮换，强占第 1 位 5s
+        forceWhenActive: true,
+        isActive: ctx => ctx.isWeatherLightAlerting?.value ?? false,
+        panel: ctx => {
+            if (!ctx.isWeatherLightAlerting?.value) return null;
+            return {
+                key: 'weather-light-alert',
+                component: IslandWeatherLightAlert,
+                props: { alert: ctx.weatherLightAlert?.value ?? null },
+                events: { close: () => ctx.actions?.dismissWeatherLightAlert?.() },
+            };
+        },
+        panelRank: 8,
+        expand: ctx => ctx.actions?.expandWeatherLightAlert?.(),
+        collapse: ctx => ctx.actions?.collapseWeatherLightAlert?.(),
     },
 ];
 

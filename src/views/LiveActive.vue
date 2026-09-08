@@ -622,6 +622,144 @@
                                 </div>
                             </template>
 
+                            <template v-else-if="item.id === 'weather'">
+                                <div class="weather-config-panel">
+                                    <!-- 城市选择 -->
+                                    <div class="weather-city-row">
+                                        <div class="weather-city-selector" @click="toggleCitySearch">
+                                            <span class="weather-city-name">{{ weatherCityName || '未配置城市' }}</span>
+                                            <svg class="weather-city-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                <polyline points="6 9 12 15 18 9"></polyline>
+                                            </svg>
+                                        </div>
+                                        <div v-if="showCitySearch" class="weather-city-dropdown">
+                                            <input
+                                                v-model="searchKeyword"
+                                                class="weather-city-search"
+                                                placeholder="搜索城市..."
+                                                @input="onSearchInput"
+                                            />
+                                            <div v-if="searchResults.length > 0" class="weather-city-results">
+                                                <div
+                                                    v-for="result in searchResults"
+                                                    :key="result.cityId"
+                                                    class="weather-city-result"
+                                                    @click="selectCity(result)"
+                                                >
+                                                    <span class="weather-city-result-name">{{ result.name }}</span>
+                                                    <span class="weather-city-result-province">{{ result.province }}</span>
+                                                </div>
+                                            </div>
+                                            <div v-else-if="searchKeyword.length > 0" class="weather-city-no-result">
+                                                未找到相关城市
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="weather-divider"></div>
+
+                                    <!-- 当前天气 -->
+                                    <div v-if="weatherCurrent" class="weather-current">
+                                        <div class="weather-current-main">
+                                            <span class="weather-current-temp">{{ Math.round(weatherCurrent.temperature) }}℃</span>
+                                            <span class="weather-current-text">{{ weatherCurrent.weatherText }}</span>
+                                        </div>
+                                        <div class="weather-current-feels">体感 {{ Math.round(weatherCurrent.feelsLike) }}℃</div>
+                                        <div class="weather-current-details">
+                                            <span>湿度 {{ Math.round(weatherCurrent.humidity) }}%</span>
+                                            <span>风 {{ Math.round(weatherCurrent.windSpeed) }}km/h</span>
+                                            <span v-if="weatherCurrent.pm25 !== null">PM2.5 {{ Math.round(weatherCurrent.pm25) }}</span>
+                                        </div>
+                                    </div>
+
+                                    <!-- 今日天气 -->
+                                    <div v-if="weatherToday" class="weather-today">
+                                        <div class="weather-today-temp">{{ Math.round(weatherToday.tempMax) }}/{{ Math.round(weatherToday.tempMin) }}℃</div>
+                                        <div class="weather-today-details">
+                                            <span>降水 {{ Math.round(weatherToday.precipProb) }}%</span>
+                                            <span v-if="weatherToday.sunrise">日出 {{ weatherToday.sunrise }}</span>
+                                            <span v-if="weatherToday.sunset">日落 {{ weatherToday.sunset }}</span>
+                                        </div>
+                                    </div>
+
+                                    <!-- 预警条 -->
+                                    <div v-if="weatherAlerts.length > 0" class="weather-alerts">
+                                        <div v-for="alert in weatherAlerts" :key="alert.alertId" class="weather-alert-item" :class="'level-' + alert.level.toLowerCase()">
+                                            <span class="weather-alert-level">{{ alert.levelText }}</span>
+                                            <span class="weather-alert-type">{{ alert.type }}</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="weather-divider"></div>
+
+                                    <!-- 预警阈值 -->
+                                    <div class="weather-setting-row">
+                                        <span class="weather-setting-label">预警阈值</span>
+                                        <select class="weather-setting-select" v-model="alertThreshold" @change="onAlertThresholdChange">
+                                            <option value="B">蓝色及以上</option>
+                                            <option value="Y">黄色及以上</option>
+                                            <option value="O">橙色及以上</option>
+                                            <option value="R">红色及以上</option>
+                                        </select>
+                                    </div>
+
+                                    <!-- 低等级预警轻提示（联动开关） -->
+                                    <div v-if="alertThreshold !== 'B'" class="weather-setting-row">
+                                        <span class="weather-setting-label">低等级预警轻提示</span>
+                                        <label class="custom-switch mini">
+                                            <input type="checkbox" v-model="lightAlertEnabled" @change="onLightAlertChange">
+                                            <span class="slider"></span>
+                                        </label>
+                                    </div>
+
+                                    <!-- 拉取间隔 -->
+                                    <div class="weather-setting-row">
+                                        <span class="weather-setting-label">拉取间隔</span>
+                                        <select class="weather-setting-select" v-model="pollInterval" @change="onPollIntervalChange">
+                                            <option :value="1800">0.5 小时</option>
+                                            <option :value="3600">1 小时</option>
+                                            <option :value="5400">1.5 小时</option>
+                                            <option :value="7200">2 小时</option>
+                                            <option :value="9000">2.5 小时</option>
+                                            <option :value="10800">3 小时</option>
+                                        </select>
+                                    </div>
+                                    <div v-if="pollInterval > 3600" class="weather-setting-hint">
+                                        间隔过长，会影响实时恶劣天气的准确性
+                                    </div>
+
+                                    <div class="weather-divider"></div>
+
+                                    <!-- 早/午/晚报开关 -->
+                                    <div class="weather-setting-row">
+                                        <span class="weather-setting-label">早报</span>
+                                        <label class="custom-switch mini">
+                                            <input type="checkbox" v-model="morningBrief" @change="onBriefChange">
+                                            <span class="slider"></span>
+                                        </label>
+                                    </div>
+                                    <div class="weather-setting-row">
+                                        <span class="weather-setting-label">午报</span>
+                                        <label class="custom-switch mini">
+                                            <input type="checkbox" v-model="noonBrief" @change="onBriefChange">
+                                            <span class="slider"></span>
+                                        </label>
+                                    </div>
+                                    <div class="weather-setting-row">
+                                        <span class="weather-setting-label">晚报</span>
+                                        <label class="custom-switch mini">
+                                            <input type="checkbox" v-model="eveningBrief" @change="onBriefChange">
+                                            <span class="slider"></span>
+                                        </label>
+                                    </div>
+
+                                    <div class="weather-divider"></div>
+
+                                    <!-- 数据来源 -->
+                                    <div class="weather-source">数据：小米天气</div>
+                                </div>
+                            </template>
+
                             <template v-else>
                                 <div class="pro-coming-soon">
                                     <div class="loader-line"></div>

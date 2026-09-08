@@ -87,6 +87,16 @@ export function useRealtimeActivity(deps: {
     const taskbarProgressAppName = ref('');
     const taskbarProgressPercent = ref(0);
 
+    // 天气相关状态
+    const isWeatherLightAlerting = ref(false);
+    const weatherLightAlert = ref<{
+        alertId: string;
+        level: string;
+        levelText: string;
+        type: string;
+        title: string;
+    } | null>(null);
+
     // ===== 展示守卫（注册表统一遍历） =====
     // 守卫谓词的取数源：全部为只读消费，展开态的写入经由主组件注入的 actions
     const guardCtx: ActivityGuardCtx = {
@@ -95,6 +105,7 @@ export function useRealtimeActivity(deps: {
         hwEnabled, isHardwareExpanded, isHealthAlerting,
         isTaskbarProgressActive, isTaskbarProgressExpanded,
         taskbarProgressAppName, taskbarProgressPercent,
+        isWeatherLightAlerting, weatherLightAlert,
     };
 
     // 单个文本态的展示守卫：消息/toast/音乐展开让位；可见 且（无音乐控制 或 已展开）。
@@ -300,6 +311,9 @@ export function useRealtimeActivity(deps: {
         currentRotIndex,
         startRotation,
         stopRotation,
+        // 天气
+        isWeatherLightAlerting,
+        weatherLightAlert,
         // 启动恢复
         restorePomodoroState,
         restoreCountdownState,
