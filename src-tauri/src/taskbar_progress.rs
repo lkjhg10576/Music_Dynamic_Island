@@ -106,64 +106,83 @@ pub fn get_taskbar_progress_state() -> TaskbarProgressState {
 
 #[cfg(target_os = "windows")]
 fn scan_taskbar_progress() -> TaskbarProgressState {
-    use windows::UI::Automation::*;
-    use windows_core::Interface;
-
-    // 1. 获取 UIA root, 找 taskbar 窗口
-    let Ok(root) = AutomationElement::GetRootElement() else { return inactive(); };
-
-    let Ok(taskbar_cond) = PropertyCondition::Create(
-        AutomationElement::ClassNameProperty(),
-        "Shell_TrayWnd".into(),
-    ) else { return inactive(); };
-
-    let Ok(taskbar) = root.FindFirst(TreeScope_Children, &taskbar_cond) else {
-        return inactive();
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, IUIAutomation, IUIAutomationRangeValuePattern, TreeScope_Children,
+        TreeScope_Descendants, UIA_ClassNamePropertyId,
+        UIA_IsRangeValuePatternAvailablePropertyId, UIA_RangeValuePatternId,
     };
 
-    // 2. 找 taskbar 内的图标列表容器(MSTaskListWClass)
-    let list_element = PropertyCondition::Create(
-        AutomationElement::ClassNameProperty(),
-        "MSTaskListWClass".into(),
-    ).ok().and_then(|cond| taskbar.FindFirst(TreeScope_Descendants, &cond).ok());
-    let root_for_scan = list_element.unwrap_or(taskbar);
-
-    // 3. 找所有支持 RangeValuePattern 的元素
-    let Ok(progress_cond) = PropertyCondition::Create(
-        AutomationElement::IsRangeValuePatternAvailableProperty(),
-        true.into(),
-    ) else { return inactive(); };
-    let Ok(elements) = root_for_scan.FindAll(TreeScope_Descendants, &progress_cond) else {
-        return inactive();
-    };
-
-    // 4. 取第一个有效进度条(0 < percent < 100)
-    for i in 0..elements.Length().unwrap_or(0) {
-        let Ok(el) = elements.GetElement(i) else { continue; };
-        let Ok(pattern_obj) = el.GetCurrentPattern(RangeValuePattern::IID()) else { continue; };
-        let Ok(pattern) = pattern_obj.cast::<IRangeValueProvider>() else { continue; };
-
-        let Ok(value) = pattern.Value() else { continue; };
-        let Ok(maximum) = pattern.Maximum() else { continue; };
-
-        if maximum <= 0.0 { continue; }
-        let pct_f = (value / maximum) * 100.0;
-        if pct_f <= 0.0 || pct_f >= 100.0 { continue; }
-        let pct = pct_f as u8;
-
-        // 提取 app_name
-        let app_name = el.CurrentName()
-            .map(|s| s.to_string_lossy())
-            .unwrap_or_default();
-
-        return TaskbarProgressState {
-            active: true,
-            app_name,
-            percent: pct,
-            ts: now_secs(),
+    // SAFETY: 本函数只在监控线程内调用，该线程入口已由 ComGuard 完成
+    // CoInitializeEx(COINIT_MULTITHREADED)；以下均为同线程同步 COM 调用，
+    // 接口指针在函数返回前全部释放。
+    unsafe {
+        // 1. 创建 UIA 实例, 取 root, 找 taskbar 窗口
+        let uia: IUIAutomation = match CoCreateInstance(&CUIAutomation, None, CLSCTX_ALL) {
+            Ok(uia) => uia,
+            Err(_) => return inactive(),
         };
+        let Ok(root) = uia.GetRootElement() else { return inactive(); };
+
+        let Ok(taskbar_cond) =
+            uia.CreatePropertyCondition(UIA_ClassNamePropertyId, "Shell_TrayWnd".into())
+        else {
+            return inactive();
+        };
+
+        let Ok(taskbar) = root.FindFirst(TreeScope_Children, &taskbar_cond) else {
+            return inactive();
+        };
+
+        // 2. 找 taskbar 内的图标列表容器(MSTaskListWClass)
+        let list_element = uia
+            .CreatePropertyCondition(UIA_ClassNamePropertyId, "MSTaskListWClass".into())
+            .ok()
+            .and_then(|cond| taskbar.FindFirst(TreeScope_Descendants, &cond).ok());
+        let root_for_scan = list_element.unwrap_or(taskbar);
+
+        // 3. 找所有支持 RangeValuePattern 的元素
+        let Ok(progress_cond) = uia.CreatePropertyCondition(
+            UIA_IsRangeValuePatternAvailablePropertyId,
+            true.into(),
+        ) else {
+            return inactive();
+        };
+        let Ok(elements) = root_for_scan.FindAll(TreeScope_Descendants, &progress_cond) else {
+            return inactive();
+        };
+
+        // 4. 取第一个有效进度条(0 < percent < 100)
+        for i in 0..elements.Length().unwrap_or(0) {
+            let Ok(el) = elements.GetElement(i) else { continue; };
+            let Ok(pattern) =
+                el.GetCurrentPatternAs::<IUIAutomationRangeValuePattern>(UIA_RangeValuePatternId)
+            else {
+                continue;
+            };
+
+            let Ok(value) = pattern.CurrentValue() else { continue; };
+            let Ok(maximum) = pattern.CurrentMaximum() else { continue; };
+
+            if maximum <= 0.0 { continue; }
+            let pct_f = (value / maximum) * 100.0;
+            if pct_f <= 0.0 || pct_f >= 100.0 { continue; }
+            let pct = pct_f as u8;
+
+            // 提取 app_name
+            let app_name = el.CurrentName()
+                .map(|s| s.to_string_lossy())
+                .unwrap_or_default();
+
+            return TaskbarProgressState {
+                active: true,
+                app_name,
+                percent: pct,
+                ts: now_secs(),
+            };
+        }
+        inactive()
     }
-    inactive()
 }
 
 #[cfg(not(target_os = "windows"))]

@@ -64,7 +64,9 @@ windows = { version = "0.58.0", features = [
     "Storage_Streams",
     "Win32_System_Power",
     "Win32_Networking_NetworkListManager",
-    "UI_Automation",
+    # 任务栏进度扫描走 UIA COM 接口（IUIAutomation / IUIAutomationElement），
+    # windows 0.58 中该 API 位于 Win32::UI::Accessibility，无 UI_Automation 这个 feature。
+    "Win32_UI_Accessibility",
 ] }
 cpal = "0.15"
 rustfft = "6.2"
