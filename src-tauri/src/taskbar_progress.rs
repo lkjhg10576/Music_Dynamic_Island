@@ -125,8 +125,10 @@ fn scan_taskbar_progress() -> TaskbarProgressState {
         };
         let Ok(root) = uia.GetRootElement() else { return inactive(); };
 
+        // VARIANT 非 Copy，windows-core 只为 &VARIANT 实现 Param<VARIANT>，
+        // 故这里必须传引用，否则 E0277。
         let Ok(taskbar_cond) =
-            uia.CreatePropertyCondition(UIA_ClassNamePropertyId, VARIANT::from(BSTR::from("Shell_TrayWnd")))
+            uia.CreatePropertyCondition(UIA_ClassNamePropertyId, &VARIANT::from(BSTR::from("Shell_TrayWnd")))
         else {
             return inactive();
         };
@@ -137,7 +139,7 @@ fn scan_taskbar_progress() -> TaskbarProgressState {
 
         // 2. 找 taskbar 内的图标列表容器(MSTaskListWClass)
         let list_element = uia
-            .CreatePropertyCondition(UIA_ClassNamePropertyId, VARIANT::from(BSTR::from("MSTaskListWClass")))
+            .CreatePropertyCondition(UIA_ClassNamePropertyId, &VARIANT::from(BSTR::from("MSTaskListWClass")))
             .ok()
             .and_then(|cond| taskbar.FindFirst(TreeScope_Descendants, &cond).ok());
         let root_for_scan = list_element.unwrap_or(taskbar);
@@ -145,7 +147,7 @@ fn scan_taskbar_progress() -> TaskbarProgressState {
         // 3. 找所有支持 RangeValuePattern 的元素
         let Ok(progress_cond) = uia.CreatePropertyCondition(
             UIA_IsRangeValuePatternAvailablePropertyId,
-            VARIANT::from(true),
+            &VARIANT::from(true),
         ) else {
             return inactive();
         };
