@@ -112,6 +112,7 @@ fn scan_taskbar_progress() -> TaskbarProgressState {
         TreeScope_Descendants, UIA_ClassNamePropertyId,
         UIA_IsRangeValuePatternAvailablePropertyId, UIA_RangeValuePatternId,
     };
+    use windows::core::{BSTR, VARIANT};
 
     // SAFETY: 本函数只在监控线程内调用，该线程入口已由 ComGuard 完成
     // CoInitializeEx(COINIT_MULTITHREADED)；以下均为同线程同步 COM 调用，
@@ -125,7 +126,7 @@ fn scan_taskbar_progress() -> TaskbarProgressState {
         let Ok(root) = uia.GetRootElement() else { return inactive(); };
 
         let Ok(taskbar_cond) =
-            uia.CreatePropertyCondition(UIA_ClassNamePropertyId, "Shell_TrayWnd".into())
+            uia.CreatePropertyCondition(UIA_ClassNamePropertyId, VARIANT::from(BSTR::from("Shell_TrayWnd")))
         else {
             return inactive();
         };
@@ -136,7 +137,7 @@ fn scan_taskbar_progress() -> TaskbarProgressState {
 
         // 2. 找 taskbar 内的图标列表容器(MSTaskListWClass)
         let list_element = uia
-            .CreatePropertyCondition(UIA_ClassNamePropertyId, "MSTaskListWClass".into())
+            .CreatePropertyCondition(UIA_ClassNamePropertyId, VARIANT::from(BSTR::from("MSTaskListWClass")))
             .ok()
             .and_then(|cond| taskbar.FindFirst(TreeScope_Descendants, &cond).ok());
         let root_for_scan = list_element.unwrap_or(taskbar);
@@ -144,7 +145,7 @@ fn scan_taskbar_progress() -> TaskbarProgressState {
         // 3. 找所有支持 RangeValuePattern 的元素
         let Ok(progress_cond) = uia.CreatePropertyCondition(
             UIA_IsRangeValuePatternAvailablePropertyId,
-            true.into(),
+            VARIANT::from(true),
         ) else {
             return inactive();
         };
