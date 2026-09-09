@@ -11,6 +11,7 @@ export interface WeatherCity {
     name: string;
     lat: number;
     lon: number;
+    province?: string;
 }
 
 export interface WeatherCurrent {

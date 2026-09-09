@@ -143,7 +143,6 @@ import IslandPomodoro from '../components/island/IslandPomodoro.vue';
 import IslandCountdown from '../components/island/IslandCountdown.vue';
 import IslandHealthAlert from '../components/island/IslandHealthAlert.vue';
 import IslandMsg from '../components/island/IslandMsg.vue';
-import IslandSysToast from '../components/island/IslandSysToast.vue';
 import IslandHardwareRing from '../components/island/IslandHardwareRing.vue';
 import IslandRtChip from '../components/island/IslandRtChip.vue';
 import IslandMusic from '../components/island/IslandMusic.vue';
@@ -908,9 +907,37 @@ const {
     restorePomodoroState, restoreCountdownState,
     isTaskbarProgressActive, isTaskbarProgressExpanded,
     taskbarProgressAppName, taskbarProgressPercent,
+    isWeatherLightAlerting, weatherLightAlert,
 } = useRealtimeActivity({
     isMsgActive, displaySysToast, isMusicExpanded, isMusicExpanding, isMusicCtlEnabled,
 });
+
+// 天气轻提示：低等级预警弹出，5s 自动隐藏（事件驱动），dismiss 立即收起
+const dismissWeatherLightAlert = () => {
+    if (!isWeatherLightAlerting.value) return;
+    isWeatherLightAlerting.value = false;
+    weatherLightAlert.value = null;
+    if (expandedRtId.value === 'weather') {
+        expandedRtId.value = null;
+        currentRtIndex.value = 0;
+    }
+    const { h } = getBaseSize();
+    const savedWidth = restoreIslandWidth();
+    const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
+    animateIslandSize(targetWidth, h);
+    scheduleAutoHide();
+};
+
+const expandWeatherLightAlert = () => {
+    if (!isWeatherLightAlerting.value || expandedRtId.value === 'weather') return;
+    expandedRtId.value = 'weather';
+    const { h } = getBaseSize();
+    animateIslandSize(getExpandTargetWidth(), h);
+};
+
+const collapseWeatherLightAlert = () => {
+    dismissWeatherLightAlert();
+};
 
 // ===== 活动注册表的岛上上下文（见顶部 islandCtx 声明） =====
 // 动作一律以闭包注入：引用的处理器/getBaseSize 声明位置可能晚于本赋值，
@@ -918,6 +945,7 @@ const {
 islandCtx = {
     isPomodoroVisible, isPomodoroExpanded, isCountdownVisible, isCountdownExpanded,
     hwEnabled, isHardwareExpanded, isHealthAlerting,
+    isWeatherLightAlerting, weatherLightAlert,
     isTaskbarProgressActive, isTaskbarProgressExpanded,
     taskbarProgressAppName, taskbarProgressPercent,
     cdPaused, hwMode, hwDefaultMetric, hwCpuPct, hwMemPct, hwRingPct, hwRingColor,
@@ -943,6 +971,9 @@ islandCtx = {
         closeCountdownPanel: () => { handleCdClose(); },
         closePomodoroPanel: () => { handlePomoClose(); },
         dismissHealthAlert: () => { handleDismissHealthAlert(); },
+        dismissWeatherLightAlert: () => { dismissWeatherLightAlert(); },
+        expandWeatherLightAlert: () => { expandWeatherLightAlert(); },
+        collapseWeatherLightAlert: () => { collapseWeatherLightAlert(); },
     },
 };
 

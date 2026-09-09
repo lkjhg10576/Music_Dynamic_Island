@@ -137,7 +137,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { getSettingRaw, setSettingRaw } from '../../utils/settings';
 import {
@@ -219,11 +219,11 @@ function onLightAlertChange() {
 }
 
 // 拉取间隔
-const pollIntervalRef = ref(Number(getSettingRaw(NSD_WEATHER_POLL_INTERVAL) || '3600'));
+const pollInterval = ref(Number(getSettingRaw(NSD_WEATHER_POLL_INTERVAL) || '3600'));
 
 function onPollIntervalChange() {
-    setSettingRaw(NSD_WEATHER_POLL_INTERVAL, String(pollIntervalRef.value));
-    invoke('weather_set_poll_interval', { secs: pollIntervalRef.value }).catch(() => {});
+    setSettingRaw(NSD_WEATHER_POLL_INTERVAL, String(pollInterval.value));
+    invoke('weather_set_poll_interval', { secs: pollInterval.value }).catch(() => {});
 }
 
 // 早/午/晚报

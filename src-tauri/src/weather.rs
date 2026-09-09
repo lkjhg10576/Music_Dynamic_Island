@@ -45,6 +45,7 @@ static WEATHER_LIGHT_ALERT_ENABLED: AtomicBool = AtomicBool::new(false);
 // ──────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CityInfo {
     pub city_id: String,
     pub name: String,
