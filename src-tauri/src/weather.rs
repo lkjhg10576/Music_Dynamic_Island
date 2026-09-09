@@ -18,7 +18,6 @@ const DEFAULT_POLL_INTERVAL_SECS: u64 = 3600;   // 默认 1 小时
 const MIN_POLL_INTERVAL_SECS: u64 = 1800;       // 0.5h 下限
 const MAX_POLL_INTERVAL_SECS: u64 = 10800;      // 3h 上限
 const IDLE_WAKE_SECS: u64 = 60;                // 空闲时 1min 唤醒（用于判定早午晚报）
-const SEVERE_RETRY_SECS: u64 = 30;
 const SEVERE_MAX_FAIL: u32 = 3;
 const SEVERE_SOUND_COUNT: u32 = 3;
 const SEVERE_SOUND_GAP_MS: u64 = 600;
