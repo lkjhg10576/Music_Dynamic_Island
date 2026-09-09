@@ -10,7 +10,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 use crate::thread_mgr;
-use crate::win32_utils::{log_err, ComGuard};
+use crate::win32_utils::ComGuard;
 
 /// 任务栏进度 tick 载荷(与前端 camelCase 一致)
 #[derive(Clone, Debug, Serialize)]
@@ -171,7 +171,7 @@ fn scan_taskbar_progress() -> TaskbarProgressState {
 
             // 提取 app_name
             let app_name = el.CurrentName()
-                .map(|s| s.to_string_lossy())
+                .map(|s| s.to_string())
                 .unwrap_or_default();
 
             return TaskbarProgressState {

@@ -371,7 +371,7 @@ fn detect_severe_changes(
     let prev_any_rain = prev_codes.iter().any(|&c| is_rain_or_snow(c));
     let cur_any_rain = cur_codes.iter().any(|&c| is_rain_or_snow(c));
     if cur_any_rain && !prev_any_rain {
-        let code = cur.current.map(|c| c.weather_code).unwrap_or(0);
+        let code = cur.current.as_ref().map(|c| c.weather_code).unwrap_or(0);
         let title = format!("即将有{}", weather_code_to_text(code));
         out.push(SevereEvent {
             kind: SevereKind::RainOrSnow,
@@ -385,11 +385,11 @@ fn detect_severe_changes(
 
     // 2) 雾霾
     let prev_fog = prev_codes.iter().any(|&c| is_fog(c)) ||
-        prev.current.and_then(|c| c.aqi).unwrap_or(0.0) >= 150.0;
+        prev.current.as_ref().and_then(|c| c.aqi).unwrap_or(0.0) >= 150.0;
     let cur_fog = cur_codes.iter().any(|&c| is_fog(c)) ||
-        cur.current.and_then(|c| c.aqi).unwrap_or(0.0) >= 150.0;
+        cur.current.as_ref().and_then(|c| c.aqi).unwrap_or(0.0) >= 150.0;
     if cur_fog && !prev_fog {
-        let code = cur.current.map(|c| c.weather_code).unwrap_or(0);
+        let code = cur.current.as_ref().map(|c| c.weather_code).unwrap_or(0);
         let title = format!("即将有{}", weather_code_to_text(code));
         out.push(SevereEvent {
             kind: SevereKind::FogOrHaze,
@@ -535,7 +535,7 @@ fn detect_brief_window() -> Option<&'static str> {
     }
 }
 
-fn is_brief_enabled(brief: &str) -> bool {
+fn is_brief_enabled(_brief: &str) -> bool {
     // TODO: 从 config_store 读取 NSD_WEATHER_DAILY_BRIEF
     true // 简化实现
 }
@@ -546,10 +546,11 @@ fn is_brief_enabled(brief: &str) -> bool {
 
 pub fn start_weather_thread(app: AppHandle) {
     crate::thread_mgr::spawn_managed("weather_poll", move |exit| {
+        let rt = tokio::runtime::Runtime::new().expect("create tokio runtime for weather_poll");
         let mut state = WeatherState::default();
 
         // 尝试恢复城市配置
-        if let Some(city_json) = crate::config_store::get(&app, "nsd_weather_city") {
+        if let Some(city_json) = crate::config_store::get("nsd_weather_city") {
             if let Ok(city) = serde_json::from_value::<CityInfo>(city_json) {
                 state.city = Some(city);
             }
@@ -564,8 +565,9 @@ pub fn start_weather_thread(app: AppHandle) {
             if let Some(city) = state.city.as_ref() {
                 if let Some(brief) = detect_brief_window() {
                     if is_brief_enabled(brief) && state.last_brief_dates.get(brief) != Some(&today_key()) {
-                        match fetch_weather(city).await {
+                        match rt.block_on(fetch_weather(city)) {
                             Ok(snap) => {
+                                let _ = snap;
                                 let title = match brief {
                                     "morning" => "早上好，今天风和日丽",
                                     "noon" => "中午好，今天风和日丽",
@@ -589,7 +591,7 @@ pub fn start_weather_thread(app: AppHandle) {
             let due = last == 0 || now.saturating_sub(last) >= due_threshold;
             if dirty || due {
                 if let Some(city) = state.city.as_ref() {
-                    match fetch_weather(city).await {
+                    match rt.block_on(fetch_weather(city)) {
                         Ok(snap) => {
                             // diff 边沿触发恶劣天气
                             if let Some(prev) = state.last.as_ref() {
@@ -653,13 +655,13 @@ pub async fn weather_search_city(kw: String) -> Result<Vec<CityInfo>, String> {
 
 #[tauri::command]
 pub fn weather_set_city(app: AppHandle, city: CityInfo) -> Result<(), String> {
-    crate::config_store::set(&app, "nsd_weather_city".to_string(), serde_json::to_value(&city)?)?;
+    crate::config_store::set(&app, "nsd_weather_city".to_string(), serde_json::to_value(&city).map_err(|e| e.to_string())?)?;
     // 标记 dirty，线程下轮立即拉
     Ok(())
 }
 
 #[tauri::command]
-pub fn weather_get_state(app: AppHandle) -> serde_json::Value {
+pub fn weather_get_state(_app: AppHandle) -> serde_json::Value {
     let state = get_state();
     serde_json::json!({
         "city": state.as_ref().and_then(|s| s.city.clone()),
