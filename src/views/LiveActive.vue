@@ -591,6 +591,51 @@
                                 </div>
                             </template>
 
+                            <template v-else-if="item.id === 'taskbar-progress'">
+                                <div class="taskbar-config-panel">
+                                    <div class="health-reminder-row">
+                                        <div class="health-reminder-header">
+                                            <span class="health-reminder-icon">⏳</span>
+                                            <div class="health-reminder-info">
+                                                <span class="health-reminder-title">任务栏进度捕获</span>
+                                                <span class="health-reminder-desc">自动显示浏览器下载、文件复制等进度</span>
+                                            </div>
+                                        </div>
+                                        <div class="health-reminder-controls">
+                                            <label class="custom-switch mini">
+                                                <input type="checkbox" v-model="taskbarProgressEnabled"
+                                                    @change="invoke('set_taskbar_progress_enabled', { enabled: taskbarProgressEnabled })">
+                                                <span class="slider"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="health-status-row" v-if="taskbarProgressEnabled">
+                                        <label class="hw-select-label">
+                                            <span class="hw-select-name" style="width:auto; margin-right:8px;">扫描频率</span>
+                                            <select class="hw-metric-select" v-model.number="taskbarProgressInterval"
+                                                @change="invoke('set_taskbar_progress_interval', { ms: taskbarProgressInterval })">
+                                                <option :value="500">0.5s（更跟手）</option>
+                                                <option :value="1000">1s（推荐）</option>
+                                                <option :value="2000">2s（省 CPU）</option>
+                                                <option :value="3000">3s（最省）</option>
+                                            </select>
+                                        </label>
+                                    </div>
+                                    <p class="printer-hint">开启后，浏览器下载、文件复制、压缩/解压等任务的进度会自动显示在灵动岛（任务栏上有进度时优先展示，番茄钟专注期间自动屏蔽）。</p>
+                                </div>
+                            </template>
+
+                            <template v-else-if="item.id === 'weather'">
+                                <IslandWeatherPanel
+                                    :city="weatherCity"
+                                    :current="weatherCurrent"
+                                    :today="weatherToday"
+                                    :tomorrow="weatherTomorrow"
+                                    :alerts="weatherAlerts"
+                                    @city-change="onWeatherCityChange"
+                                />
+                            </template>
+
                             <template v-else>
                                 <div class="pro-coming-soon">
                                     <div class="loader-line"></div>
@@ -639,6 +684,8 @@ import {
     NSD_SYSMSG_NETWORK_DISCONNECT_ENABLED,
     NSD_SYSMSG_NETWORK_RECOVERY_ENABLED,
     NSD_SYSMSG_NETWORK_LATENCY_INTERVAL,
+    NSD_TASKBAR_PROGRESS_ENABLED,
+    NSD_TASKBAR_PROGRESS_INTERVAL,
 } from '../constants/storageKeys';
 import { getSettingRaw, setSettingRaw } from '../utils/settings';
 // E：硬件指标元数据（四指标下拉/预览配色与模式槽位映射的单一来源）
@@ -648,6 +695,16 @@ import { RT_ACTIVITY_DEFS, RT_IDS } from '../activities/registry';
 // F：日程同步载荷类型与展示格式化
 import type { CalendarEventInfo, ManualCalendarEvent } from '../components/island/types';
 import { formatEventCountdown, formatEventHhmm } from '../utils/calendarDisplay';
+import IslandWeatherPanel from '../components/island/IslandWeatherPanel.vue';
+import { useWeather, type WeatherCity } from '../composables/useWeather';
+
+// 恶劣天气提醒：状态来自 useWeather（weather-tick 事件驱动），面板组件自管设置项
+const { city: weatherCity, current: weatherCurrent, today: weatherToday, tomorrow: weatherTomorrow, alerts: weatherAlerts } = useWeather();
+
+function onWeatherCityChange(city: WeatherCity) {
+    weatherCity.value = city;
+    invoke('weather_set_city', { city }).catch(() => {});
+}
 
 // ===== 三步设置状态 =====
 const pomoStep = ref(0); // 0=专注时间, 1=休息时间, 2=循环轮数
@@ -786,6 +843,13 @@ const wrMinutes = ref(Number(getSettingRaw(NSD_WATER_REMINDER_SECS) || '120'));
 // 打印队列监控开关（默认开启，持久化）
 const printerEnabled = ref(
     getSettingRaw(NSD_PRINTER_MONITOR_ENABLED) !== 'false'
+);
+// 任务栏进度监控开关（默认开启，持久化）
+const taskbarProgressEnabled = ref(
+    getSettingRaw(NSD_TASKBAR_PROGRESS_ENABLED) !== 'false'
+);
+const taskbarProgressInterval = ref(
+    parseInt(getSettingRaw(NSD_TASKBAR_PROGRESS_INTERVAL) || '1000')
 );
 // 打印队列实时状态（由后端 print-queue-tick 驱动，用于设置页概览）
 const printerJobCount = ref(0);
@@ -1594,11 +1658,17 @@ onMounted(async () => {
 
     // 监听各活动 enabled 状态变化，自动同步配置到灵动岛
     watch(
-        [isPomoRunning, cdRunning, hwEnabled, srEnabled, wrEnabled, printerEnabled, calHasEvents],
+        [isPomoRunning, cdRunning, hwEnabled, srEnabled, wrEnabled, printerEnabled, calHasEvents, taskbarProgressEnabled, taskbarProgressInterval],
         async () => {
             setSettingRaw(NSD_PRINTER_MONITOR_ENABLED, String(printerEnabled.value));
+            setSettingRaw(NSD_TASKBAR_PROGRESS_ENABLED, String(taskbarProgressEnabled.value));
+            setSettingRaw(NSD_TASKBAR_PROGRESS_INTERVAL, String(taskbarProgressInterval.value));
             try {
                 await invoke('set_printer_monitor_enabled', { enabled: printerEnabled.value });
+            } catch (_e) {}
+            try {
+                await invoke('set_taskbar_progress_enabled', { enabled: taskbarProgressEnabled.value });
+                await invoke('set_taskbar_progress_interval', { ms: taskbarProgressInterval.value });
             } catch (_e) {}
             syncActivityConfig();
         }

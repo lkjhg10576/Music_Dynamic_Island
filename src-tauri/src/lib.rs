@@ -18,6 +18,8 @@ mod thread_mgr;
 mod win32_utils;
 mod clipboard;
 mod clipboard_link;
+mod taskbar_progress;
+mod weather;
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicBool, Ordering};
@@ -830,6 +832,16 @@ pub fn run() {
             clipboard::clipboard_clear,
             clipboard_link::clipboard_link_set_enabled,
             get_active_browser_tabs,
+            taskbar_progress::set_taskbar_progress_enabled,
+            taskbar_progress::set_taskbar_progress_interval,
+            taskbar_progress::get_taskbar_progress_state,
+            weather::weather_search_city,
+            weather::weather_set_city,
+            weather::weather_get_state,
+            weather::weather_set_daily_brief,
+            weather::weather_set_alert_threshold,
+            weather::weather_set_poll_interval,
+            weather::weather_set_light_alert_enabled,
         ])
         .setup(|app| {
             // 设置单一数据源：载入 config.json + 落盘线程
@@ -852,6 +864,8 @@ pub fn run() {
             calendar::start_calendar_thread(app.handle().clone());
             health_reminder::start_health_reminder_thread(app.handle().clone());
             print_queue::start_print_queue_monitor(app.handle().clone());
+            taskbar_progress::start_taskbar_progress_monitor(app.handle().clone());
+            weather::start_weather_thread(app.handle().clone());
             start_hardware_monitor(app.handle().clone());
             // SMTC 会话绑定管理器：事件驱动音乐信息推送（替代前端 3s 轮询）
             session_binder::init(app.handle().clone());

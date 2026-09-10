@@ -28,12 +28,15 @@ import IslandCdControls from '../components/island/IslandCdControls.vue';
 import IslandCloseButton from '../components/island/IslandCloseButton.vue';
 import IslandHwDetail from '../components/island/IslandHwDetail.vue';
 import IslandHwChipRing from '../components/island/IslandHwChipRing.vue';
+import IslandProgressRing from '../components/island/IslandProgressRing.vue';
 import IslandPrintQueue from '../components/island/IslandPrintQueue.vue';
+import IslandTaskbarProgress from '../components/island/IslandTaskbarProgress.vue';
+import IslandWeatherLightAlert from '../components/island/IslandWeatherLightAlert.vue';
 import type { CalendarEventInfo, PrintJob } from '../components/island/types';
 import { hwMetricPctOf, hwModeSlots, type HwMetric } from '../utils/hwMetrics';
 
 /** 参与岛上多活动并行轮换的实时活动 id */
-export type RtId = 'pomodoro' | 'countdown' | 'hardware' | 'health' | 'printer' | 'calendar';
+export type RtId = 'pomodoro' | 'countdown' | 'hardware' | 'health' | 'printer' | 'calendar' | 'taskbar-progress' | 'weather';
 
 /** 控制台活动卡片 id：实时活动 + 仅控制台的 sysmsg（无岛上形态） */
 export type ActivityId = RtId | 'sysmsg';
@@ -50,6 +53,18 @@ export interface ActivityGuardCtx {
     hwEnabled: Ref<boolean>;
     isHardwareExpanded: Ref<boolean>;
     isHealthAlerting: Ref<boolean>;
+    isTaskbarProgressActive: Ref<boolean>;
+    isTaskbarProgressExpanded: Ref<boolean>;
+    taskbarProgressAppName: Ref<string>;
+    taskbarProgressPercent: Ref<number>;
+    isWeatherLightAlerting: Ref<boolean>;
+    weatherLightAlert: Ref<{
+        alertId: string;
+        level: string;
+        levelText: string;
+        type: string;
+        title: string;
+    } | null>;
 }
 
 /** 岛上动作集合：主组件以闭包晚绑定注入（调用点均在交互期，晚于 setup 声明顺序） */
@@ -65,15 +80,26 @@ export interface IslandActivityActions {
     collapsePrintQueue: (restore?: boolean) => void;
     expandCalendar: () => void;
     collapseCalendar: () => void;
+    expandTaskbarProgress: () => void;
+    collapseTaskbarProgress: () => void;
     toggleCountdownPauseResume: () => void;
     closeCountdownPanel: () => void;
     closePomodoroPanel: () => void;
     dismissHealthAlert: () => void;
+    dismissWeatherLightAlert: () => void;
+    expandWeatherLightAlert: () => void;
+    collapseWeatherLightAlert: () => void;
 }
 
 /** 岛上下文：守卫上下文 + 芯片/面板渲染所需的状态与动作 */
 export interface IslandActivityCtx extends ActivityGuardCtx {
     cdPaused: Ref<boolean>;
+    /** 番茄钟进度圆环（剩余进度 + 按专注/休息切换的主题色），供文本态图标与芯片共用 */
+    pomodoroRingPct: ComputedRef<number>;
+    pomodoroRingColor: ComputedRef<string>;
+    /** 倒计时进度圆环（剩余进度 + 活动主题色） */
+    countdownRingPct: ComputedRef<number>;
+    countdownRingColor: ComputedRef<string>;
     hwMode: Ref<string>;
     hwDefaultMetric: Ref<HwMetric>;
     hwCpuPct: Ref<number>;
@@ -140,6 +166,8 @@ export interface RtActivityDef {
     expand?: (ctx: IslandActivityCtx) => void;
     /** 候选切换前统一折叠动作；health 由事件驱动不参与 */
     collapse?: (ctx: IslandActivityCtx) => void;
+    /** 强优先级: 活动时强占轮换第 1 位, 非活动时不出现在轮换队列(默认 false) */
+    forceWhenActive?: boolean;
 }
 
 /**
@@ -158,6 +186,15 @@ export const RT_ACTIVITY_DEFS: RtActivityDef[] = [
         realtime: true,
         isActive: ctx => ctx.isPomodoroVisible.value,
         textSources: ctx => ({ visible: ctx.isPomodoroVisible, expanded: ctx.isPomodoroExpanded }),
+        // 芯片形态：动态进度圆环（剩余进度随时间递减，颜色随专注/休息阶段切换）
+        chip: ctx => ({
+            kind: 'component',
+            component: IslandProgressRing,
+            props: {
+                pct: ctx.pomodoroRingPct.value,
+                color: ctx.pomodoroRingColor.value,
+            },
+        }),
         panel: ctx => {
             if (!ctx.isPomodoroExpanded.value) return null;
             return {
@@ -184,6 +221,15 @@ export const RT_ACTIVITY_DEFS: RtActivityDef[] = [
         realtime: true,
         isActive: ctx => ctx.isCountdownVisible.value,
         textSources: ctx => ({ visible: ctx.isCountdownVisible, expanded: ctx.isCountdownExpanded }),
+        // 芯片形态：动态进度圆环（剩余进度随时间递减，固定倒计时主题色）
+        chip: ctx => ({
+            kind: 'component',
+            component: IslandProgressRing,
+            props: {
+                pct: ctx.countdownRingPct.value,
+                color: ctx.countdownRingColor.value,
+            },
+        }),
         panel: ctx => {
             if (!ctx.isCountdownExpanded.value) return null;
             return {
@@ -335,6 +381,57 @@ export const RT_ACTIVITY_DEFS: RtActivityDef[] = [
         panelRank: 6,
         expand: ctx => ctx.actions.expandCalendar(),
         collapse: ctx => ctx.actions.collapseCalendar(),
+    },
+    {
+        id: 'taskbar-progress',
+        title: '任务栏进度',
+        desc: '聚合浏览器下载、文件复制、压缩/解压等任务栏进度',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>',
+        accent: '#22c55e',
+        defaultPriority: 99,
+        realtime: true,
+        /** 特殊优先级: 活动时强占 chip 第 1 位, 非活动时不出现在轮换队列 */
+        forceWhenActive: true,
+        isActive: ctx => ctx.isTaskbarProgressActive.value,
+        panel: ctx => {
+            if (!ctx.isTaskbarProgressExpanded.value) return null;
+            return {
+                key: 'taskbar-progress-detail',
+                component: IslandTaskbarProgress,
+                props: {
+                    appName: ctx.taskbarProgressAppName.value,
+                    percent: ctx.taskbarProgressPercent.value,
+                },
+                events: { close: () => ctx.actions.collapseTaskbarProgress() },
+            };
+        },
+        panelRank: 7,
+        expand: ctx => ctx.actions.expandTaskbarProgress(),
+        collapse: ctx => ctx.actions.collapseTaskbarProgress(),
+    },
+    {
+        id: 'weather',
+        title: '恶劣天气提醒',
+        desc: '小米天气·小时级·早午晚报',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>',
+        accent: '#0ea5e9',
+        defaultPriority: 7,
+        realtime: false,
+        // 轻提示态临时进入轮换，强占第 1 位 5s
+        forceWhenActive: true,
+        isActive: ctx => ctx.isWeatherLightAlerting?.value ?? false,
+        panel: ctx => {
+            if (!ctx.isWeatherLightAlerting?.value) return null;
+            return {
+                key: 'weather-light-alert',
+                component: IslandWeatherLightAlert,
+                props: { alert: ctx.weatherLightAlert?.value ?? null },
+                events: { close: () => ctx.actions?.dismissWeatherLightAlert?.() },
+            };
+        },
+        panelRank: 8,
+        expand: ctx => ctx.actions?.expandWeatherLightAlert?.(),
+        collapse: ctx => ctx.actions?.collapseWeatherLightAlert?.(),
     },
 ];
 

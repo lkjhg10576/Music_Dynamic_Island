@@ -82,6 +82,9 @@ windows = { version = "0.58.0", features = [
     # IPropertyBag2 参数位于 Win32::System::Com::StructuredStorage 模块，缺此 feature 时
     # 上述方法会被 cfg 门控掉（v0.58.0 源码查证）
     "Win32_System_Com_StructuredStorage",
+    # 任务栏进度扫描走 UIA COM 接口（IUIAutomation / IUIAutomationElement），
+    # windows 0.58 中该 API 位于 Win32::UI::Accessibility，无 UI_Automation 这个 feature。
+    "Win32_UI_Accessibility",
 ] }
 cpal = "0.15"
 rustfft = "6.2"

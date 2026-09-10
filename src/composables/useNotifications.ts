@@ -29,7 +29,7 @@ export interface ToastItem {
 // 通知权限状态
 export type AccessStatus = 'ok' | 'denied' | 'unavailable';
 
-export type SysToastType = 'app' | 'sys' | 'volume' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' | 'notify-permission' | 'clipboard';
+export type SysToastType = 'app' | 'sys' | 'volume' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' | 'notify-permission' | 'clipboard' | 'weather' | 'weather-morning' | 'weather-noon' | 'weather-evening';
 
 export function useNotifications(deps: {
     isIslandVisible: Ref<boolean>;
@@ -196,8 +196,9 @@ export function useNotifications(deps: {
         // 例：「已接入电源，当前电量 100%」约 13 字 ≈ 162px + 图标/边距/频谱 ≈ 280+
         const minW = (type === 'volume' || type === 'clipboard')
             ? 210
-            : (type === 'battery-charge' || type === 'battery-low' ? 300 : 240);
-        const maxW = 420;
+            : (type === 'battery-charge' || type === 'battery-low' ? 300
+                : (type === 'weather' || type === 'weather-morning' || type === 'weather-noon' || type === 'weather-evening' ? 320 : 240));
+        const maxW = type === 'weather' || type === 'weather-morning' || type === 'weather-noon' || type === 'weather-evening' ? 420 : 420;
         return Math.max(minW, Math.min(maxW, raw));
     };
 
@@ -417,6 +418,21 @@ export function useNotifications(deps: {
         else type = 'sys'; // 网络 / 默认
         showToast(p.text, type);
     };
+
+    // 把后端 weather-toast 事件映射成灵动岛通知类型
+    const showWeatherToast = (p: { kind: string; title: string; body: string }) => {
+        let type: SysToastType = 'weather';
+        if (p.kind === 'morning') type = 'weather-morning';
+        else if (p.kind === 'noon') type = 'weather-noon';
+        else if (p.kind === 'evening') type = 'weather-evening';
+        else type = 'weather';
+        const text = p.body ? `${p.title} · ${p.body}` : p.title;
+        showToast(text, type);
+    };
+
+    // 暴露给外部调用（供 WidgetIsland 监听 weather-toast 事件）
+    (window as any).__nsd_showWeatherToast = showWeatherToast;
+    void showWeatherToast;
 
     // 监听消息通知状态：
     // - 消息出现时：若正在显示 volume toast，先中断并塞回队列头部，避免消息结束后音量提示丢失

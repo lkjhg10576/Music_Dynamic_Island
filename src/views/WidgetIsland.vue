@@ -27,7 +27,7 @@
                         <IslandMsg v-if="isMsgActive" key="msg" :msg-title="msgTitle" :msg-app-name="msgAppName"
                             :msg-body="msgBody" :current-msg-icon="currentMsgIcon" @select="handleNotificationClick" />
 
-                        <IslandSysToast v-else-if="displaySysToast" key="systoast" :sys-toast-type="sysToastType"
+                        <IslandWeatherAlert v-else-if="displaySysToast" key="systoast" :sys-toast-type="sysToastType"
                             :sys-toast-text="sysToastText" @select="onSysToastClick" />
 
                         <!-- 剪贴板链接卡片（复制 http/https 链接时弹出，5s 自动消失） -->
@@ -38,11 +38,13 @@
                             :health-alert-label="healthAlertLabel" />
 
                         <IslandCountdown v-else-if="showCountdownText" key="countdown"
-                            :formatted-island-cd-time="formattedIslandCdTime" :is-countdown-finished="isCountdownFinished" />
+                            :formatted-island-cd-time="formattedIslandCdTime" :is-countdown-finished="isCountdownFinished"
+                            :ring-pct="countdownRingPct" :ring-color="countdownRingColor" />
 
                         <IslandPomodoro v-else-if="showPomodoroText" key="pomodoro"
                             :formatted-island-pomo-time="formattedIslandPomoTime" :pomodoro-phase-class="pomodoroPhaseClass"
-                            :pomodoro-remaining-cycles="pomodoroRemainingCycles" />
+                            :pomodoro-remaining-cycles="pomodoroRemainingCycles"
+                            :ring-pct="pomodoroRingPct" :ring-color="pomodoroRingColor" />
 
                         <IslandHardwareRing v-else-if="showHardwareRing" key="hardware" :hw-mode="hwMode"
                             :hw-cpu-pct="hwCpuPct" :hw-mem-pct="hwMemPct" :hw-ring-pct="hwRingPct"
@@ -210,9 +212,13 @@ const rtActive = computed<Record<string, boolean>>(() => {
 const activityConfig = ref<Record<string, { enabled: boolean; priority: number }>>({});
 
 // 候选集（enabled && active，按 priority 升序 + 注册表声明顺序平局打破）
+// forceWhenActive 活动强插第 1 位，非活动时不出现在轮换队列
 const rtActivities = computed(() => {
-    return RT_IDS
-        .filter(id => activityConfig.value[id]?.enabled && rtActive.value[id])
+    const normalCandidates = RT_IDS
+        .filter(id => {
+            const def = getRtDef(id);
+            return !def.forceWhenActive && activityConfig.value[id]?.enabled && rtActive.value[id];
+        })
         .map(id => {
             const def = getRtDef(id);
             return { id, priority: activityConfig.value[id].priority, icon: def.icon, accent: def.accent };
@@ -221,6 +227,20 @@ const rtActivities = computed(() => {
             const pa = a.priority, pb = b.priority;
             return pa !== pb ? pa - pb : RT_IDS.indexOf(a.id) - RT_IDS.indexOf(b.id);
         });
+    const forcedCandidates = RT_IDS
+        .filter(id => {
+            const def = getRtDef(id);
+            return def.forceWhenActive && activityConfig.value[id]?.enabled && rtActive.value[id];
+        })
+        .map(id => {
+            const def = getRtDef(id);
+            return { id, priority: activityConfig.value[id].priority, icon: def.icon, accent: def.accent };
+        })
+        .sort((a, b) => {
+            const pa = a.priority, pb = b.priority;
+            return pa !== pb ? pa - pb : RT_IDS.indexOf(a.id) - RT_IDS.indexOf(b.id);
+        });
+    return [...forcedCandidates, ...normalCandidates];
 });
 
 // 当前小图标指向的候选下标；展开后预览的下一个活动下标
@@ -710,6 +730,33 @@ const collapseCalendar = () => {
     scheduleAutoHide();
 };
 
+// 任务栏进度展开/折叠
+const expandTaskbarProgress = () => {
+    if (isTaskbarProgressExpanded.value) return;
+    suppressContentWatch = true;
+    isTaskbarProgressExpanded.value = true;
+    expandedRtId.value = 'taskbar-progress';
+    const { h } = getBaseSize();
+    animateIslandSize(getExpandTargetWidth(), h);
+    setTimeout(() => { suppressContentWatch = false; }, 600);
+};
+
+const collapseTaskbarProgress = () => {
+    if (!isTaskbarProgressExpanded.value) return;
+    suppressContentWatch = true;
+    isTaskbarProgressExpanded.value = false;
+    if (expandedRtId.value === 'taskbar-progress') {
+        expandedRtId.value = null;
+        currentRtIndex.value = 0;
+    }
+    const { h } = getBaseSize();
+    const savedWidth = restoreIslandWidth();
+    const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
+    animateIslandSize(targetWidth, h);
+    setTimeout(() => { suppressContentWatch = false; }, 600);
+    scheduleAutoHide();
+};
+
 // 统一折叠所有已展开的实时活动，避免多活动并行时状态残留导致关闭按钮/切换异常
 // （折叠动作同样由注册表派发：collapseHardware/collapsePrintQueue 自带未展开短路，等价旧的条件调用；
 //   health 由 isHealthAlerting 事件驱动，注册表不注册折叠）
@@ -922,26 +969,60 @@ const isMsgModeEnabled = ref(getSettingRaw(NSD_MSG_MODE) === 'true');
 // ===== 实时活动 composable 接入（番茄钟/倒计时/健康提醒/硬件监控/主岛轮换，逻辑从本组件拆出） =====
 // 接入点必须位于 displaySpeed/displayMusic 计算属性之前：它们的守卫依赖本域输出的展示谓词
 const {
-    isPomodoroVisible, pomodoroRemainingSecs, pomodoroPhase, pomodoroRemainingCycles, isPomodoroExpanded,
-    formattedIslandPomoTime, pomodoroPhaseClass, showPomodoroText,
-    isCountdownVisible, countdownRemainingSecs, isCountdownExpanded, isCountdownFinished, cdPaused,
-    formattedIslandCdTime, showCountdownText, isSplitMode,
+    isPomodoroVisible, pomodoroRemainingSecs, pomodoroTotalSecs, pomodoroPhase, pomodoroRemainingCycles, isPomodoroExpanded,
+    formattedIslandPomoTime, pomodoroPhaseClass, pomodoroRingPct, pomodoroRingColor, showPomodoroText,
+    isCountdownVisible, countdownRemainingSecs, countdownTotalSecs, isCountdownExpanded, isCountdownFinished, cdPaused,
+    formattedIslandCdTime, countdownRingPct, countdownRingColor, showCountdownText, isSplitMode,
     isHealthAlerting, healthAlertLabel, healthAlertType,
     hwEnabled, hwMode, hwDefaultMetric, hwCpuPct, hwMemPct, isHardwareExpanded,
     hwRingOuter, hwRingInner, hwBatteryPct, hwDiskPct,
     hwActiveMetric, hwRingPct, hwRingColor, showHardwareRing, startHwRotation, stopHwRotation,
     isRotationEnabled, currentRotIndex, startRotation, stopRotation,
     restorePomodoroState, restoreCountdownState,
+    isTaskbarProgressActive, isTaskbarProgressExpanded,
+    taskbarProgressAppName, taskbarProgressPercent,
+    isWeatherLightAlerting, weatherLightAlert,
 } = useRealtimeActivity({
     isMsgActive, displaySysToast, isMusicExpanded, isMusicExpanding, isMusicCtlEnabled,
 });
+
+// 天气轻提示：低等级预警弹出，5s 自动隐藏（事件驱动），dismiss 立即收起
+const dismissWeatherLightAlert = () => {
+    if (!isWeatherLightAlerting.value) return;
+    isWeatherLightAlerting.value = false;
+    weatherLightAlert.value = null;
+    if (expandedRtId.value === 'weather') {
+        expandedRtId.value = null;
+        currentRtIndex.value = 0;
+    }
+    const { h } = getBaseSize();
+    const savedWidth = restoreIslandWidth();
+    const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
+    animateIslandSize(targetWidth, h);
+    scheduleAutoHide();
+};
+
+const expandWeatherLightAlert = () => {
+    if (!isWeatherLightAlerting.value || expandedRtId.value === 'weather') return;
+    expandedRtId.value = 'weather';
+    const { h } = getBaseSize();
+    animateIslandSize(getExpandTargetWidth(), h);
+};
+
+const collapseWeatherLightAlert = () => {
+    dismissWeatherLightAlert();
+};
 
 // ===== 活动注册表的岛上上下文（见顶部 islandCtx 声明） =====
 // 动作一律以闭包注入：引用的处理器/getBaseSize 声明位置可能晚于本赋值，
 // 但调用点全部在交互期/渲染期，不存在时序问题
 islandCtx = {
     isPomodoroVisible, isPomodoroExpanded, isCountdownVisible, isCountdownExpanded,
+    pomodoroRingPct, pomodoroRingColor, countdownRingPct, countdownRingColor,
     hwEnabled, isHardwareExpanded, isHealthAlerting,
+    isWeatherLightAlerting, weatherLightAlert,
+    isTaskbarProgressActive, isTaskbarProgressExpanded,
+    taskbarProgressAppName, taskbarProgressPercent,
     cdPaused, hwMode, hwDefaultMetric, hwCpuPct, hwMemPct, hwRingPct, hwRingColor,
     hwRingOuter, hwRingInner, hwBatteryPct, hwDiskPct,
     printJobs, defaultPrinter, isPrintQueueExpanded,
@@ -959,10 +1040,15 @@ islandCtx = {
         collapsePrintQueue: restore => { collapsePrintQueue(restore ?? true); },
         expandCalendar: () => { expandCalendar(); },
         collapseCalendar: () => { collapseCalendar(); },
+        expandTaskbarProgress: () => { expandTaskbarProgress(); },
+        collapseTaskbarProgress: () => { collapseTaskbarProgress(); },
         toggleCountdownPauseResume: () => { handleCdTogglePauseResume(); },
         closeCountdownPanel: () => { handleCdClose(); },
         closePomodoroPanel: () => { handlePomoClose(); },
         dismissHealthAlert: () => { handleDismissHealthAlert(); },
+        dismissWeatherLightAlert: () => { dismissWeatherLightAlert(); },
+        expandWeatherLightAlert: () => { expandWeatherLightAlert(); },
+        collapseWeatherLightAlert: () => { collapseWeatherLightAlert(); },
     },
 };
 
@@ -1983,6 +2069,8 @@ const bootstrapIsland = async (): Promise<void> => {
         }
         // 更新显示状态
         pomodoroRemainingSecs.value = p.remaining_secs;
+        // 阶段总时长（专注/休息切换时后端一并下发）：驱动进度圆环回满并切换主题色
+        if (typeof p.total_secs === 'number') pomodoroTotalSecs.value = p.total_secs;
         pomodoroPhase.value = p.phase;
         pomodoroRemainingCycles.value = p.remaining_cycles;
         // 确保可见
@@ -2027,6 +2115,8 @@ const bootstrapIsland = async (): Promise<void> => {
             return;
         }
         countdownRemainingSecs.value = p.remaining_secs;
+        // 总时长（启动/恢复时后端下发）：驱动进度圆环
+        if (typeof p.total_secs === 'number') countdownTotalSecs.value = p.total_secs;
         cdPaused.value = p.paused || false;
         isCountdownFinished.value = p.phase === 'finished';
         if (!isCountdownVisible.value) {
@@ -2049,6 +2139,20 @@ const bootstrapIsland = async (): Promise<void> => {
     try {
         const state: any = await invoke('calendar_get_state');
         calUpcoming.value = Array.isArray(state?.upcoming) ? state.upcoming : [];
+    } catch (_e) {}
+
+    // 监听任务栏进度 tick 事件
+    unlistenFns.push(await listen<{ active: boolean; appName: string; percent: number; ts: number }>('taskbar-progress-tick', (e) => {
+        isTaskbarProgressActive.value = e.payload.active;
+        taskbarProgressAppName.value = e.payload.appName;
+        taskbarProgressPercent.value = e.payload.percent;
+    }));
+    // 启动恢复：拉取一次任务栏进度快照
+    try {
+        const state: any = await invoke('get_taskbar_progress_state');
+        isTaskbarProgressActive.value = state?.active ?? false;
+        taskbarProgressAppName.value = state?.appName ?? '';
+        taskbarProgressPercent.value = state?.percent ?? 0;
     } catch (_e) {}
 
     // 监听健康提醒 tick 事件

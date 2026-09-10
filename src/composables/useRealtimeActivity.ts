@@ -29,6 +29,7 @@ import {
     NSD_ROTATION_MODE,
 } from '../constants/storageKeys';
 import { HW_BATTERY_UNAVAILABLE, HW_METRICS, hwMetricClamp, hwMetricColor, hwMetricPctOf, type HwMetric } from '../utils/hwMetrics';
+import { progressRingPct, pomodoroRingColor as pomodoroRingColorOf, COUNTDOWN_COLOR } from '../utils/progressRing';
 
 export function useRealtimeActivity(deps: {
     // 跨域守卫：消息通知 / 系统 toast / 音乐展开态优先级高于实时活动展示
@@ -46,6 +47,8 @@ export function useRealtimeActivity(deps: {
     // 番茄钟相关变量（由后端 pomodoro-tick 事件驱动）
     const isPomodoroVisible = ref(false);
     const pomodoroRemainingSecs = ref(0);
+    // 当前阶段总时长（pomodoro-tick / get_pomodoro_state 的 total_secs），驱动进度圆环
+    const pomodoroTotalSecs = ref(0);
     const pomodoroPhase = ref<'focus' | 'break'>('focus');
     const pomodoroRemainingCycles = ref(0);
     const isPomodoroExpanded = ref(false);
@@ -53,6 +56,8 @@ export function useRealtimeActivity(deps: {
     // 倒计时相关变量（由后端 countdown-tick 事件驱动）
     const isCountdownVisible = ref(false);
     const countdownRemainingSecs = ref(0);
+    // 倒计时总时长（countdown-tick / get_countdown_state 的 total_secs），驱动进度圆环
+    const countdownTotalSecs = ref(0);
     const isCountdownExpanded = ref(false);
     const isCountdownFinished = ref(false);
     const cdPaused = ref(false);
@@ -81,12 +86,31 @@ export function useRealtimeActivity(deps: {
     const hwDiskPct = ref(0);
     const isHardwareExpanded = ref(false);
 
+    // 任务栏进度（由 taskbar-progress-tick 事件驱动）
+    const isTaskbarProgressActive = ref(false);
+    const isTaskbarProgressExpanded = ref(false);
+    const taskbarProgressAppName = ref('');
+    const taskbarProgressPercent = ref(0);
+
+    // 天气相关状态
+    const isWeatherLightAlerting = ref(false);
+    const weatherLightAlert = ref<{
+        alertId: string;
+        level: string;
+        levelText: string;
+        type: string;
+        title: string;
+    } | null>(null);
+
     // ===== 展示守卫（注册表统一遍历） =====
     // 守卫谓词的取数源：全部为只读消费，展开态的写入经由主组件注入的 actions
     const guardCtx: ActivityGuardCtx = {
         isPomodoroVisible, isPomodoroExpanded,
         isCountdownVisible, isCountdownExpanded,
         hwEnabled, isHardwareExpanded, isHealthAlerting,
+        isTaskbarProgressActive, isTaskbarProgressExpanded,
+        taskbarProgressAppName, taskbarProgressPercent,
+        isWeatherLightAlerting, weatherLightAlert,
     };
 
     // 单个文本态的展示守卫：消息/toast/音乐展开让位；可见 且（无音乐控制 或 已展开）。
@@ -140,6 +164,14 @@ export function useRealtimeActivity(deps: {
         const s = (countdownRemainingSecs.value % 60).toString().padStart(2, '0');
         return `${m}:${s}`;
     });
+
+    // 番茄钟/倒计时进度圆环（剩余进度：起始满环 → 结束空环）
+    // 番茄钟主题色随专注/休息阶段切换；总时长未知（首个 tick 到达前）时按空环兜底
+    const pomodoroRingPct = computed(() => progressRingPct(pomodoroRemainingSecs.value, pomodoroTotalSecs.value));
+    const pomodoroRingColor = computed(() => pomodoroRingColorOf(pomodoroPhase.value));
+
+    const countdownRingPct = computed(() => progressRingPct(countdownRemainingSecs.value, countdownTotalSecs.value));
+    const countdownRingColor = computed(() => COUNTDOWN_COLOR);
 
     // 轮换模式：当前显示的指标（CPU / 内存）
     const hwRotateMetric = ref<'cpu' | 'mem'>('cpu');
@@ -220,6 +252,8 @@ export function useRealtimeActivity(deps: {
             const state: any = await invoke('get_pomodoro_state');
             if (state.active) {
                 pomodoroRemainingSecs.value = state.remaining_secs;
+                // 回填阶段总时长：刷新/重载后圆环立即呈现正确进度，无需等首个 tick
+                if (typeof state.total_secs === 'number') pomodoroTotalSecs.value = state.total_secs;
                 pomodoroPhase.value = state.phase;
                 pomodoroRemainingCycles.value = state.remaining_cycles;
                 isPomodoroVisible.value = true;
@@ -234,6 +268,8 @@ export function useRealtimeActivity(deps: {
             const state: any = await invoke('get_countdown_state');
             if (state.active) {
                 countdownRemainingSecs.value = state.remaining_secs;
+                // 回填总时长：刷新/重载后圆环立即呈现正确进度，无需等首个 tick
+                if (typeof state.total_secs === 'number') countdownTotalSecs.value = state.total_secs;
                 cdPaused.value = state.paused || false;
                 isCountdownFinished.value = state.phase === 'finished';
                 isCountdownVisible.value = true;
@@ -246,19 +282,25 @@ export function useRealtimeActivity(deps: {
         // 番茄钟
         isPomodoroVisible,
         pomodoroRemainingSecs,
+        pomodoroTotalSecs,
         pomodoroPhase,
         pomodoroRemainingCycles,
         isPomodoroExpanded,
         formattedIslandPomoTime,
         pomodoroPhaseClass,
+        pomodoroRingPct,
+        pomodoroRingColor,
         showPomodoroText,
         // 倒计时
         isCountdownVisible,
         countdownRemainingSecs,
+        countdownTotalSecs,
         isCountdownExpanded,
         isCountdownFinished,
         cdPaused,
         formattedIslandCdTime,
+        countdownRingPct,
+        countdownRingColor,
         showCountdownText,
         isSplitMode,
         // 健康提醒
@@ -282,11 +324,19 @@ export function useRealtimeActivity(deps: {
         showHardwareRing,
         startHwRotation,
         stopHwRotation,
+        // 任务栏进度
+        isTaskbarProgressActive,
+        isTaskbarProgressExpanded,
+        taskbarProgressAppName,
+        taskbarProgressPercent,
         // 主岛轮换
         isRotationEnabled,
         currentRotIndex,
         startRotation,
         stopRotation,
+        // 天气
+        isWeatherLightAlerting,
+        weatherLightAlert,
         // 启动恢复
         restorePomodoroState,
         restoreCountdownState,

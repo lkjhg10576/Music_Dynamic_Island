@@ -1,10 +1,7 @@
 <template>
     <div class="pomodoro-text-box">
-        <svg viewBox="0 0 24 24" class="pomodoro-svg" :class="pomodoroPhaseClass" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"></circle>
-            <polyline points="12 6 12 12 16 14"></polyline>
-        </svg>
+        <!-- 动态进度圆环：剩余进度随时间递减，颜色随专注/休息阶段切换（与硬件监控单圆环同一规格） -->
+        <IslandProgressRing :pct="ringPct" :color="ringColor" />
         <div class="pomodoro-info">
             <span class="pomodoro-time" :class="pomodoroPhaseClass">{{ formattedIslandPomoTime }}</span>
             <span class="pomodoro-cycle-badge" v-if="pomodoroRemainingCycles > 0">{{ pomodoroRemainingCycles }}</span>
@@ -13,10 +10,16 @@
 </template>
 
 <script setup lang="ts">
+import IslandProgressRing from './IslandProgressRing.vue';
+
 defineProps<{
     formattedIslandPomoTime: string;
     pomodoroPhaseClass: string;
     pomodoroRemainingCycles: number;
+    /** 剩余进度百分比（0~100），驱动动态圆环 */
+    ringPct: number;
+    /** 圆环主题色（专注阶段红 / 休息阶段蓝） */
+    ringColor: string;
 }>();
 </script>
 
@@ -51,20 +54,6 @@ defineProps<{
 }
 
 .pomodoro-time.phase-break {
-    color: #2196f3;
-}
-
-.pomodoro-svg {
-    width: 24px;
-    height: 24px;
-    transition: color 0.3s ease;
-}
-
-.pomodoro-svg.phase-focus {
-    color: #ff4757;
-}
-
-.pomodoro-svg.phase-break {
     color: #2196f3;
 }
 
