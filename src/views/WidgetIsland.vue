@@ -442,7 +442,7 @@ let musicExpandAnimTimer: number | null = null; // 用于接管展开时的定�
 const {
     isMsgActive, msgTitle, msgAppName, msgBody, currentMsgIcon, msgQueue,
     displaySysToast, sysToastText, sysToastType,
-    showToast, showSysmsgToast, onSysToastClick, handleNotificationClick,
+    showToast, showSysmsgToast, showWeatherToast, onSysToastClick, handleNotificationClick,
     processMsgQueue, cleanupNotifications,
 } = useNotifications({
     isIslandVisible, isPinnedToTaskbar, msgExpandedWidth, isMusicExpanded, isMusicExpanding,
@@ -463,6 +463,10 @@ let clipboardHideTimer: number | null = null;
 // 链接卡片展示时刻的时间戳：用于抑制链接复制后紧随的 clipboard-changed toast，
 // 避免"先弹链接卡 → 再弹已复制提示"的两段动画（复制链接只应显示链接卡）
 let clipboardLinkShownAt = 0;
+
+// 恶劣天气轻提示的自动收起计时器（后端 weather-light-alert 驱动，5s 后自动隐藏）。
+// 声明在组件作用域而非 onMounted 内：onUnmounted 需要清理它。
+let weatherLightAlertTimer: number | null = null;
 
 // 卡片目标尺寸：对齐消息通知卡的宽度口径（用户设置的消息展开宽度，但不小于 320）
 const clipboardCardWidth = () => Math.max(msgExpandedWidth.value, 320);
@@ -2131,6 +2135,30 @@ const bootstrapIsland = async (): Promise<void> => {
         showToast('⏰ 倒计时结束', 'app');
     });
 
+    // ===== 恶劣天气提醒：后端三个事件在岛上的接线 =====
+    // 此前这三个事件在岛上完全没有监听：weather-toast 只在 useNotifications 里被定义
+    // 成 window.__nsd_showWeatherToast 却无人调用；weather-light-alert 只写进了
+    // useWeather（仅控制台使用）自己的 ref；岛上的 isWeatherLightAlerting 永远为 false，
+    // 且注册表里天气卡片的 isActive 正读这个 ref —— 结果整个天气提醒在岛上静默。
+    await safeListen<{ alertId: string; level: string; levelText: string; type: string; title: string }>(
+        'weather-light-alert',
+        (event) => {
+            weatherLightAlert.value = event.payload;
+            isWeatherLightAlerting.value = true;
+            if (weatherLightAlertTimer !== null) clearTimeout(weatherLightAlertTimer);
+            weatherLightAlertTimer = window.setTimeout(() => {
+                weatherLightAlertTimer = null;
+                dismissWeatherLightAlert();
+            }, 5000);
+        },
+    );
+
+    // 恶劣天气（severe）与早/午/晚报（morning/noon/evening）统一走系统 toast 通道，
+    // kind → SysToastType 的映射在 useNotifications.showWeatherToast 内
+    await safeListen<{ kind: string; title: string; body: string }>('weather-toast', (event) => {
+        showWeatherToast(event.payload);
+    });
+
     // 监听日程同步 tick 事件（F：系统日历 + 手动提醒的未来 24h 列表，列表变化或每 30 秒推送）
     await safeListen<{ upcoming: CalendarEventInfo[] }>('calendar-tick', (event) => {
         calUpcoming.value = Array.isArray(event.payload?.upcoming) ? event.payload.upcoming : [];
@@ -2493,6 +2521,11 @@ onUnmounted(() => {
     if (clipboardHideTimer) {
         clearTimeout(clipboardHideTimer);
         clipboardHideTimer = null;
+    }
+    // 天气轻提示的自动收起计时器
+    if (weatherLightAlertTimer !== null) {
+        clearTimeout(weatherLightAlertTimer);
+        weatherLightAlertTimer = null;
     }
     // 使进行中的 toast 等待立即失效，避免卸载后继续改状态（逻辑在 useNotifications 内）
     cleanupNotifications();

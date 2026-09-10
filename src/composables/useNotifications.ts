@@ -513,6 +513,7 @@ export function useNotifications(deps: {
         sysToastType,
         showToast,
         showSysmsgToast,
+        showWeatherToast,
         onSysToastClick,
         handleNotificationClick,
         processMsgQueue,
