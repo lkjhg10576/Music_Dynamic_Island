@@ -377,3 +377,67 @@ pub fn calendar_get_state(app: AppHandle) -> serde_json::Value {
     let upcoming = recompute_upcoming(&app);
     state_payload(&upcoming, &manual)
 }
+
+// ══════════════════════════════════════════════
+// 开发者桥接接口（仅供 dev_bridge 调用）
+//
+// 真实日程要么得等系统日历真的到点，要么得手动在 UI 里加完再等倒计时走到 ——
+// 这里把"加一条 N 秒后开始的手动提醒"和"立刻重算并推送"暴露给开发者工具，
+// 顺带能验证 calendar-tick 的合并/截断/过期清理逻辑。
+// ══════════════════════════════════════════════
+
+/// 用 config.json 刷新内存缓存后重算并立刻推送一次 calendar-tick（不等 30s 周期）
+pub(crate) fn dev_force_emit(app: &AppHandle) -> serde_json::Value {
+    let manual = load_manual(app);
+    *MANUAL_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = manual.clone();
+    RECALC_DIRTY.store(true, Ordering::Relaxed);
+    let upcoming = recompute_upcoming(app);
+    let payload = state_payload(&upcoming, &manual);
+    crate::win32_utils::log_err(
+        app.emit("calendar-tick", payload.clone()),
+        "emit calendar-tick (dev)",
+    );
+    payload
+}
+
+/// 状态快照（强制刷新缓存；供桥接 status 用）
+pub(crate) fn dev_status(app: &AppHandle) -> serde_json::Value {
+    dev_force_emit(app)
+}
+
+/// 添加一条手动提醒（delay_secs 为相对现在的秒数，便于"10 秒后来一条"）
+pub(crate) fn dev_add(
+    app: &AppHandle,
+    title: String,
+    delay_secs: i64,
+    duration_mins: u32,
+    repeat_daily: bool,
+) -> u64 {
+    let now = unix_now() as i64;
+    let start = (now + delay_secs).max(0) as u64;
+    let id = calendar_add_manual_event(app.clone(), title, start, duration_mins, repeat_daily);
+    RECALC_DIRTY.store(true, Ordering::Relaxed);
+    id
+}
+
+/// 清空全部手动提醒
+pub(crate) fn dev_clear(app: &AppHandle) -> serde_json::Value {
+    save_manual(app, &[]);
+    *MANUAL_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
+    RECALC_DIRTY.store(true, Ordering::Relaxed);
+    dev_force_emit(app)
+}
+
+/// 删除单条手动提醒
+pub(crate) fn dev_remove(app: &AppHandle, id: u64) -> serde_json::Value {
+    calendar_remove_manual_event(app.clone(), id);
+    RECALC_DIRTY.store(true, Ordering::Relaxed);
+    dev_force_emit(app)
+}
+
+/// 强制丢弃系统日历查询结果（模拟"系统日历不可用"的降级路径）
+pub(crate) fn dev_drop_system_events(app: &AppHandle) -> serde_json::Value {
+    SYSTEM_EVENTS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    SYSTEM_OK.store(false, Ordering::Relaxed);
+    dev_force_emit(app)
+}

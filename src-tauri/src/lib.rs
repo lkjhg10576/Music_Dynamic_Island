@@ -20,6 +20,8 @@ mod clipboard;
 mod clipboard_link;
 mod taskbar_progress;
 mod weather;
+// 开发者桥接：仅 9.9.9-* 测试版会真正启动（见 dev_bridge::DEV_BUILD）
+mod dev_bridge;
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicBool, Ordering};
@@ -866,6 +868,8 @@ pub fn run() {
             print_queue::start_print_queue_monitor(app.handle().clone());
             taskbar_progress::start_taskbar_progress_monitor(app.handle().clone());
             weather::start_weather_thread(app.handle().clone());
+            // 开发者桥接：仅 9.9.9-* 测试版启动（编译期版本门禁，正式版不开端口）
+            dev_bridge::start(app.handle().clone());
             start_hardware_monitor(app.handle().clone());
             // SMTC 会话绑定管理器：事件驱动音乐信息推送（替代前端 3s 轮询）
             session_binder::init(app.handle().clone());

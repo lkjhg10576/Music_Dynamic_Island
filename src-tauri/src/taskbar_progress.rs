@@ -6,6 +6,7 @@
 
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
@@ -29,6 +30,23 @@ static MONITOR_STARTED: AtomicBool = AtomicBool::new(false);
 static SCAN_INTERVAL_MS: AtomicU32 = AtomicU32::new(1000);  // 默认 1s
 const SCAN_INTERVAL_MIN_MS: u32 = 500;
 const SCAN_INTERVAL_MAX_MS: u32 = 3000;
+
+/// 开发者桥接注入的假进度: Some 时监控线程与状态查询一律用它，跳过 UIA 扫描。
+/// 真实场景（浏览器下载 / 文件复制 / 解压）的进度既不可控也不可复现，
+/// 想验证"岛上的进度条在某百分比渲染成什么样"就必须能直接喂值。
+static INJECT_OVERRIDE: Mutex<Option<TaskbarProgressState>> = Mutex::new(None);
+
+/// 取当前有效状态：注入优先，否则真扫一次
+fn effective_scan() -> TaskbarProgressState {
+    let injected = INJECT_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    match injected {
+        Some(s) => s,
+        None => scan_taskbar_progress(),
+    }
+}
 
 /// 启动后台扫描线程
 pub fn start_taskbar_progress_monitor(app: AppHandle) {
@@ -60,8 +78,8 @@ pub fn start_taskbar_progress_monitor(app: AppHandle) {
                 continue;
             }
 
-            // 扫描一次
-            let scan = scan_taskbar_progress();
+            // 扫描一次（注入覆盖时直接取注入值）
+            let scan = effective_scan();
             let now_ms = now_millis();
 
             // 去重 + 节流: 状态完全没变, 且距上次 emit < throttle, 就跳过
@@ -96,8 +114,51 @@ pub fn set_taskbar_progress_interval(ms: u32) {
 
 #[tauri::command]
 pub fn get_taskbar_progress_state() -> TaskbarProgressState {
-    let scan = scan_taskbar_progress();
+    let scan = effective_scan();
     TaskbarProgressState { ts: now_secs(), ..scan }
+}
+
+// ══════════════════════════════════════════════
+// 开发者桥接接口（仅供 dev_bridge 调用）
+// ══════════════════════════════════════════════
+
+/// 注入 / 清除假的任务栏进度。state 为 None 表示清除注入、恢复真实 UIA 扫描。
+/// 立即推一次 tick，使岛上与状态查询同步生效（不必等下一个扫描周期）。
+pub(crate) fn dev_set_override(app: &AppHandle, state: Option<TaskbarProgressState>) {
+    let payload = match state {
+        Some(s) => {
+            let s = TaskbarProgressState { ts: now_secs(), ..s };
+            *INJECT_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = Some(s.clone());
+            s
+        }
+        None => {
+            *INJECT_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            inactive()
+        }
+    };
+    crate::win32_utils::log_err(
+        app.emit("taskbar-progress-tick", payload),
+        "emit taskbar-progress-tick (dev)",
+    );
+}
+
+/// 桥接用状态快照（含注入标记与最近一次真实扫描结果）
+pub(crate) fn dev_status() -> serde_json::Value {
+    let injected = INJECT_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some();
+    // UIA 调用需要 COM 套间：桥接连接线程不是监控线程，必须自己初始化一次，
+    // 否则 CoCreateInstance 直接返回 CO_E_NOTINITIALIZED，真扫结果恒为 inactive。
+    let _com = ComGuard::new();
+    let real = scan_taskbar_progress();
+    serde_json::json!({
+        "enabled": MONITOR_ENABLED.load(Ordering::Relaxed),
+        "started": MONITOR_STARTED.load(Ordering::Relaxed),
+        "intervalMs": SCAN_INTERVAL_MS.load(Ordering::Relaxed),
+        "injected": injected,
+        "realScan": real,
+    })
 }
 
 // ──────────────────────────────────────────────
