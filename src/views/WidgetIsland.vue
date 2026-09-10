@@ -1,4 +1,4 @@
-﻿<template>
+<template>
     <transition @enter="onEnter" @leave="onLeave" :css="false">
         <div v-show="isIslandVisible" :class="['island-container', { 'has-music-border': isGlowBorderEnabled }]"
             @mousedown="handleMouseDown" @mousemove="handleMouseMove" @mouseup="handleMouseUp"
@@ -30,7 +30,8 @@
                         <IslandWeatherAlert v-else-if="displaySysToast" key="systoast" :sys-toast-type="sysToastType"
                             :sys-toast-text="sysToastText" :sys-toast-title="sysToastTitle"
                             :sys-toast-body="sysToastBody" :sys-toast-icon="sysToastIcon"
-                            :sys-toast-severity="sysToastSeverity" @select="onSysToastClick" />
+                            :sys-toast-severity="sysToastSeverity" @select="onSysToastClick"
+                            @close="dismissSysToast" />
 
                         <!-- 剪贴板链接卡片（复制 http/https 链接时弹出，5s 自动消失） -->
                         <IslandClipboardLink v-else-if="displayClipboard" key="clipboard" :link="clipboardLink"
@@ -160,7 +161,13 @@ import IslandRtChip from '../components/island/IslandRtChip.vue';
 import IslandMusic from '../components/island/IslandMusic.vue';
 import IslandSpectrum from '../components/island/IslandSpectrum.vue';
 import IslandStatusDot from '../components/island/IslandStatusDot.vue';
-import type { CalendarEventInfo, PrintJob, PrintQueueState } from '../components/island/types';
+import type { CalendarEventInfo, CalendarReminder, PrintJob, PrintQueueState } from '../components/island/types';
+// 日程面板的自适应宽高：结构常量与 IslandCalendarPanel.vue 的 CSS 一一对应
+import {
+    measureCalendarPanelWidth, calendarPanelRowCount, CAL_PANEL_HEAD_H, CAL_PANEL_ROW_H, CAL_PANEL_VPAD,
+} from '../utils/calendarDisplay';
+// 文本实测宽度：任务栏进度面板宽度按应用名自适应（口径与 utils/textMeasure 的字体常量一致）
+import { measureTextWidth, FONT_PANEL_TITLE } from '../utils/textMeasure';
 // 活动注册表：候选 id / 元数据 / 活跃谓词 / 芯片与面板视图的单一来源（阶段 G）
 import {
     RT_ACTIVITY_DEFS, RT_IDS, PANEL_DEFS_BY_RANK, getRtDef,
@@ -178,7 +185,7 @@ const isPositionLocked = ref(getSettingRaw(NSD_POSITION_LOCKED) === 'true');
 // ===== 尺寸动画 composable 接入（弹簧形变动画 + 宽度持久化 + 自定义横向拖拽，逻辑从本组件拆出） =====
 const {
     currentWidth, currentHeight, isSizeAnimating, animateIslandSize,
-    MIN_WIDTH, MAX_WIDTH, saveIslandWidth, restoreIslandWidth, getExpandTargetWidth,
+    MIN_WIDTH, MAX_WIDTH, MIN_EXPAND_WIDTH, saveIslandWidth, restoreIslandWidth, getExpandTargetWidth,
     isCustomDragging, startCustomHorizontalDrag, handleCustomDragEnd, cleanupIslandAnimation,
 } = useIslandAnimation({ isPinnedToTaskbar });
 
@@ -191,6 +198,9 @@ const isPrintQueueExpanded = ref(false);
 // 日程同步相关变量（F：由后端 calendar-tick 事件驱动；系统日历 + 手动提醒的未来 24h 列表）
 const calUpcoming = ref<CalendarEventInfo[]>([]);
 const isCalendarExpanded = ref(false);
+// 待处理的到点提醒（calendar-reminder 驱动，事件开始后由 calendar-tick 复查清除）：
+// 保留它是为了让「提醒 toast 一闪而过」之后仍有入口 —— 小图标上的日历图标点开即可看到高亮提醒条
+const calReminder = ref<CalendarReminder | null>(null);
 
 // 硬件监控附属图标可见性已合并到 showRtChip（多活动并行轮换），原 isHwAccessoryVisible 不再单独使用
 
@@ -252,11 +262,34 @@ const expandedRtId = ref<string | null>(null);
 // 展开瞬间快照：决定 X 关闭后还原到音乐岛还是独立小图标态
 const previousContext = ref<'music' | 'chip'>('chip');
 
+// 整屏面板：展开的活动有 expand 且无 textSources（倒计时/番茄钟左侧仍需文本态，故排除；
+// health 无 expand 自动排除）。命中 taskbar-progress / printer / calendar / weather。
+// 用途：① 隐藏左侧音乐/网速内容（IslandMusic 根节点是 absolute 铺满整岛，不隐藏会压在展开面板上）；
+//       ② 展开期间隐藏右侧小图标（面板自带 X，小图标会盖住它）。
+// 注：声明位置必须早于 showRtChip（后者读它）；计算属性惰性求值，与 getBaseSize 晚绑定同一模式。
+const isFullPanelOpen = computed(() => {
+    const id = expandedRtId.value;
+    if (!id) return false;
+    const def = RT_ACTIVITY_DEFS.find(d => d.id === id);
+    return !!def && !!def.expand && !def.textSources;
+});
+
 // 小图标是否显示：有候选 且 (未展开 或 展开的不是当前预览活动)
 // 同时排除：消息通知 / 系统 toast / 健康提醒"独占态"（健康提醒 active 时本身就有专属岛态，无需小图标）
 // 注意：hardware 候选时若环已在主岛显示，视觉上会与小图标并存；用户点击环或小图标均可展开 hardware 详情（功能等价）
 const showRtChip = computed(() => {
     if (rtActivities.value.length === 0) return false;
+    // 整屏面板展开期间不显示小图标：面板内的关闭按钮位于岛屿右缘，
+    // 而小图标（right:0，38px，DOM 顺序在后）恰好压在上面，点 X 会变成点小图标；
+    // 且单一候选活动时预览 == 已展开 → 小图标本就被下面的分支隐藏，
+    // 于是岛上会既没有面板（旧版整屏面板被 display:none 连带隐藏）也没有小图标，彻底"卡死"。
+    // 现在面板可见且自带 X，关闭后 collapse* 会把 currentRtIndex 复位，小图标自然回来。
+    if (isFullPanelOpen.value) return false;
+    // 常驻速报（早/午/晚报）显示期间同样隐藏小图标：速报卡片右侧的 X 与实时活动小图标
+    // 都贴在岛屿右缘，二者叠加会让 X 压在小图标上（观感差、易点错）。速报独占岛，
+    // 点 X 关闭后小图标自动恢复；calcSysToastWidth 也会因 showRtChip=false 少预留 44px。
+    // displaySysToast/sysToastPersistent 在下方 useNotifications 接入处解构（晚绑定，运行时才求值）
+    if (displaySysToast.value && sysToastPersistent.value) return false;
     const previewId = rtActivities.value[currentRtIndex.value]?.id;
     if (expandedRtId.value && expandedRtId.value === previewId) return false;
     // 健康提醒"alerting"独占岛态时，不显示小图标（避免重复）
@@ -310,6 +343,18 @@ function revertRealtime() {
     // previousContext 决定还原到音乐岛或独立小图标态（chip 由 showRtChip 自然恢复）
     // 维持现有自动隐藏行为
     scheduleAutoHide();
+}
+
+/**
+ * 把轮换预览切到指定活动（不在候选集内则不动）。
+ * 与 clickRtChip 的「展开 + 推进下标」不同：这里只移动小图标预览、不展开任何活动，
+ * 供事件驱动的入口使用（如日程到点提醒 → 小图标立刻变成日历入口，点开即看提醒）。
+ * 此时 expandedRtId 为 null，不会被 watch(rtActivities) 的推进逻辑立刻改走。
+ */
+function focusRtChip(id: string) {
+    const list = rtActivities.value;
+    const idx = list.findIndex(a => a.id === id);
+    if (idx >= 0) currentRtIndex.value = idx;
 }
 
 // 启动时从 localStorage 读取优先级 map，初始化 activityConfig（与 LiveActive 推送双保险）
@@ -445,6 +490,9 @@ const {
     isMsgActive, msgTitle, msgAppName, msgBody, currentMsgIcon, msgQueue,
     displaySysToast, sysToastText, sysToastType,
     sysToastTitle, sysToastBody, sysToastIcon, sysToastSeverity,
+    // 常驻速报的收尾统一走 dismissSysToast（点 X 时由 @close 触发）；
+    // sysToastPersistent 供 showRtChip 判定"速报独占岛"（隐藏小图标，避免压住卡片 X）
+    sysToastPersistent, dismissSysToast,
     showToast, showSysmsgToast, showWeatherToast, onSysToastClick, handleNotificationClick,
     processMsgQueue, cleanupNotifications,
 } = useNotifications({
@@ -709,14 +757,24 @@ const collapsePrintQueue = (restore = true) => {
     setTimeout(() => { suppressContentWatch = false; }, 600);
 };
 
-// 日程同步展开/折叠（F）：与硬件详情同款宽度兜底，列表在面板内滚动
+// 日程同步展开/折叠（F）：宽高都按内容自适应（旧版宽度一律 getExpandTargetWidth()，
+// 长日程标题会被省略号截断；高度恒为 42px，列表可视区只剩一行）。
+// 面板宽/高的结构常量与 IslandCalendarPanel.vue 的 CSS 一一对应，见 utils/calendarDisplay.ts。
 const expandCalendar = () => {
     if (isCalendarExpanded.value) return;
     suppressContentWatch = true;
     isCalendarExpanded.value = true;
     expandedRtId.value = 'calendar';
     const { h } = getBaseSize();
-    animateIslandSize(getExpandTargetWidth(), h);
+    const nowSecs = Math.floor(Date.now() / 1000);
+    const targetWidth = measureCalendarPanelWidth(
+        calUpcoming.value, calReminder.value, nowSecs, MIN_EXPAND_WIDTH, MAX_WIDTH,
+    );
+    // 高度随行数增长（仿 expandPrintQueue 的按行加高）：内容高 = 上下内边距 + 表头 + 行数×行高，
+    // 低于基础岛高时取基础岛高；行数受 CAL_PANEL_MAX_ROWS 封顶，更多行在面板内滚动
+    const rows = calendarPanelRowCount(calUpcoming.value, calReminder.value);
+    const panelHeight = CAL_PANEL_VPAD + CAL_PANEL_HEAD_H + rows * CAL_PANEL_ROW_H;
+    animateIslandSize(targetWidth, Math.max(h, panelHeight));
     setTimeout(() => { suppressContentWatch = false; }, 600);
 };
 
@@ -737,14 +795,26 @@ const collapseCalendar = () => {
     scheduleAutoHide();
 };
 
-// 任务栏进度展开/折叠
+// 任务栏进度展开/折叠：宽度按应用名自适应
+// （旧版一律 getExpandTargetWidth()，下限 200px 时「应用名 + 百分比」必被省略号截断；
+//   结构常量对应 IslandTaskbarProgress.vue：左右内边距 8+30、标题与百分比 gap 6、百分比约占 24）
+const TASKBAR_PANEL_CHROME = 30 + 8 + 6 + 24;
+const taskbarProgressPanelWidth = () =>
+    Math.max(
+        MIN_EXPAND_WIDTH,
+        Math.min(
+            MAX_WIDTH,
+            measureTextWidth(taskbarProgressAppName.value, FONT_PANEL_TITLE) + TASKBAR_PANEL_CHROME,
+        ),
+    );
+
 const expandTaskbarProgress = () => {
     if (isTaskbarProgressExpanded.value) return;
     suppressContentWatch = true;
     isTaskbarProgressExpanded.value = true;
     expandedRtId.value = 'taskbar-progress';
     const { h } = getBaseSize();
-    animateIslandSize(getExpandTargetWidth(), h);
+    animateIslandSize(taskbarProgressPanelWidth(), h);
     setTimeout(() => { suppressContentWatch = false; }, 600);
 };
 
@@ -793,6 +863,9 @@ const {
     mouseNearEdge,
     isPendingCollapse,
     collapseMusic: () => collapseMusic(),
+    // 系统通知/消息显示期间禁止自动隐藏（速报持久停留的配套守卫；
+    // displaySysToast / isMsgActive 已在文件上方 useNotifications 接入处解构）
+    isNotificationActive: () => displaySysToast.value || isMsgActive.value,
 });
 
 // 律动频谱
@@ -1042,7 +1115,7 @@ islandCtx = {
     cdPaused, hwMode, hwDefaultMetric, hwCpuPct, hwMemPct, hwRingPct, hwRingColor,
     hwRingOuter, hwRingInner, hwBatteryPct, hwDiskPct,
     printJobs, defaultPrinter, isPrintQueueExpanded,
-    calUpcoming, isCalendarExpanded,
+    calUpcoming, calReminder, isCalendarExpanded,
     actions: {
         animateExpandSize: () => {
             const { h } = getBaseSize();
@@ -1070,6 +1143,12 @@ islandCtx = {
 
 // 右侧展开面板：注册表按 panelRank 命中，返回首个命中的视图（null = 无面板，回落频谱/状态灯）
 const rtPanel = computed<PanelView | null>(() => {
+    // 通知/消息/剪贴板卡优先级高于实时活动展开面板：它们出现时面板让位，接管整岛。
+    // 必须让位的原因：面板是 .left-capsule 的 flex 子项且 width:100%，
+    // 而通知所在的 .inner-wrapper 唯一子树全是 absolute 出流、自身宽度为 0，
+    // 面板占满后 flex 无剩余空间 → 通知会被挤成 0 宽（看不见也点不到）。
+    // expandedRtId 不动，通知结束后面板自动回归。
+    if (isMsgActive.value || displaySysToast.value || displayClipboard.value) return null;
     for (const { panel } of PANEL_DEFS_BY_RANK) {
         const view = panel(islandCtx);
         if (view) return view;
@@ -1099,16 +1178,7 @@ watch(rtActivities, (list) => {
     }
 });
 
-// 整屏面板：展开的活动有 expand 且无 textSources（倒计时/番茄钟左侧仍需文本态，故排除；
-// health 无 expand 自动排除）。命中 taskbar-progress / printer / calendar / weather。
-// 用途：整屏面板展开时隐藏左侧音乐/网速内容——IslandMusic 根节点是 absolute 铺满整岛，
-// 不隐藏会压在展开面板上造成遮挡。
-const isFullPanelOpen = computed(() => {
-    const id = expandedRtId.value;
-    if (!id) return false;
-    const def = RT_ACTIVITY_DEFS.find(d => d.id === id);
-    return !!def && !!def.expand && !def.textSources;
-});
+// 整屏面板判定（isFullPanelOpen）已上移到 expandedRtId 之后声明：showRtChip 需要读它。
 
 // 使用计算属性智能判断当前该显示啥
 const displaySpeed = computed(() => !isMsgActive.value && !displaySysToast.value && !showPomodoroText.value && !showCountdownText.value && !showHardwareRing.value && !isFullPanelOpen.value && (isRotationEnabled.value ? currentRotIndex.value === 0 : !isMusicCtlEnabled.value));
@@ -2185,6 +2255,11 @@ const bootstrapIsland = async (): Promise<void> => {
     // 监听日程同步 tick 事件（F：系统日历 + 手动提醒的未来 24h 列表，列表变化或每 30 秒推送）
     await safeListen<{ upcoming: CalendarEventInfo[] }>('calendar-tick', (event) => {
         calUpcoming.value = Array.isArray(event.payload?.upcoming) ? event.payload.upcoming : [];
+        // 提醒有效期 = 事件开始前 60s ~ 事件开始：tick 复查时若已开始，撤掉提醒条与日历入口
+        if (calReminder.value && calReminder.value.start_secs > 0
+            && Math.floor(Date.now() / 1000) >= calReminder.value.start_secs) {
+            calReminder.value = null;
+        }
     });
     // 启动恢复：拉取一次日程快照（窗口重建后无需等待下一个 30s tick）
     try {
@@ -2194,7 +2269,19 @@ const bootstrapIsland = async (): Promise<void> => {
 
     // 日程到点提醒：后端 calendar-reminder 驱动（提前 REMIND_LEAD_SECS 触发一次），走岛内 toast
     await safeListen<{ title: string; start_secs: number; source: string }>('calendar-reminder', (event) => {
-        showToast(`日程提醒：${event.payload?.title || '日程'}`, 'calendar');
+        const p = event.payload;
+        const title = p?.title || '日程';
+        // 保留提醒本身（不只是弹一条 toast）：事件开始前一直挂在岛上，
+        // 小图标上的日历图标点开即可看到高亮提醒条 —— 解决"toast 一闪而过就再也看不到"
+        calReminder.value = {
+            title,
+            start_secs: Number(p?.start_secs) || 0,
+            source: p?.source || 'system',
+        };
+        // 两行排版（标题在上、正文在下），正文即事件标题；宽度按两行实测自适应
+        showToast(`日程提醒：${title}`, 'calendar', { title: '日程提醒', body: title });
+        // 把小图标预览切到日历：提醒响起时小图标立刻变成日历入口，点它就是"展开查看"
+        focusRtChip('calendar');
     });
 
     // 监听任务栏进度 tick 事件
@@ -2813,10 +2900,14 @@ onUnmounted(() => {
     width: calc(100% - 44px);
 }
 
-/* 整屏面板展开（taskbar-progress/printer/calendar/weather）：隐藏左侧胶囊，
-   让右侧面板独占整岛宽（同时 displayMusic/displaySpeed 会被守卫关闭，卸载绝对定位的音乐层） */
+/* 整屏面板展开（taskbar-progress/printer/calendar/weather）：让右侧面板独占整岛宽。
+   ⚠️ 这里曾经写成 display: none —— 但展开面板（模板里 rtPanel 那个 <transition>）
+   本身就是 .left-capsule 的子节点（与 .inner-wrapper 同级），display:none 会把面板
+   自己一起隐藏：点开任务栏进度/日程后整岛空白、无任何可点元素，只有等活动失效才恢复。
+   左侧音乐层的遮挡问题由 displayMusic/displaySpeed 的 !isFullPanelOpen 守卫解决，
+   不靠隐藏整个胶囊。整屏展开时小图标也由 showRtChip 隐藏，面板不会被压住关闭按钮。 */
 .island-core-content.is-full-panel-open .left-capsule {
-    display: none;
+    width: 100%;
 }
 
 /* 多实时活动并行：单一常驻小图标（已拆分至 IslandRtChip.vue，样式随迁） */

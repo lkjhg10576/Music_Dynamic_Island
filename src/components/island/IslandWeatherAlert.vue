@@ -1,5 +1,5 @@
 <template>
-    <div class="system-toast-box" :class="{ 'is-weather': isWeatherType }" @click="emit('select')">
+    <div class="system-toast-box" :class="{ 'is-two-line': hasBody }" @click="emit('select')">
 
         <div v-if="sysToastType === 'app'" class="toast-icon app-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -85,21 +85,31 @@
             <div class="toast-body">{{ sysToastBody }}</div>
         </div>
         <div v-else class="toast-text">{{ sysToastText }}</div>
+
+        <!-- 速报持久停留：右侧 X 手动关闭（其余通知仍是自动消失，不需要按钮） -->
+        <div v-if="showDismiss" class="toast-dismiss" title="关闭" @click.stop="emit('close')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+        </div>
     </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { SysToastType } from '../../composables/useNotifications';
+import { BRIEF_TOAST_TYPES, TWO_LINE_TOAST_TYPES, WEATHER_TOAST_TYPES, type SysToastType } from '../../composables/useNotifications';
+import { resolveWeatherIconKey, weatherIconSvgOf } from '../../utils/weather';
 
 const props = defineProps<{
     sysToastType: SysToastType;
     sysToastText: string;
-    /** 标题行（速报为「问好 · 成语」，恶劣天气为事件标题） */
+    /** 标题行（速报为「问好 · 成语」，恶劣天气为事件标题，日程提醒为「日程提醒」） */
     sysToastTitle?: string;
-    /** 正文行：非空即启用两行排版 */
+    /** 正文行：非空即启用两行排版（标题在上、正文在下、图标在左，仿系统通知） */
     sysToastBody?: string;
-    /** 图标键：sun/cloud/rain/snow/sleet/fog/haze/alert/temp/moon */
+    /** 图标键：sun/moon/cloud/rain/snow/sleet/fog/haze/alert/temp/wind */
     sysToastIcon?: string;
     /** 严重程度：info/warn/danger（恶劣天气预警配色） */
     sysToastSeverity?: string;
@@ -107,15 +117,17 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     (e: 'select'): void;
+    /** 右侧 X：关闭持久停留的速报（由主组件 dismissSysToast 接管收尾） */
+    (e: 'close'): void;
 }>();
 
-const isWeatherType = computed(() =>
-    props.sysToastType === 'weather'
-    || props.sysToastType === 'weather-morning'
-    || props.sysToastType === 'weather-noon'
-    || props.sysToastType === 'weather-evening');
+const isWeatherType = computed(() => WEATHER_TOAST_TYPES.has(props.sysToastType));
 
-const hasBody = computed(() => isWeatherType.value && !!props.sysToastBody);
+/** 持久停留的早/午/晚报才显示右侧 X（恶劣天气/天气服务不可用/日程提醒仍自动消失，无需按钮） */
+const showDismiss = computed(() => BRIEF_TOAST_TYPES.has(props.sysToastType));
+
+/** 两行排版：类型在名单内且正文非空（正文为空时回退单行，避免出现空行） */
+const hasBody = computed(() => TWO_LINE_TOAST_TYPES.has(props.sysToastType) && !!props.sysToastBody);
 
 // 恶劣天气（severe）按 severity 着色；早/午/晚报按档位保留各自的时段色
 const weatherColor = computed(() => {
@@ -133,24 +145,16 @@ const weatherColor = computed(() => {
     return '#0ea5e9';
 });
 
-// 图标键 → SVG（stroke 用 currentColor 继承 weatherColor）。缺省时回退：恶劣天气三角、速报太阳。
-const ICONS: Record<string, string> = {
-    sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>',
-    moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>',
-    cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>',
-    rain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path><line x1="8" y1="21" x2="7" y2="23"></line><line x1="12" y1="21" x2="11" y2="23"></line><line x1="16" y1="21" x2="15" y2="23"></line></svg>',
-    snow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path><line x1="8" y1="20" x2="8" y2="22"></line><line x1="12" y1="20" x2="12" y2="22"></line><line x1="16" y1="20" x2="16" y2="22"></line></svg>',
-    sleet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path><line x1="8" y1="21" x2="7" y2="23"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="16" y1="21" x2="15" y2="23"></line></svg>',
-    fog: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"></line><line x1="4" y1="13" x2="20" y2="13"></line><line x1="4" y1="17" x2="20" y2="17"></line></svg>',
-    haze: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="20" y2="8"></line><line x1="6" y1="12" x2="18" y2="12"></line><line x1="4" y1="16" x2="20" y2="16"></line></svg>',
-    temp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"></path></svg>',
-    alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>',
-};
-
+/**
+ * 天气图标：后端 icon 优先，通用 alert 时按事件标题/预警文本细化为具体情景图标
+ * （图标表与解析口径见 utils/weather.ts，小图标与轻提示面板共用同一份）。
+ */
 const weatherIconSvg = computed(() => {
-    const key = props.sysToastIcon
-        || (props.sysToastType === 'weather' ? 'alert' : 'sun');
-    return ICONS[key] || ICONS.alert;
+    const key = resolveWeatherIconKey(props.sysToastIcon, props.sysToastTitle);
+    // 后端 icon 只按天气代码判定（0 → sun），不含时段语义；
+    // 晚报档位若为晴天，换成月亮，避免夜间顶着太阳图标
+    const finalKey = key === 'sun' && props.sysToastType === 'weather-evening' ? 'moon' : key;
+    return weatherIconSvgOf(finalKey, props.sysToastType === 'weather' ? 'alert' : 'sun');
 });
 </script>
 
@@ -174,12 +178,15 @@ const weatherIconSvg = computed(() => {
     overflow: hidden;
 }
 
-/* 天气类左内边距 + 图标回正：原 translateX(-8px) 会让 30px 图标越过左侧圆角被裁切 */
-.system-toast-box.is-weather {
+/* 两行排版（天气类 / 日程提醒）：左侧补内边距 + 图标回正（原 translateX(-8px) 会让 30px
+   图标越过左侧圆角被裁切）+ 图标与文本拉开间距，观感对齐系统通知卡
+   （IslandMsg：图标在左、标题在上、正文在下；字号按 42px 岛高收窄） */
+.system-toast-box.is-two-line {
     padding-left: 6px;
+    gap: 10px;
 }
 
-.system-toast-box.is-weather .toast-icon {
+.system-toast-box.is-two-line .toast-icon {
     transform: translateX(2px);
 }
 
@@ -288,5 +295,38 @@ const weatherIconSvg = computed(() => {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* 速报持久停留：带 X 时右侧留出按钮位，避免文字压到按钮下方 */
+.system-toast-box:has(.toast-dismiss) {
+    padding-right: 26px;
+}
+
+/* 右侧 X 关闭按钮（速报专用；仿实时活动面板关闭按钮的观感） */
+.toast-dismiss {
+    position: absolute;
+    top: 50%;
+    right: 4px;
+    display: flex;
+    width: 22px;
+    height: 22px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    color: #888;
+    cursor: pointer;
+    transform: translateY(-50%);
+    transition: all 0.2s ease;
+    z-index: 11;
+}
+
+.toast-dismiss:hover {
+    color: #ff4757;
+    background-color: rgba(255, 71, 87, 0.15);
+}
+
+.toast-dismiss svg {
+    width: 14px;
+    height: 14px;
 }
 </style>

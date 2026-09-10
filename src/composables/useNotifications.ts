@@ -13,7 +13,8 @@
 import { ref, watch, type Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { getChengyuByCode } from '../utils/weather';
+import { getChengyuByCode, resolveWeatherIconKey } from '../utils/weather';
+import { measureTextWidth, FONT_TOAST_TITLE, FONT_TOAST_BODY } from '../utils/textMeasure';
 import defaultLogo from '../assets/logo.png';
 
 // 消息通知条目（后端 notification-event 事件推送）
@@ -31,6 +32,26 @@ export interface ToastItem {
 export type AccessStatus = 'ok' | 'denied' | 'unavailable';
 
 export type SysToastType = 'app' | 'sys' | 'volume' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' | 'notify-permission' | 'clipboard' | 'calendar' | 'weather' | 'weather-morning' | 'weather-noon' | 'weather-evening';
+
+// ── toast 类型分组（岛宽计算与 IslandWeatherAlert 的排版/关闭按钮判定共用同一份口径）──
+
+/** 天气类：恶劣天气 + 早/午/晚报（两行排版，图标与配色由 icon/severity 决定） */
+export const WEATHER_TOAST_TYPES: ReadonlySet<SysToastType> = new Set<SysToastType>([
+    'weather', 'weather-morning', 'weather-noon', 'weather-evening',
+]);
+
+/** 早/午/晚报档位：常驻停留（点右侧 X 关闭）+ 预留按钮位 */
+export const BRIEF_TOAST_TYPES: ReadonlySet<SysToastType> = new Set<SysToastType>([
+    'weather-morning', 'weather-noon', 'weather-evening',
+]);
+
+/** 两行排版（标题在上、正文在下）的 toast 类型：天气类 + 日程提醒 */
+export const TWO_LINE_TOAST_TYPES: ReadonlySet<SysToastType> = new Set<SysToastType>([
+    ...WEATHER_TOAST_TYPES, 'calendar',
+]);
+
+/** 到点提醒 toast 的停留时长：比常规 2s 长，长标题要看得完（不常驻，避免挡住岛） */
+export const CALENDAR_REMINDER_DWELL_MS = 4000;
 
 export function useNotifications(deps: {
     isIslandVisible: Ref<boolean>;
@@ -78,7 +99,7 @@ export function useNotifications(deps: {
         title?: string;
         /** 正文行（小字）：天气详情，为空时回退单行渲染 */
         body?: string;
-        /** 图标键：sun/cloud/rain/snow/sleet/fog/haze/alert/temp */
+        /** 图标键：sun/moon/cloud/rain/snow/sleet/fog/haze/alert/temp */
         iconKey?: string;
         /** 严重程度：info/warn/danger（驱动恶劣天气预警配色） */
         severity?: string;
@@ -86,6 +107,11 @@ export function useNotifications(deps: {
         code?: number;
         /** weather-toast 的 kind：severe/morning/noon/evening */
         kind?: string;
+        /**
+         * 持久停留：显示后不自动隐藏，直到用户点击 X 关闭，或被下一条通知顶替。
+         * 用于早/午/晚报（速报 2s 太短看不完，用户要求改为常驻直到主动关闭）。
+         */
+        persistent?: boolean;
     }
 
     const displaySysToast = ref(false);
@@ -96,6 +122,8 @@ export function useNotifications(deps: {
     const sysToastBody = ref('');
     const sysToastIcon = ref('');
     const sysToastSeverity = ref('');
+    // 当前显示的 toast 是否为持久停留项（persistent 速报），供让位/阻塞判定
+    const sysToastPersistent = ref(false);
     const toastQueue = ref<SysToastItem[]>([]);
     let isProcessingToast = false;
 
@@ -105,6 +133,18 @@ export function useNotifications(deps: {
     let toastDeadlineAt = 0;
     let toastWaitToken = 0;
     let toastWaitTimer: ReturnType<typeof setTimeout> | null = null;
+    // 当前 toast 等待的唤醒器：可续期截止等待（音量/普通 toast）与持久停留等待（速报）共用。
+    // 任何"提前结束当前 toast"的路径（点 X / 新通知让位 / 消息插队 / 组件卸载）都只唤醒它，
+    // 隐藏 + 恢复尺寸 + 处理下一条一律交回 processToastQueue 统一收尾 ——
+    // 绝不在外部复制收尾逻辑，也不要靠自增 token 去"取消"等待：那样 await 永不 resolve，队列会停摆。
+    let toastWaitResolve: (() => void) | null = null;
+
+    /** 结束当前等待（幂等）：唤醒 await 中的 processToastQueue */
+    const releaseToastWait = () => {
+        const resolve = toastWaitResolve;
+        toastWaitResolve = null;
+        if (resolve) resolve();
+    };
     // 记录最近一次已应用的 toast 岛宽，避免连续音量更新反复触发同尺寸动画
     let lastToastIslandWidth: number | null = null;
 
@@ -141,24 +181,40 @@ export function useNotifications(deps: {
         }
     };
 
-    /** 可取消的等待：token 变化或组件卸载后旧等待立即失效 */
+    /** 可取消的等待：token 变化或组件卸载后旧等待立即失效；唤醒器登记在 toastWaitResolve 供外部中断 */
     const waitUntilToastDeadline = (token: number): Promise<void> => {
         return new Promise((resolve) => {
+            const finish = () => {
+                if (toastWaitResolve === finish) toastWaitResolve = null;
+                resolve();
+            };
             const tick = () => {
                 if (token !== toastWaitToken) {
-                    resolve();
+                    finish();
                     return;
                 }
                 const remaining = toastDeadlineAt - Date.now();
                 if (remaining <= 0) {
                     toastWaitTimer = null;
-                    resolve();
+                    finish();
                     return;
                 }
                 toastWaitTimer = setTimeout(tick, remaining);
             };
             clearToastWaitTimer();
+            toastWaitResolve = finish;
             tick();
+        });
+    };
+
+    /** 持久停留项的等待：不设截止时间，由 releaseToastWait() 唤醒（点 X / 被顶替 / 消息插队） */
+    const waitUntilPersistentDismissed = (token: number): Promise<void> => {
+        return new Promise((resolve) => {
+            if (token !== toastWaitToken) {
+                resolve();
+                return;
+            }
+            toastWaitResolve = resolve;
         });
     };
 
@@ -175,52 +231,47 @@ export function useNotifications(deps: {
         });
     };
 
-    /** 用 canvas 测量 toast 文本像素宽度 */
-    const measureToastTextWidth = (text: string): number => {
-        try {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-                ctx.font = '600 12.5px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
-                return Math.ceil(ctx.measureText(text).width);
-            }
-        } catch (_e) { /* ignore */ }
-        // 回退：中文约 12.5px，英文约 7.5px
-        let w = 0;
-        for (const ch of text) {
-            w += /[\u4e00-\u9fff]/.test(ch) ? 12.5 : 7.5;
-        }
-        return Math.ceil(w);
-    };
+    /** 用 canvas 测量 toast 文本像素宽度（测量实现与字体口径统一在 utils/textMeasure） */
+    const measureToastTextWidth = (text: string): number => measureTextWidth(text, FONT_TOAST_TITLE);
 
     /**
      * 计算系统 toast 目标岛宽，确保长文与频谱/实时活动区共存时文本可完整展示。
      * 布局：padding 14×2 + 图标有效占位 + 文本 + 频谱/状态点预留 +（split 时）右侧实时活动 44px
      */
     const calcSysToastWidth = (text: string, type: SysToastType, title?: string, body?: string): number => {
-        // 天气速报为两行（标题 + 正文小字），宽度取两行中较宽者；其余类型按单行文本测量
+        // 两行排版（天气速报 / 恶劣天气 / 日程提醒）宽度取两行中较宽者，
+        // 且标题与正文用各自的字体口径测量（正文 10px，沿用标题的 12.5px 会把岛撑宽）
         const textW = (title || body)
-            ? Math.max(measureToastTextWidth(title || ''), measureToastTextWidth(body || ''))
+            ? Math.max(
+                measureTextWidth(title || '', FONT_TOAST_TITLE),
+                measureTextWidth(body || '', FONT_TOAST_BODY),
+            )
             : measureToastTextWidth(text);
-        // 图标 translateX(-8px) 后有效占位约 22，文本 translateX(-2px)
-        const iconOccupy = 22;
-        const horizontalPadding = 28; // left 14 + right 14
-        const textGap = 6;
+        // 图标占位 = 盒左边缘到文本起点的距离，随排版变化：
+        //   单行：padding-left 0 + 图标 translateX(-8px) + 30px + gap 2 + 文本 -2px ≈ 22（另计 textGap）
+        //   两行：padding-left 6 + 图标 translateX(2px) + 30px + gap 10 + 文本 -2px ≈ 46（gap 已含在内，故 textGap 记 0）
+        // 单行口径保持原值不动，避免既有通知（音量/电源/电池）的岛宽被改窄后文字被截断
+        const isTwoLine = TWO_LINE_TOAST_TYPES.has(type) && !!body;
+        const iconOccupy = isTwoLine ? 46 : 22;
+        const horizontalPadding = 28; // left 14 + right 14（island-core-content 内边距）
+        const textGap = isTwoLine ? 0 : 6;
         // 频谱 5×2px + gap + 余量 ≈ 42；无频谱时仍留状态点与少量余量
         // toast 显示期间可与频谱共存，必须为右侧指示区预留宽度，避免文字被裁/遮挡
         const rightIndicator = showSpectrumIndicator() ? 42 : 16;
         // toast 时 isSplitMode 会被强制为 false，但 rt-chip 仍可能绝对定位叠在右侧，
         // 因此按 showRtChip 预留实时活动区宽度，避免长文被小图标遮挡
         const rtChipExtra = showRtChip() ? 44 : 0;
-        const raw = horizontalPadding + iconOccupy + textGap + textW + rightIndicator + rtChipExtra;
+        // 早/午/晚报持久卡片右侧有 X 关闭按钮：额外预留按钮位，避免长文压到 X 下
+        const dismissExtra = BRIEF_TOAST_TYPES.has(type) ? 26 : 0;
+        const raw = horizontalPadding + iconOccupy + textGap + textW + rightIndicator + rtChipExtra + dismissExtra;
 
         // 音量/剪贴板文本短，给较窄下限；电源/电池长文本给更宽下限
         // 例：「已接入电源，当前电量 100%」约 13 字 ≈ 162px + 图标/边距/频谱 ≈ 280+
         const minW = (type === 'volume' || type === 'clipboard')
             ? 210
             : (type === 'battery-charge' || type === 'battery-low' ? 300
-                : (type === 'weather' || type === 'weather-morning' || type === 'weather-noon' || type === 'weather-evening' ? 320 : 240));
-        const maxW = type === 'weather' || type === 'weather-morning' || type === 'weather-noon' || type === 'weather-evening' ? 420 : 420;
+                : (WEATHER_TOAST_TYPES.has(type) ? 320 : 240));
+        const maxW = 420;
         return Math.max(minW, Math.min(maxW, raw));
     };
 
@@ -252,7 +303,13 @@ export function useNotifications(deps: {
             sysToastIcon.value = nextToast.iconKey || '';
             sysToastSeverity.value = nextToast.severity || '';
             displaySysToast.value = true;
-            toastDeadlineAt = Date.now() + (nextToast.type === 'notify-permission' ? 6000 : TOAST_DWELL_MS);
+            sysToastPersistent.value = !!nextToast.persistent;
+            // 停留时长：权限提示最长 6s；日程到点提醒 4s（长标题要看得完，但不常驻）；
+            // 其余沿用 2s（音量/剪贴板可续期）
+            const dwellMs = nextToast.type === 'notify-permission'
+                ? 6000
+                : (nextToast.type === 'calendar' ? CALENDAR_REMINDER_DWELL_MS : TOAST_DWELL_MS);
+            toastDeadlineAt = Date.now() + dwellMs;
             applySysToastIslandSize(nextToast.text, nextToast.type, nextToast.title, nextToast.body);
 
             // 自动恢复显示：当有系统通知时，如果灵动岛被隐藏，则自动恢复显示。
@@ -262,13 +319,20 @@ export function useNotifications(deps: {
                 isIslandVisible.value = true;
             }
 
-            // 可续期停留：连续音量变化会推后 toastDeadlineAt。
-            // waitUntilToastDeadline 的 timer 回调会重读 deadline；此处 while 再兜住
-            // 「await 返回瞬间又被续期」的竞态。
-            while (token === toastWaitToken) {
-                await waitUntilToastDeadline(token);
-                if (token !== toastWaitToken) break;
-                if (Date.now() >= toastDeadlineAt) break;
+            if (nextToast.persistent) {
+                // 持久停留（早/午/晚报）：不设截止时间，直到用户点 X 关闭，或被下一条通知顶替。
+                // releaseToastWait() 由 dismissSysToast / 新通知让位 / 消息插队三处触发；
+                // 唤醒后继续走下面的统一收尾（隐藏 + 恢复尺寸 + 处理下一条）。
+                await waitUntilPersistentDismissed(token);
+            } else {
+                // 可续期停留：连续音量变化会推后 toastDeadlineAt。
+                // waitUntilToastDeadline 的 timer 回调会重读 deadline；此处 while 再兜住
+                // 「await 返回瞬间又被续期」的竞态。
+                while (token === toastWaitToken) {
+                    await waitUntilToastDeadline(token);
+                    if (token !== toastWaitToken) break;
+                    if (Date.now() >= toastDeadlineAt) break;
+                }
             }
 
             // token 失效说明有新一轮处理接管，或组件已卸载
@@ -278,6 +342,7 @@ export function useNotifications(deps: {
             }
 
             displaySysToast.value = false;
+            sysToastPersistent.value = false;
             lastToastIslandWidth = null;
             // 等待离开动画播完 (约200ms) 再处理下一个
             await sleepMs(TOAST_LEAVE_MS, token);
@@ -301,6 +366,12 @@ export function useNotifications(deps: {
     // 消息通知队列处理（与 sysmsg 共用 toastWaitToken / sleepMs；二者互斥：消息优先级最高）
     const processMsgQueue = async () => {
         if (isProcessingMsg || msgQueue.value.length === 0) return;
+        // 持久停留的速报不阻塞消息（消息优先级最高）：先释放其停留让它收尾，
+        // 收尾过程中 watch(displaySysToast=false) 会再次唤醒本函数
+        if (displaySysToast.value && sysToastPersistent.value) {
+            releaseToastWait();
+            return;
+        }
         // 系统 toast 进行中：消息挂起等待（与 processToastQueue 对称）
         if (displaySysToast.value) return;
         // 当前已有消息显示：等待其结束（watch(isMsgActive) 会再触发）
@@ -353,7 +424,9 @@ export function useNotifications(deps: {
     // 监听系统通知显示状态：动态宽度 + 结束后恢复用户岛宽
     watch(displaySysToast, (newVal) => {
         if (newVal) {
-            applySysToastIslandSize(sysToastText.value, sysToastType.value);
+            // 两行排版（天气类）必须把 title/body 一并传入：
+            // 只传拼接后的 sysToastText 会把「标题 · 正文」按单行测宽，岛宽偏大且与两行布局不符
+            applySysToastIslandSize(sysToastText.value, sysToastType.value, sysToastTitle.value, sysToastBody.value);
         } else {
             lastToastIslandWidth = null;
             // 通知消失时，恢复到当前状态该有的尺寸
@@ -395,8 +468,16 @@ export function useNotifications(deps: {
             severity?: string;
             code?: number;
             kind?: string;
+            /** 持久停留项（速报）：显示后不自动隐藏，直到用户点 X 关闭或被下一条通知顶替 */
+            persistent?: boolean;
         },
     ) => {
+        // 新通知到来：正在显示的持久速报立即让位（用户要求：有其他通知要显示时速报不占着岛）。
+        // 只释放等待，隐藏/恢复尺寸/切换下一条交回 processToastQueue 统一收尾。
+        // persistent 新项（如新一条速报）不触发让位，直接走队列自然切换。
+        if (opts?.persistent !== true && displaySysToast.value && sysToastPersistent.value) {
+            releaseToastWait();
+        }
         // 音量：合并到当前显示或队列中的唯一 volume 项，并续期显示截止时间
         // 表现：单次弹出后数字随实际调节实时更新，不反复进场/离场
         if (type === 'volume') {
@@ -442,7 +523,23 @@ export function useNotifications(deps: {
             return;
         }
 
-        toastQueue.value.push({ text, type });
+        // 其余类型（含天气类）：完整承载 opts 扩展字段。
+        // 此前只入队 { text, type }，把 title/body/iconKey/severity/code/kind 全部丢掉，
+        // 导致 processToastQueue 读到的 nextToast.body 恒为空：
+        //   1) 天气速报退化成单行渲染（title · body 拼成长串，nowrap 截断）；
+        //   2) sysToastIcon 恒空，图标回退成 'sun'，所有速报一律显示太阳。
+        toastQueue.value.push({
+            text,
+            type,
+            noWake: opts?.noWake,
+            title: opts?.title,
+            body: opts?.body,
+            iconKey: opts?.iconKey,
+            severity: opts?.severity,
+            code: opts?.code,
+            kind: opts?.kind,
+            persistent: opts?.persistent,
+        });
         processToastQueue();
     };
 
@@ -492,10 +589,15 @@ export function useNotifications(deps: {
         showToast(text, type, {
             title,
             body,
-            iconKey: p.icon,
+            // 后端 icon 优先；恶劣天气的"预警"类一律发通用 alert（三角），
+            // 这里用事件标题细化成 rain/fog/haze/temp… 让不同情景的预警一眼可分
+            iconKey: resolveWeatherIconKey(p.icon, title),
             severity: p.severity,
             code: p.code,
             kind: p.kind,
+            // 早/午/晚报持久停留：显示后不自动隐藏，直到用户点 X 关闭或被下一条通知顶替；
+            // 恶劣天气（severe）保持原有自动消失行为，不加 persistent
+            persistent: isBrief,
         });
     };
 
@@ -512,6 +614,9 @@ export function useNotifications(deps: {
                 const volumeText = sysToastText.value;
                 toastWaitToken++;
                 clearToastWaitTimer();
+                // 唤醒可能在 await 中的等待：token 已自增，协程会沿"token 失效"分支直接退出
+                // （不唤醒的话 promise 永不 resolve，收尾协程会永久悬挂）
+                releaseToastWait();
                 displaySysToast.value = false;
                 lastToastIslandWidth = null;
                 // 合并：若队列里已有 volume，更新为最新；否则插到队首
@@ -561,11 +666,39 @@ export function useNotifications(deps: {
         }
     };
 
+    // 手动关闭当前系统 toast（速报卡右侧 X）：
+    // 只把等待唤醒，隐藏/恢复尺寸/切换下一条全部交回 processToastQueue 统一收尾。
+    // 不在这里自增 token 复制一套收尾逻辑：那样 await 中的等待永不 resolve，队列会停摆。
+    const dismissSysToast = () => {
+        if (!displaySysToast.value) return;
+        // 先令可续期等待立刻到期（音量类 toast 走的是「deadline 到了才算结束」的分支）
+        toastDeadlineAt = Date.now();
+        if (toastWaitResolve) {
+            clearToastWaitTimer();
+            releaseToastWait();
+            return;
+        }
+        // 兜底：等待已结束（处于 200ms 离场窗口）时直接收尾，避免点了 X 没反应
+        displaySysToast.value = false;
+        sysToastPersistent.value = false;
+        lastToastIslandWidth = null;
+        isProcessingToast = false;
+        const { h } = getBaseSize();
+        const savedWidth = restoreIslandWidth();
+        const targetWidth = savedWidth !== null ? savedWidth : currentWidth.value;
+        animateIslandSize(targetWidth, h);
+        // 手动关闭后重新评估自动隐藏，并唤醒可能排队的消息通知
+        scheduleAutoHide();
+        processMsgQueue();
+    };
+
     // 组件卸载清理（主组件 onUnmounted 调用）：
     // 使进行中的 toast 等待立即失效，避免卸载后继续改状态
     const cleanupNotifications = () => {
         toastWaitToken++;
         clearToastWaitTimer();
+        // 唤醒可能在 await 中的等待：token 已自增，协程会沿"token 失效"分支直接退出，不回写任何状态
+        releaseToastWait();
         toastQueue.value = [];
         isProcessingToast = false;
     };
@@ -584,6 +717,8 @@ export function useNotifications(deps: {
         sysToastBody,
         sysToastIcon,
         sysToastSeverity,
+        sysToastPersistent,
+        dismissSysToast,
         showToast,
         showSysmsgToast,
         showWeatherToast,

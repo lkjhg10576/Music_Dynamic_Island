@@ -30,10 +30,16 @@ export function useIslandAutoHide(deps: {
     mouseNearEdge: Ref<'left' | 'right' | null>;
     isPendingCollapse: Ref<boolean>;
     collapseMusic: () => void;
+    /**
+     * 通知/消息是否正在灵动岛上显示（displaySysToast || isMsgActive）。
+     * 持久速报显示期间必须禁止自动隐藏（用户要求：直到点 X 关闭才消失），
+     * 消息通知同理。晚绑定：主组件以闭包注入。
+     */
+    isNotificationActive: () => boolean;
 }) {
     const {
         isIslandVisible, isMusicCtlEnabled, isMusicExpanded, isMusicExpanding,
-        isPlaying, mouseNearEdge, isPendingCollapse, collapseMusic,
+        isPlaying, mouseNearEdge, isPendingCollapse, collapseMusic, isNotificationActive,
     } = deps;
 
     // 自动隐藏相关变量
@@ -58,10 +64,11 @@ export function useIslandAutoHide(deps: {
     //   1. 自动隐藏开关已开启 (isAutoHideEnabled)
     //   2. 音乐控制器模式已打开 (isMusicCtlEnabled)
     //   3. 没有音乐在播放 (!isPlaying)
-    // 其余任何情况（如临时 toast、通知弹出、鼠标离开但非音乐模式等）均不隐藏
+    //   4. 没有通知/消息正在岛上显示 (!isNotificationActive)
+    // 其余任何情况（如临时 toast、通知弹出、持久速报常驻、鼠标离开但非音乐模式等）均不隐藏
     const scheduleAutoHide = (delay?: number) => {
         // 前置守卫：不满足条件时直接返回，不设定定时器
-        if (!isAutoHideEnabled.value || !isMusicCtlEnabled.value || isPlaying()) {
+        if (!isAutoHideEnabled.value || !isMusicCtlEnabled.value || isPlaying() || isNotificationActive()) {
             return;
         }
         if (autoHideTimer) {
@@ -74,7 +81,8 @@ export function useIslandAutoHide(deps: {
                 && isIslandVisible.value
                 && isAutoHideEnabled.value
                 && isMusicCtlEnabled.value
-                && !isPlaying()) {
+                && !isPlaying()
+                && !isNotificationActive()) {
                 isAutoHiding.value = true;
                 isIslandVisible.value = false;
             }

@@ -174,6 +174,7 @@ export function useIslandAnimation(deps: {
         animateIslandSize,
         MIN_WIDTH,
         MAX_WIDTH,
+        MIN_EXPAND_WIDTH,
         saveIslandWidth,
         restoreIslandWidth,
         getExpandTargetWidth,

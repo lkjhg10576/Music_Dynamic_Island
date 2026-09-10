@@ -46,3 +46,14 @@ export type ManualCalendarEvent = {
     duration_mins: number;
     repeat_daily: boolean;
 };
+
+/**
+ * 待处理的到点提醒（calendar-reminder 事件载荷子集）。
+ * 后端在事件开始前 60s 触发一次；岛上保留到事件开始（calendar-tick 复查后清除），
+ * 期间实时活动小图标上有日历入口，点开面板即可看到高亮提醒条 —— 解决"toast 一闪而过就再也看不到"。
+ */
+export type CalendarReminder = {
+    title: string;
+    start_secs: number;
+    source: string;
+};

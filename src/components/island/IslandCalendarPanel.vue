@@ -13,6 +13,17 @@
             </button>
         </div>
         <div class="calendar-list">
+            <!-- 到点提醒条：后端 calendar-reminder 触发后保留到事件开始，
+                 保证「提醒 toast 一闪而过」之后仍能从实时活动小图标点进来查看 -->
+            <div v-if="reminder" class="calendar-reminder">
+                <svg class="calendar-reminder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                </svg>
+                <span class="calendar-reminder-title" :title="reminder.title">{{ reminder.title }}</span>
+                <span class="calendar-reminder-meta">{{ reminderCountdown }}</span>
+            </div>
             <div v-for="row in rows" :key="row.key" class="calendar-row" :class="{ 'is-next': row.isNext }">
                 <div class="calendar-main">
                     <span class="calendar-event-title" :title="row.event.title">{{ row.event.title }}</span>
@@ -28,11 +39,13 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { CalendarEventInfo } from './types';
-import { formatEventCountdown, formatEventHhmm } from '../../utils/calendarDisplay';
+import type { CalendarEventInfo, CalendarReminder } from './types';
+import { formatEventCountdown, formatEventHhmm, formatReminderCountdown } from '../../utils/calendarDisplay';
 
 const props = defineProps<{
     events: CalendarEventInfo[];
+    /** 待处理的到点提醒（calendar-reminder 写入，事件开始后清除）；有值时在列表上方显示高亮提醒条 */
+    reminder?: CalendarReminder | null;
 }>();
 
 const emit = defineEmits<{
@@ -40,8 +53,10 @@ const emit = defineEmits<{
 }>();
 
 // 倒计时文案随 events（每 30s tick）重算：computed 重估时重新取当前时刻，避免面板久挂时"还有 X 分钟"冻结
+const nowSecsOf = () => Math.floor(Date.now() / 1000);
+
 const rows = computed(() => {
-    const nowSecs = Math.floor(Date.now() / 1000);
+    const nowSecs = nowSecsOf();
     return props.events.map((ev, i) => ({
         key: `${ev.start_secs}-${ev.title}-${i}`,
         event: ev,
@@ -50,6 +65,10 @@ const rows = computed(() => {
         hhmm: ev.all_day ? '' : formatEventHhmm(ev.start_secs),
     }));
 });
+
+// 提醒条倒计时与 rows 同源重算（每 30s tick 推进一次）
+const reminderCountdown = computed(() =>
+    props.reminder ? formatReminderCountdown(props.reminder.start_secs, nowSecsOf()) : '');
 </script>
 
 <style scoped>
@@ -142,6 +161,41 @@ const rows = computed(() => {
 
 .calendar-row.is-next {
     background: rgba(6, 182, 212, 0.14);
+}
+
+/* 到点提醒条：琥珀色高亮，与普通日程行区分（它是"现在要发生"的那条） */
+.calendar-reminder {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 2px 6px;
+    border-radius: 8px;
+    background: rgba(251, 191, 36, 0.16);
+    color: #fbbf24;
+}
+
+.calendar-reminder-icon {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+}
+
+.calendar-reminder-title {
+    min-width: 0;
+    overflow: hidden;
+    color: #fde68a;
+    font-size: 10px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.calendar-reminder-meta {
+    flex-shrink: 0;
+    font-size: 9px;
+    font-weight: 600;
+    white-space: nowrap;
 }
 
 .calendar-main {

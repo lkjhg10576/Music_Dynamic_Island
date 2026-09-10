@@ -10,7 +10,7 @@
  * 自定义横向拖拽的底层实现（startCustomHorizontalDrag / handleCustomDragEnd）在 useIslandAnimation
  * 内，经依赖注入；位置锁定 / 弹簧动画锁等状态 ref 由主组件传入。
  */
-import { ref, computed, type Ref } from 'vue';
+import { ref, computed, onMounted, onUnmounted, type Ref } from 'vue';
 import { getCurrentWindow, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window';
 
 /**
@@ -235,6 +235,30 @@ export function useIslandPointer(deps: {
         isMouseDown = false;
         handleCustomDragEnd();
     };
+
+    /**
+     * 兜底复位"按下中"状态。
+     * 岛上只在容器 mouseup 里复位 isMouseDown；若用户按下后把鼠标移出岛外再松开，
+     * 岛内收不到 mouseup，isMouseDown 会一直残留为 true —— 之后只要在岛上移动
+     * 超过 DRAG_THRESHOLD_PX，就会在**没有按键**的情况下走 startDragging()/
+     * startCustomHorizontalDrag()。原生拖拽会进入系统 modal 移动循环并吞掉后续
+     * mouseup/click，表现为"岛点不动、像卡死"。故在文档级与窗口失焦时一并复位。
+     */
+    const resetMouseDownState = () => {
+        isMouseDown = false;
+        if (isResizing.value) handleResizeEnd();
+        handleCustomDragEnd();
+    };
+
+    onMounted(() => {
+        document.addEventListener('mouseup', resetMouseDownState);
+        window.addEventListener('blur', resetMouseDownState);
+    });
+
+    onUnmounted(() => {
+        document.removeEventListener('mouseup', resetMouseDownState);
+        window.removeEventListener('blur', resetMouseDownState);
+    });
 
     return {
         mouseNearEdge,

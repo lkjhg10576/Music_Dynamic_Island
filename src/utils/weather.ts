@@ -46,7 +46,9 @@ export const WEATHER_CODE_MAP: Record<number, string> = {
     302: '雪',
 };
 
-// 预警中文 type → 图标归类
+// 预警中文 type → 图标归类。
+// 查表按声明顺序做子串匹配、命中即返回，因此**具体词必须排在泛化词之前**：
+// 末尾四条是泛化兜底（覆盖「大雪预警」「雷阵雨」等未逐一列举的类型名）。
 export const ALERT_TYPE_KEYWORDS: Record<string, string> = {
     '台风': 'typhoon',
     '暴雨': 'rain',
@@ -70,6 +72,11 @@ export const ALERT_TYPE_KEYWORDS: Record<string, string> = {
     '森林': 'fire',
     '草原': 'fire',
     '火险': 'fire',
+    // ── 泛化兜底（务必保持在本表末尾）──
+    '雪': 'snow',
+    '雨': 'rain',
+    '风': 'wind',
+    '雾': 'fog',
 };
 
 // 天气级图标映射
@@ -94,6 +101,76 @@ export function alertLevelToIcon(level: string): string {
         case 'W': return 'alert-white';
         default: return 'alert-blue';
     }
+}
+
+// ──────────────────────────────────────────────
+// 岛上天气图标（toast 左侧图标 / 实时活动小图标 / 轻提示面板共用）
+// 此前这套 SVG 私有在 IslandWeatherAlert 内，只有系统 toast 用得到，
+// 小图标与轻提示面板只能一律画同一个三角；抽到此处后三处共用同一份图标与解析口径。
+// ──────────────────────────────────────────────
+
+/** 图标键 → SVG 字符串（stroke 用 currentColor，由调用方着色） */
+export const WEATHER_ICON_SVG: Record<string, string> = {
+    sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>',
+    moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>',
+    cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>',
+    rain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path><line x1="8" y1="21" x2="7" y2="23"></line><line x1="12" y1="21" x2="11" y2="23"></line><line x1="16" y1="21" x2="15" y2="23"></line></svg>',
+    snow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path><line x1="8" y1="20" x2="8" y2="22"></line><line x1="12" y1="20" x2="12" y2="22"></line><line x1="16" y1="20" x2="16" y2="22"></line></svg>',
+    sleet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path><line x1="8" y1="21" x2="7" y2="23"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="16" y1="21" x2="15" y2="23"></line></svg>',
+    fog: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"></line><line x1="4" y1="13" x2="20" y2="13"></line><line x1="4" y1="17" x2="20" y2="17"></line></svg>',
+    haze: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="20" y2="8"></line><line x1="6" y1="12" x2="18" y2="12"></line><line x1="4" y1="16" x2="20" y2="16"></line></svg>',
+    temp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"></path></svg>',
+    wind: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10a3 3 0 1 0-3-3"></path><path d="M3 16h13a3 3 0 1 1-3 3"></path><path d="M3 12h7"></path></svg>',
+    alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>',
+};
+
+/** 预警归类 → 岛上 SVG 图标键 */
+const ALERT_GROUP_TO_ICON: Record<string, string> = {
+    typhoon: 'wind',
+    rain: 'rain',
+    snow: 'snow',
+    wind: 'wind',
+    heat: 'temp',
+    fog: 'fog',
+    thunder: 'alert',
+    drought: 'temp',
+    geo: 'alert',
+    fire: 'alert',
+};
+
+/**
+ * 预警类型文本 → 岛上图标键（按"具体情况"区分图标）。
+ * 霾/浮尘/沙尘先于查表单独判为 haze：它们与雾同属能见度障碍，但视觉上更"黄"，
+ * 混在 fog 里就分不出「大雾」和「沙尘」了。
+ */
+export function weatherAlertIconKey(typeText: string, fallback = 'alert'): string {
+    const text = (typeText || '').trim();
+    if (!text) return fallback;
+    if (text.includes('霾') || text.includes('浮尘') || text.includes('沙尘')) return 'haze';
+    for (const [keyword, group] of Object.entries(ALERT_TYPE_KEYWORDS)) {
+        if (text.includes(keyword)) return ALERT_GROUP_TO_ICON[group] || fallback;
+    }
+    return fallback;
+}
+
+/**
+ * 解析最终图标键：后端 icon 优先；但它对"预警"类事件一律发通用 alert（三角），
+ * 此时用事件标题/预警类型文本细化（暴雨→rain、大雾→fog、高温→temp…），
+ * 让不同情景的预警在岛上一眼可分。文本也推不出具体情景时保持 alert。
+ */
+export function resolveWeatherIconKey(iconKey: string | undefined, typeText: string | undefined): string {
+    const key = (iconKey || '').trim();
+    if (!key || key === 'alert') {
+        const specific = weatherAlertIconKey(typeText || '');
+        if (specific !== 'alert') return specific;
+    }
+    return key || 'alert';
+}
+
+/** 取图标 SVG；未知键回退 fallback（默认 alert 三角） */
+export function weatherIconSvgOf(iconKey: string | undefined, fallback = 'alert'): string {
+    const key = (iconKey || '').trim();
+    return WEATHER_ICON_SVG[key] || WEATHER_ICON_SVG[fallback] || WEATHER_ICON_SVG.alert;
 }
 
 // 成语库（按天气代码分组）

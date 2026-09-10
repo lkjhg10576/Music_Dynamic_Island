@@ -33,7 +33,7 @@ import IslandPrintQueue from '../components/island/IslandPrintQueue.vue';
 import IslandTaskbarProgress from '../components/island/IslandTaskbarProgress.vue';
 import IslandWeatherLightAlert from '../components/island/IslandWeatherLightAlert.vue';
 import IslandWeatherChip from '../components/island/IslandWeatherChip.vue';
-import type { CalendarEventInfo, PrintJob } from '../components/island/types';
+import type { CalendarEventInfo, CalendarReminder, PrintJob } from '../components/island/types';
 import { hwMetricPctOf, hwModeSlots, type HwMetric } from '../utils/hwMetrics';
 
 /** 参与岛上多活动并行轮换的实时活动 id */
@@ -116,6 +116,8 @@ export interface IslandActivityCtx extends ActivityGuardCtx {
     isPrintQueueExpanded: Ref<boolean>;
     /** F 日程同步：未来 24h 内的日程列表（calendar-tick 驱动，系统日历 + 手动提醒合并） */
     calUpcoming: Ref<CalendarEventInfo[]>;
+    /** F 日程同步：待处理的到点提醒（calendar-reminder 驱动，事件开始后清除）；有值时日历活动保持活跃 */
+    calReminder: Ref<CalendarReminder | null>;
     isCalendarExpanded: Ref<boolean>;
     /** 任务栏/下载进度圆环（已完成进度 0→100% + 绿色主题），供芯片复用 IslandProgressRing */
     taskbarProgressRingPct: ComputedRef<number>;
@@ -373,14 +375,16 @@ export const RT_ACTIVITY_DEFS: RtActivityDef[] = [
         accent: '#06b6d4',
         defaultPriority: 6,
         realtime: true,
-        // F：日程"活跃" = 未来 24h 内存在日程（系统日历 + 手动提醒，calendar-tick 驱动）
-        isActive: ctx => ctx.calUpcoming.value.length > 0,
+        // F：日程"活跃" = 未来 24h 内存在日程（系统日历 + 手动提醒，calendar-tick 驱动），
+        // 或存在待处理的到点提醒（提醒 toast 一闪而过后，小图标上的日历入口要留住，
+        // 否则事件刚开始、24h 列表刚剔除它的瞬间就没了入口）
+        isActive: ctx => ctx.calUpcoming.value.length > 0 || !!ctx.calReminder.value,
         panel: ctx => {
-            if (!ctx.isCalendarExpanded.value || ctx.calUpcoming.value.length === 0) return null;
+            if (!ctx.isCalendarExpanded.value || (ctx.calUpcoming.value.length === 0 && !ctx.calReminder.value)) return null;
             return {
                 key: 'calendar-panel',
                 component: IslandCalendarPanel,
-                props: { events: ctx.calUpcoming.value },
+                props: { events: ctx.calUpcoming.value, reminder: ctx.calReminder.value },
                 events: { close: () => ctx.actions.collapseCalendar() },
             };
         },
