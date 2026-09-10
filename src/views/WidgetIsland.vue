@@ -151,7 +151,7 @@ import IslandPomodoro from '../components/island/IslandPomodoro.vue';
 import IslandCountdown from '../components/island/IslandCountdown.vue';
 import IslandHealthAlert from '../components/island/IslandHealthAlert.vue';
 import IslandMsg from '../components/island/IslandMsg.vue';
-import IslandSysToast from '../components/island/IslandSysToast.vue';
+import IslandWeatherAlert from '../components/island/IslandWeatherAlert.vue';
 import IslandClipboardLink from '../components/island/IslandClipboardLink.vue';
 import IslandHardwareRing from '../components/island/IslandHardwareRing.vue';
 import IslandRtChip from '../components/island/IslandRtChip.vue';
