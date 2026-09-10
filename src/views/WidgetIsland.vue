@@ -35,11 +35,13 @@
                             :health-alert-label="healthAlertLabel" />
 
                         <IslandCountdown v-else-if="showCountdownText" key="countdown"
-                            :formatted-island-cd-time="formattedIslandCdTime" :is-countdown-finished="isCountdownFinished" />
+                            :formatted-island-cd-time="formattedIslandCdTime" :is-countdown-finished="isCountdownFinished"
+                            :ring-pct="countdownRingPct" :ring-color="countdownRingColor" />
 
                         <IslandPomodoro v-else-if="showPomodoroText" key="pomodoro"
                             :formatted-island-pomo-time="formattedIslandPomoTime" :pomodoro-phase-class="pomodoroPhaseClass"
-                            :pomodoro-remaining-cycles="pomodoroRemainingCycles" />
+                            :pomodoro-remaining-cycles="pomodoroRemainingCycles"
+                            :ring-pct="pomodoroRingPct" :ring-color="pomodoroRingColor" />
 
                         <IslandHardwareRing v-else-if="showHardwareRing" key="hardware" :hw-mode="hwMode"
                             :hw-cpu-pct="hwCpuPct" :hw-mem-pct="hwMemPct" :hw-ring-pct="hwRingPct"
@@ -895,10 +897,10 @@ const isMsgModeEnabled = ref(getSettingRaw(NSD_MSG_MODE) === 'true');
 // ===== 实时活动 composable 接入（番茄钟/倒计时/健康提醒/硬件监控/主岛轮换，逻辑从本组件拆出） =====
 // 接入点必须位于 displaySpeed/displayMusic 计算属性之前：它们的守卫依赖本域输出的展示谓词
 const {
-    isPomodoroVisible, pomodoroRemainingSecs, pomodoroPhase, pomodoroRemainingCycles, isPomodoroExpanded,
-    formattedIslandPomoTime, pomodoroPhaseClass, showPomodoroText,
-    isCountdownVisible, countdownRemainingSecs, isCountdownExpanded, isCountdownFinished, cdPaused,
-    formattedIslandCdTime, showCountdownText, isSplitMode,
+    isPomodoroVisible, pomodoroRemainingSecs, pomodoroTotalSecs, pomodoroPhase, pomodoroRemainingCycles, isPomodoroExpanded,
+    formattedIslandPomoTime, pomodoroPhaseClass, pomodoroRingPct, pomodoroRingColor, showPomodoroText,
+    isCountdownVisible, countdownRemainingSecs, countdownTotalSecs, isCountdownExpanded, isCountdownFinished, cdPaused,
+    formattedIslandCdTime, countdownRingPct, countdownRingColor, showCountdownText, isSplitMode,
     isHealthAlerting, healthAlertLabel, healthAlertType,
     hwEnabled, hwMode, hwDefaultMetric, hwCpuPct, hwMemPct, isHardwareExpanded,
     hwRingOuter, hwRingInner, hwBatteryPct, hwDiskPct,
@@ -944,6 +946,7 @@ const collapseWeatherLightAlert = () => {
 // 但调用点全部在交互期/渲染期，不存在时序问题
 islandCtx = {
     isPomodoroVisible, isPomodoroExpanded, isCountdownVisible, isCountdownExpanded,
+    pomodoroRingPct, pomodoroRingColor, countdownRingPct, countdownRingColor,
     hwEnabled, isHardwareExpanded, isHealthAlerting,
     isWeatherLightAlerting, weatherLightAlert,
     isTaskbarProgressActive, isTaskbarProgressExpanded,
@@ -1976,6 +1979,8 @@ onMounted(async () => {
         }
         // 更新显示状态
         pomodoroRemainingSecs.value = p.remaining_secs;
+        // 阶段总时长（专注/休息切换时后端一并下发）：驱动进度圆环回满并切换主题色
+        if (typeof p.total_secs === 'number') pomodoroTotalSecs.value = p.total_secs;
         pomodoroPhase.value = p.phase;
         pomodoroRemainingCycles.value = p.remaining_cycles;
         // 确保可见
@@ -2020,6 +2025,8 @@ onMounted(async () => {
             return;
         }
         countdownRemainingSecs.value = p.remaining_secs;
+        // 总时长（启动/恢复时后端下发）：驱动进度圆环
+        if (typeof p.total_secs === 'number') countdownTotalSecs.value = p.total_secs;
         cdPaused.value = p.paused || false;
         isCountdownFinished.value = p.phase === 'finished';
         if (!isCountdownVisible.value) {

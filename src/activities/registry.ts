@@ -28,6 +28,7 @@ import IslandCdControls from '../components/island/IslandCdControls.vue';
 import IslandCloseButton from '../components/island/IslandCloseButton.vue';
 import IslandHwDetail from '../components/island/IslandHwDetail.vue';
 import IslandHwChipRing from '../components/island/IslandHwChipRing.vue';
+import IslandProgressRing from '../components/island/IslandProgressRing.vue';
 import IslandPrintQueue from '../components/island/IslandPrintQueue.vue';
 import IslandTaskbarProgress from '../components/island/IslandTaskbarProgress.vue';
 import IslandWeatherLightAlert from '../components/island/IslandWeatherLightAlert.vue';
@@ -93,6 +94,12 @@ export interface IslandActivityActions {
 /** 岛上下文：守卫上下文 + 芯片/面板渲染所需的状态与动作 */
 export interface IslandActivityCtx extends ActivityGuardCtx {
     cdPaused: Ref<boolean>;
+    /** 番茄钟进度圆环（剩余进度 + 按专注/休息切换的主题色），供文本态图标与芯片共用 */
+    pomodoroRingPct: ComputedRef<number>;
+    pomodoroRingColor: ComputedRef<string>;
+    /** 倒计时进度圆环（剩余进度 + 活动主题色） */
+    countdownRingPct: ComputedRef<number>;
+    countdownRingColor: ComputedRef<string>;
     hwMode: Ref<string>;
     hwDefaultMetric: Ref<HwMetric>;
     hwCpuPct: Ref<number>;
@@ -179,6 +186,15 @@ export const RT_ACTIVITY_DEFS: RtActivityDef[] = [
         realtime: true,
         isActive: ctx => ctx.isPomodoroVisible.value,
         textSources: ctx => ({ visible: ctx.isPomodoroVisible, expanded: ctx.isPomodoroExpanded }),
+        // 芯片形态：动态进度圆环（剩余进度随时间递减，颜色随专注/休息阶段切换）
+        chip: ctx => ({
+            kind: 'component',
+            component: IslandProgressRing,
+            props: {
+                pct: ctx.pomodoroRingPct.value,
+                color: ctx.pomodoroRingColor.value,
+            },
+        }),
         panel: ctx => {
             if (!ctx.isPomodoroExpanded.value) return null;
             return {
@@ -205,6 +221,15 @@ export const RT_ACTIVITY_DEFS: RtActivityDef[] = [
         realtime: true,
         isActive: ctx => ctx.isCountdownVisible.value,
         textSources: ctx => ({ visible: ctx.isCountdownVisible, expanded: ctx.isCountdownExpanded }),
+        // 芯片形态：动态进度圆环（剩余进度随时间递减，固定倒计时主题色）
+        chip: ctx => ({
+            kind: 'component',
+            component: IslandProgressRing,
+            props: {
+                pct: ctx.countdownRingPct.value,
+                color: ctx.countdownRingColor.value,
+            },
+        }),
         panel: ctx => {
             if (!ctx.isCountdownExpanded.value) return null;
             return {

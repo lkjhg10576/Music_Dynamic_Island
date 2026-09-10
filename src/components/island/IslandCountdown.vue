@@ -1,10 +1,7 @@
 <template>
     <div class="countdown-text-box">
-        <svg viewBox="0 0 24 24" class="countdown-svg" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"></circle>
-            <polyline points="12 6 12 12 16 14"></polyline>
-        </svg>
+        <!-- 动态进度圆环：剩余进度随时间递减，主题色与倒计时文字一致 -->
+        <IslandProgressRing :pct="ringPct" :color="ringColor" />
         <div class="countdown-info">
             <span v-if="isCountdownFinished" class="countdown-finished-text">倒计时结束</span>
             <span v-else class="countdown-time">{{ formattedIslandCdTime }}</span>
@@ -13,9 +10,15 @@
 </template>
 
 <script setup lang="ts">
+import IslandProgressRing from './IslandProgressRing.vue';
+
 defineProps<{
     formattedIslandCdTime: string;
     isCountdownFinished: boolean;
+    /** 剩余进度百分比（0~100），驱动动态圆环 */
+    ringPct: number;
+    /** 圆环主题色（倒计时主题橙） */
+    ringColor: string;
 }>();
 </script>
 
@@ -25,13 +28,6 @@ defineProps<{
     display: flex;
     align-items: center;
     gap: 8px;
-}
-
-.countdown-svg {
-    width: 24px;
-    height: 24px;
-    color: #ff9800;
-    transition: color 0.3s ease;
 }
 
 .countdown-info {
