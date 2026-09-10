@@ -92,8 +92,14 @@ export function useRealtimeActivity(deps: {
     const taskbarProgressAppName = ref('');
     const taskbarProgressPercent = ref(0);
 
+    // 下载/任务栏进度小图标圆环：已完成进度（0→100% 递增），绿色主题（对齐 taskbar-progress.accent）
+    const taskbarProgressRingPct = computed(() => Math.max(0, Math.min(100, taskbarProgressPercent.value)));
+    const taskbarProgressRingColor = computed(() => '#22c55e');
+
     // 天气相关状态
     const isWeatherLightAlerting = ref(false);
+    // 轻提示展开态：岛上的 weather 芯片点击后才展开文字面板（未展开时只显示小图标）
+    const isWeatherLightAlertExpanded = ref(false);
     const weatherLightAlert = ref<{
         alertId: string;
         level: string;
@@ -329,6 +335,8 @@ export function useRealtimeActivity(deps: {
         isTaskbarProgressExpanded,
         taskbarProgressAppName,
         taskbarProgressPercent,
+        taskbarProgressRingPct,
+        taskbarProgressRingColor,
         // 主岛轮换
         isRotationEnabled,
         currentRotIndex,
@@ -337,6 +345,7 @@ export function useRealtimeActivity(deps: {
         // 天气
         isWeatherLightAlerting,
         weatherLightAlert,
+        isWeatherLightAlertExpanded,
         // 启动恢复
         restorePomodoroState,
         restoreCountdownState,

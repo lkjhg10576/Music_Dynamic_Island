@@ -13,6 +13,7 @@
 import { ref, watch, type Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getChengyuByCode } from '../utils/weather';
 import defaultLogo from '../assets/logo.png';
 
 // 消息通知条目（后端 notification-event 事件推送）
@@ -29,7 +30,7 @@ export interface ToastItem {
 // 通知权限状态
 export type AccessStatus = 'ok' | 'denied' | 'unavailable';
 
-export type SysToastType = 'app' | 'sys' | 'volume' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' | 'notify-permission' | 'clipboard' | 'weather' | 'weather-morning' | 'weather-noon' | 'weather-evening';
+export type SysToastType = 'app' | 'sys' | 'volume' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock' | 'notify-permission' | 'clipboard' | 'calendar' | 'weather' | 'weather-morning' | 'weather-noon' | 'weather-evening';
 
 export function useNotifications(deps: {
     isIslandVisible: Ref<boolean>;
@@ -72,11 +73,29 @@ export function useNotifications(deps: {
         type: SysToastType;
         /** 高频操作（剪贴板复制）专用：不唤醒隐藏的岛，避免每次复制都弹出岛 */
         noWake?: boolean;
+        // ── 天气类扩展（选填）：岛上传两行（标题 + 正文小字），并按 icon/severity 决定图标与配色 ──
+        /** 标题行：速报为「问好 · 成语」，恶劣天气为事件标题 */
+        title?: string;
+        /** 正文行（小字）：天气详情，为空时回退单行渲染 */
+        body?: string;
+        /** 图标键：sun/cloud/rain/snow/sleet/fog/haze/alert/temp */
+        iconKey?: string;
+        /** 严重程度：info/warn/danger（驱动恶劣天气预警配色） */
+        severity?: string;
+        /** 天气代码（速报成语取词用） */
+        code?: number;
+        /** weather-toast 的 kind：severe/morning/noon/evening */
+        kind?: string;
     }
 
     const displaySysToast = ref(false);
     const sysToastText = ref('');
     const sysToastType = ref<SysToastType>('app');
+    // 天气类 toast 的两行渲染与图标/配色数据（非天气类型为空）
+    const sysToastTitle = ref('');
+    const sysToastBody = ref('');
+    const sysToastIcon = ref('');
+    const sysToastSeverity = ref('');
     const toastQueue = ref<SysToastItem[]>([]);
     let isProcessingToast = false;
 
@@ -178,8 +197,11 @@ export function useNotifications(deps: {
      * 计算系统 toast 目标岛宽，确保长文与频谱/实时活动区共存时文本可完整展示。
      * 布局：padding 14×2 + 图标有效占位 + 文本 + 频谱/状态点预留 +（split 时）右侧实时活动 44px
      */
-    const calcSysToastWidth = (text: string, type: SysToastType): number => {
-        const textW = measureToastTextWidth(text);
+    const calcSysToastWidth = (text: string, type: SysToastType, title?: string, body?: string): number => {
+        // 天气速报为两行（标题 + 正文小字），宽度取两行中较宽者；其余类型按单行文本测量
+        const textW = (title || body)
+            ? Math.max(measureToastTextWidth(title || ''), measureToastTextWidth(body || ''))
+            : measureToastTextWidth(text);
         // 图标 translateX(-8px) 后有效占位约 22，文本 translateX(-2px)
         const iconOccupy = 22;
         const horizontalPadding = 28; // left 14 + right 14
@@ -202,8 +224,8 @@ export function useNotifications(deps: {
         return Math.max(minW, Math.min(maxW, raw));
     };
 
-    const applySysToastIslandSize = (text: string, type: SysToastType) => {
-        const targetWidth = calcSysToastWidth(text, type);
+    const applySysToastIslandSize = (text: string, type: SysToastType, title?: string, body?: string) => {
+        const targetWidth = calcSysToastWidth(text, type, title, body);
         if (lastToastIslandWidth !== null && Math.abs(lastToastIslandWidth - targetWidth) < 2) {
             return; // 尺寸几乎不变，跳过动画
         }
@@ -225,9 +247,13 @@ export function useNotifications(deps: {
             const token = ++toastWaitToken;
             sysToastText.value = nextToast.text;
             sysToastType.value = nextToast.type;
+            sysToastTitle.value = nextToast.title || '';
+            sysToastBody.value = nextToast.body || '';
+            sysToastIcon.value = nextToast.iconKey || '';
+            sysToastSeverity.value = nextToast.severity || '';
             displaySysToast.value = true;
             toastDeadlineAt = Date.now() + (nextToast.type === 'notify-permission' ? 6000 : TOAST_DWELL_MS);
-            applySysToastIslandSize(nextToast.text, nextToast.type);
+            applySysToastIslandSize(nextToast.text, nextToast.type, nextToast.title, nextToast.body);
 
             // 自动恢复显示：当有系统通知时，如果灵动岛被隐藏，则自动恢复显示。
             // 剪贴板复制是高频操作：noWake 项跳过该逻辑，绝不把隐藏的岛弹出来
@@ -346,7 +372,7 @@ export function useNotifications(deps: {
     // 连续音量更新时：文本变化后重新评估宽度（仅在宽度确实变化时动画）
     watch(sysToastText, (text) => {
         if (!displaySysToast.value) return;
-        applySysToastIslandSize(text, sysToastType.value);
+        applySysToastIslandSize(text, sysToastType.value, sysToastTitle.value, sysToastBody.value);
     });
 
     // 点击系统 toast：notify-permission 类型跳转到 Windows 通知设置
@@ -357,7 +383,20 @@ export function useNotifications(deps: {
     };
 
     // 暴露给外部调用的触发函数
-    const showToast = (text: string, type: SysToastType = 'app', opts?: { noWake?: boolean }) => {
+    // 第 4 个参数承载天气类的两行/图标/配色扩展（其它类型只用 text + type）
+    const showToast = (
+        text: string,
+        type: SysToastType = 'app',
+        opts?: {
+            noWake?: boolean;
+            title?: string;
+            body?: string;
+            iconKey?: string;
+            severity?: string;
+            code?: number;
+            kind?: string;
+        },
+    ) => {
         // 音量：合并到当前显示或队列中的唯一 volume 项，并续期显示截止时间
         // 表现：单次弹出后数字随实际调节实时更新，不反复进场/离场
         if (type === 'volume') {
@@ -420,14 +459,44 @@ export function useNotifications(deps: {
     };
 
     // 把后端 weather-toast 事件映射成灵动岛通知类型
-    const showWeatherToast = (p: { kind: string; title: string; body: string }) => {
+    // 本地日期键 YYYYMMDD：成语按「日期 + 档位」取词，保证同一天同一档位稳定
+    const weatherDateKey = (): string => {
+        const d = new Date();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${d.getFullYear()}${m}${day}`;
+    };
+
+    // 把后端 weather-toast 事件映射成灵动岛通知类型。
+    // - 早/午/晚报（brief）：标题 = 问好 + 成语标注，正文 = 天气详情（岛上分两行：标题 + 正文小字）；
+    // - 恶劣天气（severe）：两行（事件标题 + 详情），按 severity 着色（info 蓝 / warn 橙 / danger 红），
+    //   图标由后端 icon 字段决定（rain/fog/haze/alert/temp）。
+    const showWeatherToast = (p: {
+        kind: string;
+        icon?: string;
+        title: string;
+        body?: string;
+        severity?: string;
+        code?: number;
+    }) => {
         let type: SysToastType = 'weather';
         if (p.kind === 'morning') type = 'weather-morning';
         else if (p.kind === 'noon') type = 'weather-noon';
         else if (p.kind === 'evening') type = 'weather-evening';
-        else type = 'weather';
-        const text = p.body ? `${p.title} · ${p.body}` : p.title;
-        showToast(text, type);
+        const isBrief = type === 'weather-morning' || type === 'weather-noon' || type === 'weather-evening';
+        const title = isBrief
+            ? `${p.title} · ${getChengyuByCode(typeof p.code === 'number' ? p.code : 0, weatherDateKey(), p.kind)}`
+            : p.title;
+        const body = p.body || '';
+        const text = body ? `${title} · ${body}` : title;
+        showToast(text, type, {
+            title,
+            body,
+            iconKey: p.icon,
+            severity: p.severity,
+            code: p.code,
+            kind: p.kind,
+        });
     };
 
     // 暴露给外部调用（供 WidgetIsland 监听 weather-toast 事件）
@@ -511,6 +580,10 @@ export function useNotifications(deps: {
         displaySysToast,
         sysToastText,
         sysToastType,
+        sysToastTitle,
+        sysToastBody,
+        sysToastIcon,
+        sysToastSeverity,
         showToast,
         showSysmsgToast,
         showWeatherToast,

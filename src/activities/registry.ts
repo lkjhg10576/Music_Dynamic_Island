@@ -32,6 +32,7 @@ import IslandProgressRing from '../components/island/IslandProgressRing.vue';
 import IslandPrintQueue from '../components/island/IslandPrintQueue.vue';
 import IslandTaskbarProgress from '../components/island/IslandTaskbarProgress.vue';
 import IslandWeatherLightAlert from '../components/island/IslandWeatherLightAlert.vue';
+import IslandWeatherChip from '../components/island/IslandWeatherChip.vue';
 import type { CalendarEventInfo, PrintJob } from '../components/island/types';
 import { hwMetricPctOf, hwModeSlots, type HwMetric } from '../utils/hwMetrics';
 
@@ -116,6 +117,11 @@ export interface IslandActivityCtx extends ActivityGuardCtx {
     /** F 日程同步：未来 24h 内的日程列表（calendar-tick 驱动，系统日历 + 手动提醒合并） */
     calUpcoming: Ref<CalendarEventInfo[]>;
     isCalendarExpanded: Ref<boolean>;
+    /** 任务栏/下载进度圆环（已完成进度 0→100% + 绿色主题），供芯片复用 IslandProgressRing */
+    taskbarProgressRingPct: ComputedRef<number>;
+    taskbarProgressRingColor: ComputedRef<string>;
+    /** 天气轻提示展开态：仅展开后才渲染文字面板（未展开时只显示预警小图标） */
+    isWeatherLightAlertExpanded: Ref<boolean>;
     actions: IslandActivityActions;
 }
 
@@ -393,6 +399,15 @@ export const RT_ACTIVITY_DEFS: RtActivityDef[] = [
         /** 特殊优先级: 活动时强占 chip 第 1 位, 非活动时不出现在轮换队列 */
         forceWhenActive: true,
         isActive: ctx => ctx.isTaskbarProgressActive.value,
+        // 芯片形态：动态进度圆环（已完成进度 0→100% 递增），与倒计时/番茄钟同一套视觉
+        chip: ctx => ({
+            kind: 'component',
+            component: IslandProgressRing,
+            props: {
+                pct: ctx.taskbarProgressRingPct.value,
+                color: ctx.taskbarProgressRingColor.value,
+            },
+        }),
         panel: ctx => {
             if (!ctx.isTaskbarProgressExpanded.value) return null;
             return {
@@ -416,22 +431,34 @@ export const RT_ACTIVITY_DEFS: RtActivityDef[] = [
         icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>',
         accent: '#0ea5e9',
         defaultPriority: 7,
-        realtime: false,
-        // 轻提示态临时进入轮换，强占第 1 位 5s
+        // 轻提示态临时进入轮换，强占第 1 位 5s。
+        // 必须 realtime=true 才能进 RT_IDS 获得芯片；此前为 false → 永远没有小图标，
+        // 而 panel 又在 alerting 时立刻渲染，导致"直接占岛显示文字"的坏观感。
+        realtime: true,
         forceWhenActive: true,
-        isActive: ctx => ctx.isWeatherLightAlerting?.value ?? false,
+        isActive: ctx => ctx.isWeatherLightAlerting.value,
+        // 芯片形态：按预警等级着色的三角小图标（未展开时只显示图标，不占文字空间）
+        chip: ctx => ({
+            kind: 'component',
+            component: IslandWeatherChip,
+            props: {
+                level: ctx.weatherLightAlert.value?.level ?? 'B',
+                type: ctx.weatherLightAlert.value?.type ?? '',
+            },
+        }),
+        // 仅点击展开后才渲染文字面板
         panel: ctx => {
-            if (!ctx.isWeatherLightAlerting?.value) return null;
+            if (!ctx.isWeatherLightAlerting.value || !ctx.isWeatherLightAlertExpanded.value) return null;
             return {
                 key: 'weather-light-alert',
                 component: IslandWeatherLightAlert,
-                props: { alert: ctx.weatherLightAlert?.value ?? null },
-                events: { close: () => ctx.actions?.dismissWeatherLightAlert?.() },
+                props: { alert: ctx.weatherLightAlert.value },
+                events: { close: () => ctx.actions.dismissWeatherLightAlert() },
             };
         },
         panelRank: 8,
-        expand: ctx => ctx.actions?.expandWeatherLightAlert?.(),
-        collapse: ctx => ctx.actions?.collapseWeatherLightAlert?.(),
+        expand: ctx => ctx.actions.expandWeatherLightAlert(),
+        collapse: ctx => ctx.actions.collapseWeatherLightAlert(),
     },
 ];
 

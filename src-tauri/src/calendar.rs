@@ -36,6 +36,8 @@ const UNIX_TO_FILETIME_EPOCH_SECS: i64 = 11_644_473_600;
 const FILETIME_TICKS_PER_SEC: i64 = 10_000_000;
 /// 岛上/控制台最多展示的日程条数
 const MAX_UPCOMING: usize = 8;
+/// 到点提醒提前量：事件开始前 N 秒触发一次（灵动岛 toast）
+const REMIND_LEAD_SECS: u64 = 60;
 
 /// 手动提醒条目（config.json 持久化结构）
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -299,6 +301,8 @@ pub fn start_calendar_thread(app_handle: AppHandle) {
     crate::thread_mgr::spawn_managed("calendar_tick", move |exit| {
         let mut last_sig = String::new();
         let mut last_emit_secs: u64 = 0;
+        // 已触发过提醒的事件 key（source|title|start_secs），保证每事件只提醒一次
+        let mut fired: std::collections::HashSet<String> = std::collections::HashSet::new();
         loop {
             // 每秒轻量唤醒：手动提醒重算为纯内存运算，系统日历重查每 5 分钟一次
             if exit.sleep_interruptible(Duration::from_secs(1)) {
@@ -315,6 +319,33 @@ pub fn start_calendar_thread(app_handle: AppHandle) {
             }
 
             let upcoming = recompute_upcoming(&app_handle);
+
+            // 到点提醒：事件开始前 REMIND_LEAD_SECS 秒触发一次（灵动岛 toast，每事件仅一次）。
+            // key 取 source|title|start_secs，不随 tick 变化；事件离开 24h 列表后从 fired 清理。
+            let mut live_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for ev in &upcoming {
+                let key = format!("{}|{}|{}", ev.source, ev.title, ev.start_secs);
+                live_keys.insert(key.clone());
+                if now + REMIND_LEAD_SECS >= ev.start_secs
+                    && now < ev.end_secs
+                    && !fired.contains(&key)
+                {
+                    fired.insert(key);
+                    crate::win32_utils::log_err(
+                        app_handle.emit(
+                            "calendar-reminder",
+                            serde_json::json!({
+                                "title": ev.title,
+                                "start_secs": ev.start_secs,
+                                "source": ev.source,
+                                "lead_secs": REMIND_LEAD_SECS,
+                            }),
+                        ),
+                        "emit calendar-reminder",
+                    );
+                }
+            }
+            fired.retain(|k| live_keys.contains(k));
             // 列表内容签名：变化即推送（含 进入/离开 24h 窗口、手动增删、过期清理）
             let sig = serde_json::to_string(&upcoming).unwrap_or_default();
             let changed = sig != last_sig;

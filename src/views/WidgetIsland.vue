@@ -20,7 +20,7 @@
             </div>
 
             <div class="island-core-content" :style="coreContentStyle"
-                :class="{ 'is-split-layout': isSplitMode, 'resize-cursor-left': mouseNearEdge === 'left', 'resize-cursor-right': mouseNearEdge === 'right' }">
+                :class="{ 'is-split-layout': isSplitMode, 'is-full-panel-open': isFullPanelOpen, 'resize-cursor-left': mouseNearEdge === 'left', 'resize-cursor-right': mouseNearEdge === 'right' }">
                 <div class="left-capsule" :class="{ 'is-split': isSplitMode }">
                     <div class="inner-wrapper">
                     <transition mode="out-in" @enter="onInnerEnter" @leave="onInnerLeave" :css="false">
@@ -28,7 +28,9 @@
                             :msg-body="msgBody" :current-msg-icon="currentMsgIcon" @select="handleNotificationClick" />
 
                         <IslandWeatherAlert v-else-if="displaySysToast" key="systoast" :sys-toast-type="sysToastType"
-                            :sys-toast-text="sysToastText" @select="onSysToastClick" />
+                            :sys-toast-text="sysToastText" :sys-toast-title="sysToastTitle"
+                            :sys-toast-body="sysToastBody" :sys-toast-icon="sysToastIcon"
+                            :sys-toast-severity="sysToastSeverity" @select="onSysToastClick" />
 
                         <!-- 剪贴板链接卡片（复制 http/https 链接时弹出，5s 自动消失） -->
                         <IslandClipboardLink v-else-if="displayClipboard" key="clipboard" :link="clipboardLink"
@@ -442,6 +444,7 @@ let musicExpandAnimTimer: number | null = null; // 用于接管展开时的定�
 const {
     isMsgActive, msgTitle, msgAppName, msgBody, currentMsgIcon, msgQueue,
     displaySysToast, sysToastText, sysToastType,
+    sysToastTitle, sysToastBody, sysToastIcon, sysToastSeverity,
     showToast, showSysmsgToast, showWeatherToast, onSysToastClick, handleNotificationClick,
     processMsgQueue, cleanupNotifications,
 } = useNotifications({
@@ -985,16 +988,27 @@ const {
     restorePomodoroState, restoreCountdownState,
     isTaskbarProgressActive, isTaskbarProgressExpanded,
     taskbarProgressAppName, taskbarProgressPercent,
-    isWeatherLightAlerting, weatherLightAlert,
+    taskbarProgressRingPct, taskbarProgressRingColor,
+    isWeatherLightAlerting, weatherLightAlert, isWeatherLightAlertExpanded,
 } = useRealtimeActivity({
     isMsgActive, displaySysToast, isMusicExpanded, isMusicExpanding, isMusicCtlEnabled,
 });
 
-// 天气轻提示：低等级预警弹出，5s 自动隐藏（事件驱动），dismiss 立即收起
+// 天气轻提示：低等级预警弹出，5s 自动隐藏（事件驱动）
+// 收起（collapse）：仅关闭文字面板，保留 alerting。
+//   必须与 dismiss 分开：clickRtChip 会先 collapseAllExpandedActivities()，
+//   若 collapse 直接 dismiss，芯片一点击就把提示本身关掉，文字面板永远打不开。
+const collapseWeatherLightAlert = () => {
+    isWeatherLightAlertExpanded.value = false;
+};
+
+// 完全关闭（面板 X / 5s 超时）：收起面板 + 复位 alerting + 还原岛尺寸
 const dismissWeatherLightAlert = () => {
-    if (!isWeatherLightAlerting.value) return;
+    isWeatherLightAlertExpanded.value = false;
+    const wasAlerting = isWeatherLightAlerting.value;
     isWeatherLightAlerting.value = false;
     weatherLightAlert.value = null;
+    if (!wasAlerting) return;
     if (expandedRtId.value === 'weather') {
         expandedRtId.value = null;
         currentRtIndex.value = 0;
@@ -1007,14 +1021,11 @@ const dismissWeatherLightAlert = () => {
 };
 
 const expandWeatherLightAlert = () => {
-    if (!isWeatherLightAlerting.value || expandedRtId.value === 'weather') return;
+    if (!isWeatherLightAlerting.value || isWeatherLightAlertExpanded.value) return;
+    isWeatherLightAlertExpanded.value = true;
     expandedRtId.value = 'weather';
     const { h } = getBaseSize();
     animateIslandSize(getExpandTargetWidth(), h);
-};
-
-const collapseWeatherLightAlert = () => {
-    dismissWeatherLightAlert();
 };
 
 // ===== 活动注册表的岛上上下文（见顶部 islandCtx 声明） =====
@@ -1024,9 +1035,10 @@ islandCtx = {
     isPomodoroVisible, isPomodoroExpanded, isCountdownVisible, isCountdownExpanded,
     pomodoroRingPct, pomodoroRingColor, countdownRingPct, countdownRingColor,
     hwEnabled, isHardwareExpanded, isHealthAlerting,
-    isWeatherLightAlerting, weatherLightAlert,
+    isWeatherLightAlerting, weatherLightAlert, isWeatherLightAlertExpanded,
     isTaskbarProgressActive, isTaskbarProgressExpanded,
     taskbarProgressAppName, taskbarProgressPercent,
+    taskbarProgressRingPct, taskbarProgressRingColor,
     cdPaused, hwMode, hwDefaultMetric, hwCpuPct, hwMemPct, hwRingPct, hwRingColor,
     hwRingOuter, hwRingInner, hwBatteryPct, hwDiskPct,
     printJobs, defaultPrinter, isPrintQueueExpanded,
@@ -1087,9 +1099,20 @@ watch(rtActivities, (list) => {
     }
 });
 
+// 整屏面板：展开的活动有 expand 且无 textSources（倒计时/番茄钟左侧仍需文本态，故排除；
+// health 无 expand 自动排除）。命中 taskbar-progress / printer / calendar / weather。
+// 用途：整屏面板展开时隐藏左侧音乐/网速内容——IslandMusic 根节点是 absolute 铺满整岛，
+// 不隐藏会压在展开面板上造成遮挡。
+const isFullPanelOpen = computed(() => {
+    const id = expandedRtId.value;
+    if (!id) return false;
+    const def = RT_ACTIVITY_DEFS.find(d => d.id === id);
+    return !!def && !!def.expand && !def.textSources;
+});
+
 // 使用计算属性智能判断当前该显示啥
-const displaySpeed = computed(() => !isMsgActive.value && !displaySysToast.value && !showPomodoroText.value && !showCountdownText.value && !showHardwareRing.value && (isRotationEnabled.value ? currentRotIndex.value === 0 : !isMusicCtlEnabled.value));
-const displayMusic = computed(() => !isMsgActive.value && !displaySysToast.value && !showPomodoroText.value && !showCountdownText.value && !showHardwareRing.value && (isRotationEnabled.value ? currentRotIndex.value === 1 : isMusicCtlEnabled.value));
+const displaySpeed = computed(() => !isMsgActive.value && !displaySysToast.value && !showPomodoroText.value && !showCountdownText.value && !showHardwareRing.value && !isFullPanelOpen.value && (isRotationEnabled.value ? currentRotIndex.value === 0 : !isMusicCtlEnabled.value));
+const displayMusic = computed(() => !isMsgActive.value && !displaySysToast.value && !showPomodoroText.value && !showCountdownText.value && !showHardwareRing.value && !isFullPanelOpen.value && (isRotationEnabled.value ? currentRotIndex.value === 1 : isMusicCtlEnabled.value));
 
 // 辅助函数：获取当前状态应该拥有的默认大小
 const getBaseSize = () => {
@@ -2154,8 +2177,8 @@ const bootstrapIsland = async (): Promise<void> => {
     );
 
     // 恶劣天气（severe）与早/午/晚报（morning/noon/evening）统一走系统 toast 通道，
-    // kind → SysToastType 的映射在 useNotifications.showWeatherToast 内
-    await safeListen<{ kind: string; title: string; body: string }>('weather-toast', (event) => {
+    // kind/icon/severity/code → 排版与图标的映射在 useNotifications.showWeatherToast 内
+    await safeListen<{ kind: string; icon?: string; title: string; body?: string; severity?: string; code?: number }>('weather-toast', (event) => {
         showWeatherToast(event.payload);
     });
 
@@ -2168,6 +2191,11 @@ const bootstrapIsland = async (): Promise<void> => {
         const state: any = await invoke('calendar_get_state');
         calUpcoming.value = Array.isArray(state?.upcoming) ? state.upcoming : [];
     } catch (_e) {}
+
+    // 日程到点提醒：后端 calendar-reminder 驱动（提前 REMIND_LEAD_SECS 触发一次），走岛内 toast
+    await safeListen<{ title: string; start_secs: number; source: string }>('calendar-reminder', (event) => {
+        showToast(`日程提醒：${event.payload?.title || '日程'}`, 'calendar');
+    });
 
     // 监听任务栏进度 tick 事件
     unlistenFns.push(await listen<{ active: boolean; appName: string; percent: number; ts: number }>('taskbar-progress-tick', (e) => {
@@ -2783,6 +2811,12 @@ onUnmounted(() => {
 
 .left-capsule.is-split {
     width: calc(100% - 44px);
+}
+
+/* 整屏面板展开（taskbar-progress/printer/calendar/weather）：隐藏左侧胶囊，
+   让右侧面板独占整岛宽（同时 displayMusic/displaySpeed 会被守卫关闭，卸载绝对定位的音乐层） */
+.island-core-content.is-full-panel-open .left-capsule {
+    display: none;
 }
 
 /* 多实时活动并行：单一常驻小图标（已拆分至 IslandRtChip.vue，样式随迁） */

@@ -308,6 +308,21 @@ fn weather_code_to_text(code: i32) -> &'static str {
     }
 }
 
+/// 天气代码 → 图标键（与前端 utils/weather.ts 的 weatherCodeToIcon 同口径）。
+/// sun/cloud/rain/snow/sleet/fog/haze；供早/午/晚报展示真实天气图标，替代此前写死的 "sun"。
+fn weather_code_to_icon(code: i32) -> &'static str {
+    match code {
+        0 => "sun",
+        1 | 2 => "cloud",
+        6 => "sleet",
+        3..=5 | 7..=12 | 19 | 21..=25 | 301 => "rain",
+        13..=17 | 26..=28 | 302 => "snow",
+        18 | 32 | 35 | 49 | 57 | 58 => "fog",
+        53..=56 => "haze",
+        _ => "sun",
+    }
+}
+
 // ──────────────────────────────────────────────
 // HTTP 客户端
 // ──────────────────────────────────────────────
@@ -556,10 +571,12 @@ fn push_light_alert(app: &AppHandle, alert: &AlertInfo) {
     crate::win32_utils::log_err(app.emit("weather-light-alert", payload), "emit weather-light-alert");
 }
 
-fn push_brief(app: &AppHandle, kind: &str, title: &str, body: &str) {
+fn push_brief(app: &AppHandle, kind: &str, title: &str, body: &str, code: i32) {
     let payload = serde_json::json!({
         "kind": kind,
-        "icon": "sun",
+        // 按真实天气代码取图标（此前写死 "sun"，导致任何天气都显示太阳）
+        "icon": weather_code_to_icon(code),
+        "code": code,
         "title": title,
         "body": body,
         "severity": "info",
@@ -704,7 +721,9 @@ pub fn start_weather_thread(app: AppHandle) {
                     if is_brief_enabled(brief) && !brief_already_sent(brief) {
                         if let Ok(snap) = rt.block_on(fetch_weather(city)) {
                             let (title, body) = brief_text(brief, Some(&snap));
-                            push_brief(&app, brief, &title, &body);
+                            // 真实天气代码驱动速报图标（不再是恒定的太阳）
+                            let code = snap.current.as_ref().map(|c| c.weather_code).unwrap_or(0);
+                            push_brief(&app, brief, &title, &body, code);
                             play_brief_sound();
                             mark_brief_sent(brief);
                         }
@@ -952,7 +971,8 @@ pub(crate) fn dev_run_brief(app: &AppHandle) -> serde_json::Value {
     }
     let snap = effective_snapshot();
     let (title, body) = brief_text(window, snap.as_ref());
-    push_brief(app, window, &title, &body);
+    let code = snap.as_ref().and_then(|s| s.current.as_ref()).map(|c| c.weather_code).unwrap_or(0);
+    push_brief(app, window, &title, &body, code);
     play_brief_sound();
     mark_brief_sent(window);
     serde_json::json!({ "window": window, "fired": true, "title": title, "body": body })

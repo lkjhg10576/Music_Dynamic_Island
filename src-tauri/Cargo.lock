@@ -2430,7 +2430,7 @@ dependencies = [
 
 [[package]]
 name = "netspeed-dynamic"
-version = "9.9.9-1"
+version = "9.9.9-2"
 dependencies = [
  "base64 0.22.1",
  "cpal",
