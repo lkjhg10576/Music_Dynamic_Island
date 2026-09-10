@@ -6,7 +6,7 @@
 //! 唤醒后 EnumJobsW 拉全量快照，经节流后 emit `print-queue-tick`。
 //! 监控线程接入 thread_mgr 统一退出信号（§4.1），退出时 CloseHandle 释放 stop 事件（§4.3）。
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -20,7 +20,7 @@ use crate::win32_utils::log_err;
 // 契约结构（camelCase，与前端一致）
 // ──────────────────────────────────────────────
 
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PrintJob {
     pub job_id: u32,
@@ -33,7 +33,7 @@ pub struct PrintJob {
     pub submitted: u64,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PrintQueueState {
     pub has_jobs: bool,
@@ -57,6 +57,8 @@ impl Default for PrintQueueState {
 
 static PRINTER_MONITOR_ENABLED: AtomicBool = AtomicBool::new(true);
 static MONITOR_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
+// 开发者工具注入中：监控线程暂停快照覆盖与 emit，注入快照直通前端
+static PRINT_INJECTED: AtomicBool = AtomicBool::new(false);
 // stop 事件句柄（HANDLE as isize）。改为 Mutex<Option<_>> 以支持线程退出时 CloseHandle（§4.3）
 static STOP_EVENT: Mutex<Option<isize>> = Mutex::new(None);
 static LAST_STATE: Mutex<PrintQueueState> = Mutex::new(PrintQueueState {
@@ -148,6 +150,63 @@ pub fn get_printer_state() -> PrintQueueState {
 }
 
 // ──────────────────────────────────────────────
+// 开发者桥接接口（dev_bridge 调用；注入快照直通 emit，不影响真实监控线程）
+// ──────────────────────────────────────────────
+
+/// 打印模块状态摘要（printer.status / status 指令用）
+#[cfg(target_os = "windows")]
+pub fn dev_status() -> serde_json::Value {
+    let state = LAST_STATE
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    serde_json::json!({
+        "monitorEnabled": PRINTER_MONITOR_ENABLED.load(Ordering::SeqCst),
+        "monitorStarted": MONITOR_THREAD_STARTED.load(Ordering::SeqCst),
+        "injected": PRINT_INJECTED.load(Ordering::SeqCst),
+        "hasJobs": state.has_jobs,
+        "defaultPrinter": state.default_printer,
+        "jobCount": state.jobs.len(),
+        "jobs": state.jobs,
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn dev_status() -> serde_json::Value {
+    serde_json::json!({ "monitorEnabled": false, "monitorStarted": false, "injected": false, "hasJobs": false, "defaultPrinter": "", "jobCount": 0, "jobs": [] })
+}
+
+/// 注入一份打印队列快照：存入 LAST_STATE 并立即 emit `print-queue-tick`，
+/// 同时挂起真实监控线程的快照覆盖与 emit（不停止采集），便于前端稳定验证渲染。
+#[cfg(target_os = "windows")]
+pub fn dev_inject(app: &AppHandle, state: PrintQueueState) -> serde_json::Value {
+    store_and_emit(app, &state, true);
+    PRINT_INJECTED.store(true, Ordering::SeqCst);
+    signal_stop_event(); // 唤醒监控线程，使其尽快让位
+    serde_json::json!({ "injected": true, "jobCount": state.jobs.len() })
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn dev_inject(_state: PrintQueueState) -> serde_json::Value {
+    serde_json::json!({ "injected": false, "error": "非 Windows 构建不支持打印注入" })
+}
+
+/// 清除注入：恢复真实监控线程 emit，并立即用真实快照覆盖一次
+#[cfg(target_os = "windows")]
+pub fn dev_clear_inject(app: &AppHandle) -> serde_json::Value {
+    PRINT_INJECTED.store(false, Ordering::SeqCst);
+    signal_stop_event();
+    let state = snapshot_queue();
+    store_and_emit(app, &state, true);
+    serde_json::json!({ "injected": false, "jobCount": state.jobs.len() })
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn dev_clear_inject() -> serde_json::Value {
+    serde_json::json!({ "injected": false, "error": "非 Windows 构建不支持打印注入" })
+}
+
+// ──────────────────────────────────────────────
 // stop 事件工具
 // ──────────────────────────────────────────────
 
@@ -215,6 +274,17 @@ fn monitor_loop(app: AppHandle, exit: ExitFlag) {
     loop {
         if exit.is_exiting() {
             break;
+        }
+
+        // 开发者工具注入期间：监控线程让位 —— 不覆盖 LAST_STATE、不 emit，
+        // 只保持事件等待循环运转，清除注入后立即恢复。
+        if PRINTER_MONITOR_ENABLED.load(Ordering::SeqCst) && PRINT_INJECTED.load(Ordering::SeqCst) {
+            last_jobs_sig.clear();
+            last_set_sig.clear();
+            reset_stop_event();
+            print_utils::wait_multiple(&[stop_handle], RECONNECT_WAIT_MS);
+            reset_stop_event();
+            continue;
         }
 
         // 禁用时：清空状态，阻塞等待 re-enable（可被 stop 事件立即唤醒，无忙循环）

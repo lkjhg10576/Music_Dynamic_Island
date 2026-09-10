@@ -48,12 +48,13 @@ pub(crate) const DEV_BUILD: bool = matches!(
 );
 
 /// 转发给开发者工具的 Tauri 事件（消息名与前端消费的完全一致）
-const FORWARDED_EVENTS: [&str; 5] = [
+const FORWARDED_EVENTS: [&str; 6] = [
     "weather-tick",
     "weather-toast",
     "weather-light-alert",
     "calendar-tick",
     "taskbar-progress-tick",
+    "print-queue-tick",
 ];
 
 /// 已连接的开发者工具：地址（用于断连清理）+ 写端句柄
@@ -96,6 +97,11 @@ const COMMANDS: &[&str] = &[
     "taskbar.clear",
     "taskbar.set_enabled",
     "taskbar.set_interval",
+    // 打印状态
+    "printer.status",
+    "printer.inject",
+    "printer.clear",
+    "printer.set_enabled",
 ];
 
 fn now_secs() -> u64 {
@@ -211,6 +217,7 @@ fn dispatch(app: &AppHandle, cmd: &str, args: &Value) -> Result<Value, String> {
             "weather": crate::weather::dev_status(),
             "calendar": crate::calendar::dev_status(app),
             "taskbar": crate::taskbar_progress::dev_status(),
+            "printer": crate::print_queue::dev_status(),
         })),
 
         // ────────── 天气：恶劣天气提醒 ──────────
@@ -388,6 +395,24 @@ fn dispatch(app: &AppHandle, cmd: &str, args: &Value) -> Result<Value, String> {
         "taskbar.set_interval" => {
             crate::taskbar_progress::set_taskbar_progress_interval(u_arg(args, "ms", 1000) as u32);
             Ok(crate::taskbar_progress::dev_status())
+        }
+
+        // ────────── 打印状态 ──────────
+        "printer.status" => Ok(crate::print_queue::dev_status()),
+
+        "printer.inject" => {
+            let raw = args.get("state").cloned().unwrap_or(Value::Null);
+            let state: crate::print_queue::PrintQueueState = serde_json::from_value(raw)
+                .map_err(|e| format!("快照解析失败（字段需为 camelCase，如 defaultPrinter/jobs）: {e}"))?;
+            let echo = state.clone();
+            Ok(json!({ "result": crate::print_queue::dev_inject(app, state), "state": echo }))
+        }
+
+        "printer.clear" => Ok(json!({ "result": crate::print_queue::dev_clear_inject(app) })),
+
+        "printer.set_enabled" => {
+            crate::print_queue::set_printer_monitor_enabled(b_arg(args, "enabled", true));
+            Ok(crate::print_queue::dev_status())
         }
 
         other => Err(format!("未知指令：{other}（可用 help 查看全部指令）")),
