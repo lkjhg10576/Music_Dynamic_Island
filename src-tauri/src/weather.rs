@@ -910,11 +910,17 @@ pub(crate) fn dev_force_brief(
 ) {
     let snap = effective_snapshot();
     let (auto_title, auto_body) = brief_text(brief, snap.as_ref());
+    let code = snap
+        .as_ref()
+        .and_then(|s| s.current.as_ref())
+        .map(|c| c.weather_code)
+        .unwrap_or(0);
     push_brief(
         app,
         brief,
         title.as_deref().unwrap_or(&auto_title),
         body.as_deref().unwrap_or(&auto_body),
+        code,
     );
     play_brief_sound();
 }
