@@ -65,6 +65,12 @@ export const FONT_TOAST_TITLE = '600 12.5px -apple-system, BlinkMacSystemFont, "
 /** 系统 toast 第二行小字（IslandWeatherAlert .toast-body） */
 export const FONT_TOAST_BODY = '500 10px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
 
+/** 展开态通知（岛高 65：消息通知 / 天气速报·预警详情）的标题行（IslandMsg .msg-title） */
+export const FONT_MSG_TITLE = '700 14px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+
+/** 展开态通知的正文行（IslandMsg .msg-body） */
+export const FONT_MSG_BODY = '400 12.5px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+
 /** 任务栏进度面板标题行（IslandTaskbarProgress .taskbar-progress-title） */
 export const FONT_PANEL_TITLE = '700 11px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
 

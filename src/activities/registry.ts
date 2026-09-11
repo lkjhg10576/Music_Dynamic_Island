@@ -375,6 +375,8 @@ export const RT_ACTIVITY_DEFS: RtActivityDef[] = [
         accent: '#06b6d4',
         defaultPriority: 6,
         realtime: true,
+        // 日程提醒存在期间强占小图标第 1 位（用户要求：日程提醒存在即最高优先级显示）
+        forceWhenActive: true,
         // F：日程"活跃" = 未来 24h 内存在日程（系统日历 + 手动提醒，calendar-tick 驱动），
         // 或存在待处理的到点提醒（提醒 toast 一闪而过后，小图标上的日历入口要留住，
         // 否则事件刚开始、24h 列表刚剔除它的瞬间就没了入口）
@@ -432,7 +434,9 @@ export const RT_ACTIVITY_DEFS: RtActivityDef[] = [
         id: 'weather',
         title: '恶劣天气提醒',
         desc: '小米天气·小时级·早午晚报',
-        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>',
+        // 卡片/芯片缺省图标用预警三角：此前误用太阳图标，
+        // "晴天"被归入恶劣天气观感（晴天的常规速报并非恶劣天气）
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>',
         accent: '#0ea5e9',
         defaultPriority: 7,
         // 轻提示态临时进入轮换，强占第 1 位 5s。

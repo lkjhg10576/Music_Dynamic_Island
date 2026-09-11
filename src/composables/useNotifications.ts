@@ -13,8 +13,8 @@
 import { ref, watch, type Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { getChengyuByCode, resolveWeatherIconKey } from '../utils/weather';
-import { measureTextWidth, FONT_TOAST_TITLE, FONT_TOAST_BODY } from '../utils/textMeasure';
+import { getChengyuByCode, resolveWeatherIconKey, weatherCodeToIcon } from '../utils/weather';
+import { measureTextWidth, FONT_TOAST_TITLE, FONT_MSG_TITLE, FONT_MSG_BODY } from '../utils/textMeasure';
 import defaultLogo from '../assets/logo.png';
 
 // 消息通知条目（后端 notification-event 事件推送）
@@ -147,6 +147,8 @@ export function useNotifications(deps: {
     };
     // 记录最近一次已应用的 toast 岛宽，避免连续音量更新反复触发同尺寸动画
     let lastToastIslandWidth: number | null = null;
+    // 同理记录岛高：两行天气类 65px、其余 42px，宽同高不同也不能跳过动画
+    let lastToastIslandHeight: number | null = null;
 
     // F11 消息通知展示计时器（手动关闭通知时中断等待）
     let msgTimer: number | null = null;
@@ -239,12 +241,13 @@ export function useNotifications(deps: {
      * 布局：padding 14×2 + 图标有效占位 + 文本 + 频谱/状态点预留 +（split 时）右侧实时活动 44px
      */
     const calcSysToastWidth = (text: string, type: SysToastType, title?: string, body?: string): number => {
-        // 两行排版（天气速报 / 恶劣天气 / 日程提醒）宽度取两行中较宽者，
-        // 且标题与正文用各自的字体口径测量（正文 10px，沿用标题的 12.5px 会把岛撑宽）
+        // 两行排版（天气速报 / 恶劣天气 / 日程提醒）宽度取两行中较宽者。
+        // 岛高已随两行天气类抬到 65（对齐消息通知展开态），字号同步放大
+        // （标题 14px / 正文 12.5px），测量口径必须与放大后的 CSS 一致
         const textW = (title || body)
             ? Math.max(
-                measureTextWidth(title || '', FONT_TOAST_TITLE),
-                measureTextWidth(body || '', FONT_TOAST_BODY),
+                measureTextWidth(title || '', FONT_MSG_TITLE),
+                measureTextWidth(body || '', FONT_MSG_BODY),
             )
             : measureToastTextWidth(text);
         // 图标占位 = 盒左边缘到文本起点的距离，随排版变化：
@@ -270,18 +273,23 @@ export function useNotifications(deps: {
         const minW = (type === 'volume' || type === 'clipboard')
             ? 210
             : (type === 'battery-charge' || type === 'battery-low' ? 300
-                : (WEATHER_TOAST_TYPES.has(type) ? 320 : 240));
-        const maxW = 420;
+                : (WEATHER_TOAST_TYPES.has(type) ? 360 : 240));
+        const maxW = WEATHER_TOAST_TYPES.has(type) ? 500 : 420;
         return Math.max(minW, Math.min(maxW, raw));
     };
 
     const applySysToastIslandSize = (text: string, type: SysToastType, title?: string, body?: string) => {
         const targetWidth = calcSysToastWidth(text, type, title, body);
-        if (lastToastIslandWidth !== null && Math.abs(lastToastIslandWidth - targetWidth) < 2) {
+        // 天气类两行通知（速报/恶劣天气）展开到 65px 岛高，样式与消息通知展开态一致；
+        // 此前恒为 42px，两行文字被严重压缩（字小、正文截断）
+        const targetHeight = TWO_LINE_TOAST_TYPES.has(type) && !!body ? 65 : 42;
+        if (lastToastIslandWidth !== null && Math.abs(lastToastIslandWidth - targetWidth) < 2
+            && lastToastIslandHeight === targetHeight) {
             return; // 尺寸几乎不变，跳过动画
         }
         lastToastIslandWidth = targetWidth;
-        animateIslandSize(targetWidth, 42);
+        lastToastIslandHeight = targetHeight;
+        animateIslandSize(targetWidth, targetHeight);
     };
 
     // 队列处理函数
@@ -344,6 +352,7 @@ export function useNotifications(deps: {
             displaySysToast.value = false;
             sysToastPersistent.value = false;
             lastToastIslandWidth = null;
+            lastToastIslandHeight = null;
             // 等待离开动画播完 (约200ms) 再处理下一个
             await sleepMs(TOAST_LEAVE_MS, token);
 
@@ -429,6 +438,7 @@ export function useNotifications(deps: {
             applySysToastIslandSize(sysToastText.value, sysToastType.value, sysToastTitle.value, sysToastBody.value);
         } else {
             lastToastIslandWidth = null;
+            lastToastIslandHeight = null;
             // 通知消失时，恢复到当前状态该有的尺寸
             // （前提是没有被应用消息或音乐面板霸占）
             if (!isMsgActive.value && !isMusicExpanded.value && !isMusicExpanding.value) {
@@ -589,9 +599,12 @@ export function useNotifications(deps: {
         showToast(text, type, {
             title,
             body,
-            // 后端 icon 优先；恶劣天气的"预警"类一律发通用 alert（三角），
-            // 这里用事件标题细化成 rain/fog/haze/temp… 让不同情景的预警一眼可分
-            iconKey: resolveWeatherIconKey(p.icon, title),
+            // 早/午/晚报：后端 icon 只有 sun/cloud/rain 粒度，按天气代码细化为
+            // rain-light / rain / rain-heavy / thunder…（雨强图标在岛上可辨程度档位）；
+            // 恶劣天气仍走 resolveWeatherIconKey（事件标题细化情景）
+            iconKey: isBrief && typeof p.code === 'number'
+                ? weatherCodeToIcon(p.code)
+                : resolveWeatherIconKey(p.icon, title),
             severity: p.severity,
             code: p.code,
             kind: p.kind,
@@ -619,6 +632,7 @@ export function useNotifications(deps: {
                 releaseToastWait();
                 displaySysToast.value = false;
                 lastToastIslandWidth = null;
+                lastToastIslandHeight = null;
                 // 合并：若队列里已有 volume，更新为最新；否则插到队首
                 const queuedIdx = toastQueue.value.findIndex((item) => item.type === 'volume');
                 if (queuedIdx >= 0) {
@@ -682,6 +696,7 @@ export function useNotifications(deps: {
         displaySysToast.value = false;
         sysToastPersistent.value = false;
         lastToastIslandWidth = null;
+        lastToastIslandHeight = null;
         isProcessingToast = false;
         const { h } = getBaseSize();
         const savedWidth = restoreIslandWidth();

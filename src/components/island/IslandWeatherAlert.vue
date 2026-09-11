@@ -263,7 +263,9 @@ const weatherIconSvg = computed(() => {
     box-sizing: border-box;
 }
 
-/* 天气类两行：标题（问好+成语）在上，正文小字在下，仿系统通知 */
+/* 天气类两行：标题（问好+成语）在上，正文在下，仿系统通知展开态。
+   岛高同步抬到 65px（主组件 applySysToastIslandSize），字号对齐消息通知
+   （标题 14px / 正文 12.5px），不再挤在 42px 里字小量少 */
 .toast-text-col {
     display: flex;
     flex-direction: column;
@@ -278,9 +280,9 @@ const weatherIconSvg = computed(() => {
 
 .toast-title {
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
-    font-size: 12.5px;
+    font-size: 14px;
     font-weight: 700;
-    line-height: 1.15;
+    line-height: 1.4;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -288,10 +290,10 @@ const weatherIconSvg = computed(() => {
 
 .toast-body {
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
-    font-size: 10px;
-    font-weight: 500;
-    line-height: 1.15;
-    opacity: 0.68;
+    font-size: 12.5px;
+    font-weight: 400;
+    line-height: 1.4;
+    opacity: 0.75;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -167,7 +167,7 @@ import {
     measureCalendarPanelWidth, calendarPanelRowCount, CAL_PANEL_HEAD_H, CAL_PANEL_ROW_H, CAL_PANEL_VPAD,
 } from '../utils/calendarDisplay';
 // 文本实测宽度：任务栏进度面板宽度按应用名自适应（口径与 utils/textMeasure 的字体常量一致）
-import { measureTextWidth, FONT_PANEL_TITLE } from '../utils/textMeasure';
+import { measureTextWidth, FONT_PANEL_TITLE, FONT_MSG_TITLE, FONT_MSG_BODY } from '../utils/textMeasure';
 // 活动注册表：候选 id / 元数据 / 活跃谓词 / 芯片与面板视图的单一来源（阶段 G）
 import {
     RT_ACTIVITY_DEFS, RT_IDS, PANEL_DEFS_BY_RANK, getRtDef,
@@ -1097,8 +1097,23 @@ const expandWeatherLightAlert = () => {
     if (!isWeatherLightAlerting.value || isWeatherLightAlertExpanded.value) return;
     isWeatherLightAlertExpanded.value = true;
     expandedRtId.value = 'weather';
+    // 用户主动点开详情：取消 5s 自动隐藏（否则面板读到一半被定时器收走，
+    // 关闭只能交给 X；收起后如再来新预警会重新走 5s 流程）
+    if (weatherLightAlertTimer !== null) {
+        clearTimeout(weatherLightAlertTimer);
+        weatherLightAlertTimer = null;
+    }
+    // 详情展开尺寸对齐"系统通知展开"样式：高度 65（与消息通知一致），
+    // 宽度按等级行/标题行实测自适应（详情此前挤在 42px 岛内，字小量少）
+    const a = weatherLightAlert.value;
+    const headText = `${a?.levelText || '预警'} ${a?.type || ''}`.trim();
+    const textW = Math.max(
+        measureTextWidth(headText, FONT_MSG_TITLE),
+        measureTextWidth(a?.title || '', FONT_MSG_BODY),
+    );
+    const targetWidth = Math.max(320, Math.min(480, 28 + 46 + textW + 40));
     const { h } = getBaseSize();
-    animateIslandSize(getExpandTargetWidth(), h);
+    animateIslandSize(targetWidth, Math.max(h, 65));
 };
 
 // ===== 活动注册表的岛上上下文（见顶部 islandCtx 声明） =====
@@ -2908,6 +2923,14 @@ onUnmounted(() => {
    不靠隐藏整个胶囊。整屏展开时小图标也由 showRtChip 隐藏，面板不会被压住关闭按钮。 */
 .island-core-content.is-full-panel-open .left-capsule {
     width: 100%;
+}
+
+/* 整屏面板展开期间，inner-wrapper（z-index:2）会整面盖在展开面板（z-index auto）之上：
+   面板虽可见（inner-wrapper 透明），但点击全部落在 inner-wrapper 上，
+   面板内的 X 关闭按钮收不到任何点击（天气轻提醒详情"只能等自动隐藏"的根因）。
+   该状态下 displayMusic/displaySpeed 守卫已卸载 inner-wrapper 内容，禁用其命中即可。 */
+.island-core-content.is-full-panel-open .inner-wrapper {
+    pointer-events: none;
 }
 
 /* 多实时活动并行：单一常驻小图标（已拆分至 IslandRtChip.vue，样式随迁） */

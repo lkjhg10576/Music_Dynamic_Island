@@ -50,11 +50,11 @@ export const WEATHER_CODE_MAP: Record<number, string> = {
 // 查表按声明顺序做子串匹配、命中即返回，因此**具体词必须排在泛化词之前**：
 // 末尾四条是泛化兜底（覆盖「大雪预警」「雷阵雨」等未逐一列举的类型名）。
 export const ALERT_TYPE_KEYWORDS: Record<string, string> = {
-    '台风': 'typhoon',
+    '台风': 'wind',
     '暴雨': 'rain',
-    '雷雨大风': 'rain',
-    '强对流': 'rain',
-    '冰雹': 'rain',
+    '雷雨大风': 'thunder',
+    '强对流': 'thunder',
+    '冰雹': 'sleet',
     '暴雪': 'snow',
     '道路结冰': 'snow',
     '低温': 'snow',
@@ -67,7 +67,7 @@ export const ALERT_TYPE_KEYWORDS: Record<string, string> = {
     '霾': 'fog',
     '浮尘': 'fog',
     '雷电': 'thunder',
-    '干旱': 'drought',
+    '干旱': 'temp',
     '地质灾害': 'geo',
     '森林': 'fire',
     '草原': 'fire',
@@ -79,16 +79,29 @@ export const ALERT_TYPE_KEYWORDS: Record<string, string> = {
     '雾': 'fog',
 };
 
-// 天气级图标映射
+// 天气级图标映射。雨按强度细分（小雨 1 滴 / 中雨 2 滴 / 大雨及以上 3 斜线），
+// 雷阵雨独立闪电图标，雨夹雪与雨/雪区分，避免"程度不可辨、雨雪同形"。
 export function weatherCodeToIcon(code: number): string {
     if (code === 0) return 'sun';
     if (code === 1 || code === 2) return 'cloud';
     if (code === 6) return 'sleet';
-    if ([3, 4, 5, 7, 8, 9, 10, 11, 12, 19, 21, 22, 23, 24, 25, 301].includes(code)) return 'rain';
+    if (code === 4 || code === 5) return 'thunder';
+    if ([7, 21, 301].includes(code)) return 'rain-light';
+    if ([8, 22].includes(code)) return 'rain';
+    if ([3, 9, 10, 11, 12, 19, 23, 24, 25].includes(code)) return 'rain-heavy';
     if ([13, 14, 15, 16, 17, 26, 27, 28, 302].includes(code)) return 'snow';
     if ([18, 32, 35, 49, 57, 58].includes(code)) return 'fog';
     if ([53, 54, 55, 56].includes(code)) return 'haze';
     return 'sun';
+}
+
+/** 事件标题/预警类型 → 雨强度图标细化（预警类型查不出强度时按文本判断） */
+export function rainIntensityIconKey(text: string): string {
+    const t = text || '';
+    if (t.includes('特大') || t.includes('大暴雨') || t.includes('暴雨') || t.includes('大雨')) return 'rain-heavy';
+    if (t.includes('中雨')) return 'rain';
+    if (t.includes('小雨')) return 'rain-light';
+    return 'rain';
 }
 
 // 预警级图标映射
@@ -114,11 +127,16 @@ export const WEATHER_ICON_SVG: Record<string, string> = {
     sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>',
     moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>',
     cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>',
-    rain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path><line x1="8" y1="21" x2="7" y2="23"></line><line x1="12" y1="21" x2="11" y2="23"></line><line x1="16" y1="21" x2="15" y2="23"></line></svg>',
+    rain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path><line x1="8" y1="21" x2="8" y2="23"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="16" y1="21" x2="16" y2="23"></line></svg>',
+    'rain-light': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path><line x1="9" y1="22" x2="9" y2="22.01"></line><line x1="15" y1="22" x2="15" y2="22.01"></line></svg>',
+    'rain-heavy': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9h-1.26A8 8 0 1 0 9 19h9a5 5 0 0 0 0-10z"></path><line x1="8" y1="20" x2="6.5" y2="23"></line><line x1="12.5" y1="20" x2="11" y2="23"></line><line x1="17" y1="20" x2="15.5" y2="23"></line></svg>',
+    thunder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9h-1.26A8 8 0 1 0 9 19h2"></path><path d="M14 19h4a5 5 0 0 0 0-10"></path><polyline points="13 11 10 16 13 16 11 21"></polyline></svg>',
     snow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path><line x1="8" y1="20" x2="8" y2="22"></line><line x1="12" y1="20" x2="12" y2="22"></line><line x1="16" y1="20" x2="16" y2="22"></line></svg>',
-    sleet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path><line x1="8" y1="21" x2="7" y2="23"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="16" y1="21" x2="15" y2="23"></line></svg>',
-    fog: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"></line><line x1="4" y1="13" x2="20" y2="13"></line><line x1="4" y1="17" x2="20" y2="17"></line></svg>',
-    haze: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="20" y2="8"></line><line x1="6" y1="12" x2="18" y2="12"></line><line x1="4" y1="16" x2="20" y2="16"></line></svg>',
+    sleet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path><line x1="8" y1="21" x2="8" y2="23"></line><line x1="16" y1="19" x2="16" y2="23"></line><line x1="14.2" y1="20" x2="17.8" y2="22"></line><line x1="17.8" y1="20" x2="14.2" y2="22"></line></svg>',
+    // 雾：错落的 4 条雾带（与霾明确区分）
+    fog: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="7" x2="21" y2="7"></line><line x1="6" y1="11" x2="18" y2="11"></line><line x1="3" y1="15" x2="21" y2="15"></line><line x1="7" y1="19" x2="17" y2="19"></line></svg>',
+    // 霾：被尘埃遮蔽的太阳（日轮 + 灰尘横线），与雾的纯雾带拉开差距
+    haze: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="3"></circle><line x1="4" y1="13" x2="20" y2="13"></line><line x1="6" y1="17" x2="18" y2="17"></line><line x1="4" y1="21" x2="20" y2="21"></line></svg>',
     temp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"></path></svg>',
     wind: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10a3 3 0 1 0-3-3"></path><path d="M3 16h13a3 3 0 1 1-3 3"></path><path d="M3 12h7"></path></svg>',
     alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>',
@@ -126,14 +144,12 @@ export const WEATHER_ICON_SVG: Record<string, string> = {
 
 /** 预警归类 → 岛上 SVG 图标键 */
 const ALERT_GROUP_TO_ICON: Record<string, string> = {
-    typhoon: 'wind',
     rain: 'rain',
     snow: 'snow',
     wind: 'wind',
     heat: 'temp',
     fog: 'fog',
-    thunder: 'alert',
-    drought: 'temp',
+    thunder: 'thunder',
     geo: 'alert',
     fire: 'alert',
 };
@@ -141,14 +157,17 @@ const ALERT_GROUP_TO_ICON: Record<string, string> = {
 /**
  * 预警类型文本 → 岛上图标键（按"具体情况"区分图标）。
  * 霾/浮尘/沙尘先于查表单独判为 haze：它们与雾同属能见度障碍，但视觉上更"黄"，
- * 混在 fog 里就分不出「大雾」和「沙尘」了。
+ * 混在 fog 里就分不出「大雾」和「沙尘」了。雨类再按文本细分强度档位。
  */
 export function weatherAlertIconKey(typeText: string, fallback = 'alert'): string {
     const text = (typeText || '').trim();
     if (!text) return fallback;
     if (text.includes('霾') || text.includes('浮尘') || text.includes('沙尘')) return 'haze';
     for (const [keyword, group] of Object.entries(ALERT_TYPE_KEYWORDS)) {
-        if (text.includes(keyword)) return ALERT_GROUP_TO_ICON[group] || fallback;
+        if (text.includes(keyword)) {
+            if (group === 'rain') return rainIntensityIconKey(text);
+            return ALERT_GROUP_TO_ICON[group] || fallback;
+        }
     }
     return fallback;
 }
@@ -164,6 +183,8 @@ export function resolveWeatherIconKey(iconKey: string | undefined, typeText: str
         const specific = weatherAlertIconKey(typeText || '');
         if (specific !== 'alert') return specific;
     }
+    // 后端只给到"rain"粒度时，按类型文本细化雨强（暴雨/大雨 → rain-heavy 等）
+    if (key === 'rain') return rainIntensityIconKey(typeText || '');
     return key || 'alert';
 }
 
@@ -173,12 +194,16 @@ export function weatherIconSvgOf(iconKey: string | undefined, fallback = 'alert'
     return WEATHER_ICON_SVG[key] || WEATHER_ICON_SVG[fallback] || WEATHER_ICON_SVG.alert;
 }
 
-// 成语库（按天气代码分组）
+// 成语库（按天气代码分组，雨按强度分档、晴天分早晚时段，
+// 避免"小雨配风雨大作 / 晚报送晴空万里"这类夸张错位）
 export const CHENGYU_MAP: Record<string, string[]> = {
-    'sunny': ['风和日丽', '晴空万里', '阳光明媚', '万里无云'],
+    'sunny': ['风和日丽', '阳光明媚', '万里无云', '晴空万里'],
+    'sunny-evening': ['晚霞满天', '霞光满天', '暮色晴好', '天朗气清'],
     'cloudy': ['浮云蔽日', '云卷云舒', '天高云淡', '薄云遮日'],
     'overcast': ['乌云密布', '阴云密布', '天色阴沉', '彤云密布'],
-    'rain': ['雨水如注', '风雨如磐', '大雨倾盆', '风雨大作'],
+    'rain-light': ['细雨绵绵', '和风细雨', '牛毛细雨', '春雨绵绵'],
+    'rain-moderate': ['细雨如织', '烟雨蒙蒙', '斜风细雨', '雨丝风片'],
+    'rain-heavy': ['雨水如注', '风雨如磐', '大雨倾盆', '风雨大作'],
     'sleet': ['雨雪交加', '雨雪霏霏', '雪雨兼程', '半雨半雪'],
     'snow': ['银装素裹', '大雪纷飞', '雪花飘零', '飞雪漫天'],
     'fog': ['雾气弥漫', '云雾迷蒙', '雾色茫茫', '浓雾重重'],
@@ -186,13 +211,15 @@ export const CHENGYU_MAP: Record<string, string[]> = {
     'unknown': ['风云变幻'],
 };
 
-// 根据天气代码获取成语
+// 根据天气代码获取成语（kind: morning / noon / evening，晚报晴天换用晚霞词条）
 export function getChengyuByCode(code: number, dateKey: string, kind: string): string {
     let group: string;
-    if (code === 0) group = 'sunny';
+    if (code === 0) group = kind === 'evening' ? 'sunny-evening' : 'sunny';
     else if (code === 1) group = 'cloudy';
     else if (code === 2) group = 'overcast';
-    else if ([3, 4, 5, 7, 8, 9, 10, 11, 12, 19, 21, 22, 23, 24, 25, 301].includes(code)) group = 'rain';
+    else if ([7, 21, 301].includes(code)) group = 'rain-light';
+    else if ([8, 22].includes(code)) group = 'rain-moderate';
+    else if ([3, 4, 5, 9, 10, 11, 12, 19, 23, 24, 25].includes(code)) group = 'rain-heavy';
     else if (code === 6) group = 'sleet';
     else if ([13, 14, 15, 16, 17, 26, 27, 28, 302].includes(code)) group = 'snow';
     else if ([18, 32, 35, 49, 57, 58].includes(code)) group = 'fog';

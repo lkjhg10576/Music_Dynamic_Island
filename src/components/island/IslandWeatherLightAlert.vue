@@ -71,7 +71,8 @@ const iconSvg = computed(() => weatherIconSvgOf(weatherAlertIconKey(props.alert?
 </script>
 
 <style scoped>
-/* 岛上展开面板：占满整岛（整屏面板展开时左侧内容已由主组件守卫卸载） */
+/* 岛上展开面板：对齐"系统通知展开"样式（IslandMsg 同一套体例，
+   配合主组件把岛展开到 65px 高，不再挤在 42px 单行里字小量少） */
 .light-alert-panel {
     position: absolute;
     left: 0;
@@ -80,19 +81,21 @@ const iconSvg = computed(() => weatherIconSvgOf(weatherAlertIconKey(props.alert?
     width: 100%;
     height: 100%;
     align-items: center;
-    padding: 5px 30px 5px 8px;
-    gap: 8px;
+    padding: 0 34px 0 6px;
+    gap: 12px;
     box-sizing: border-box;
     overflow: hidden;
+    z-index: 5;
 }
 
+/* 左侧图标：30px 圆形衬底（对齐消息头像 35px 观感，天气场景用等级色衬底） */
 .light-alert-icon {
     display: flex;
-    width: 26px;
-    height: 26px;
+    width: 32px;
+    height: 32px;
     align-items: center;
     justify-content: center;
-    border-radius: 8px;
+    border-radius: 50%;
     flex-shrink: 0;
     transition: color 0.2s ease, background 0.2s ease;
 }
@@ -105,62 +108,73 @@ const iconSvg = computed(() => weatherIconSvgOf(weatherAlertIconKey(props.alert?
 
 .light-alert-icon-svg :deep(svg) {
     display: block;
-    width: 16px;
-    height: 16px;
+    width: 20px;
+    height: 20px;
 }
 
-/* 两行：上行等级 + 类型，下行事件标题（超长省略，title 属性兜底全文） */
+/* 两行：上行等级 + 类型徽标，下行事件标题（超长省略，title 属性兜底全文） */
 .light-alert-text-col {
     display: flex;
     min-width: 0;
     flex: 1 1 auto;
     flex-direction: column;
     justify-content: center;
-    gap: 1px;
+    align-items: flex-start;
+    gap: 2px;
     overflow: hidden;
 }
 
 .light-alert-head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     min-width: 0;
     gap: 6px;
+    max-width: 100%;
 }
 
+/* 等级行 14px 粗体：对齐消息通知标题字号 */
 .light-alert-level {
-    font-size: 11px;
+    font-size: 14px;
     font-weight: 700;
+    line-height: 1.4;
     white-space: nowrap;
-}
-
-.light-alert-type {
-    min-width: 0;
     overflow: hidden;
-    color: rgba(255, 255, 255, 0.55);
-    font-size: 9px;
-    font-weight: 500;
     text-overflow: ellipsis;
+}
+
+/* 类型徽标：对齐消息通知的 app-name 胶囊 */
+.light-alert-type {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: rgba(150, 150, 150, 0.25);
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
     white-space: nowrap;
 }
 
+/* 正文 12.5px：对齐消息通知正文字号 */
 .light-alert-title {
     overflow: hidden;
-    font-size: 10px;
-    font-weight: 500;
-    line-height: 1.15;
-    opacity: 0.72;
+    width: 100%;
+    font-size: 12.5px;
+    font-weight: 400;
+    line-height: 1.4;
+    opacity: 0.75;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-/* 右侧 X 关闭（10px 避开 8px 边缘调宽热区） */
+/* 右侧 X 关闭（14px 避开 8px 边缘热区） */
 .light-alert-close {
     position: absolute;
     top: 50%;
-    right: 10px;
+    right: 14px;
     display: flex;
-    width: 22px;
-    height: 22px;
+    width: 26px;
+    height: 26px;
     align-items: center;
     justify-content: center;
     padding: 0;
@@ -171,6 +185,7 @@ const iconSvg = computed(() => weatherIconSvgOf(weatherAlertIconKey(props.alert?
     cursor: pointer;
     transform: translateY(-50%);
     transition: all 0.2s ease;
+    z-index: 6;
 }
 
 .light-alert-close:hover {
@@ -179,7 +194,7 @@ const iconSvg = computed(() => weatherIconSvgOf(weatherAlertIconKey(props.alert?
 }
 
 .light-alert-close svg {
-    width: 14px;
-    height: 14px;
+    width: 15px;
+    height: 15px;
 }
 </style>
